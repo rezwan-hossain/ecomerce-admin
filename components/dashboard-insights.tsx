@@ -117,7 +117,7 @@ export function TopProducts({
         <CardDescription>Best sellers by revenue</CardDescription>
         <CardAction>
           <Link
-            href="/dashboard/products"
+            href="/products"
             className="text-sm font-medium text-primary hover:underline"
           >
             View all
@@ -134,7 +134,7 @@ export function TopProducts({
               <div className="flex min-w-0 flex-1 flex-col gap-1.5">
                 <div className="flex items-baseline justify-between gap-2">
                   <Link
-                    href={`/dashboard/products/${product.id}/edit`}
+                    href={`/products/${product.id}/edit`}
                     className="truncate text-sm font-medium hover:underline"
                   >
                     {product.name}

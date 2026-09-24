@@ -43,7 +43,7 @@ export function NavMain({ items }: { items: NavMainItem[] }) {
             <SidebarMenuButton
               tooltip="New Product"
               className="min-w-8 bg-primary text-primary-foreground duration-200 ease-linear hover:bg-primary/90 hover:text-primary-foreground active:bg-primary/90 active:text-primary-foreground"
-              render={<a href="/dashboard/products/new" />}
+              render={<a href="/products/new" />}
             >
               <CirclePlusIcon
               />
@@ -65,7 +65,7 @@ export function NavMain({ items }: { items: NavMainItem[] }) {
             item.items?.length ? (
               <Collapsible
                 key={item.title}
-                defaultOpen={item.items.some((sub) => sub.url === pathname)}
+                defaultOpen={pathname.startsWith(item.url)}
                 render={<SidebarMenuItem />}
               >
                 <CollapsibleTrigger

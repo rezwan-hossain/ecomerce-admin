@@ -9,7 +9,7 @@ export function generateStaticParams() {
 
 export default async function EditProductPage({
   params,
-}: PageProps<"/dashboard/products/[id]/edit">) {
+}: PageProps<"/products/[id]/edit">) {
   const { id } = await params
   const product = getProduct(id)
   if (!product) notFound()

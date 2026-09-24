@@ -64,7 +64,7 @@ export function OrdersTable({
       header: "Order",
       cell: (o) => (
         <Link
-          href={`/dashboard/orders/${o.order.slice(1)}`}
+          href={`/orders/${o.order.slice(1)}`}
           className="font-medium hover:underline"
         >
           {o.order}
@@ -124,7 +124,7 @@ export function OrdersTable({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-40">
               <DropdownMenuItem
-                render={<Link href={`/dashboard/orders/${o.order.slice(1)}`} />}
+                render={<Link href={`/orders/${o.order.slice(1)}`} />}
               >
                 View order
               </DropdownMenuItem>

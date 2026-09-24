@@ -65,7 +65,7 @@ export function ProductsTable({ products: initial }: { products: Product[] }) {
           </div>
           <div className="flex flex-col">
             <Link
-              href={`/dashboard/products/${p.id}/edit`}
+              href={`/products/${p.id}/edit`}
               className="font-medium hover:underline"
             >
               {p.name}
@@ -114,7 +114,7 @@ export function ProductsTable({ products: initial }: { products: Product[] }) {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-36">
             <DropdownMenuItem
-              render={<Link href={`/dashboard/products/${p.id}/edit`} />}
+              render={<Link href={`/products/${p.id}/edit`} />}
             >
               Edit product
             </DropdownMenuItem>
@@ -149,7 +149,7 @@ export function ProductsTable({ products: initial }: { products: Product[] }) {
         <Button
           size="sm"
           nativeButton={false}
-          render={<Link href="/dashboard/products/new" />}
+          render={<Link href="/products/new" />}
         >
           <PlusIcon data-icon="inline-start" />
           Add Product

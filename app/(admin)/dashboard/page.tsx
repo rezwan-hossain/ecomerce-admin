@@ -8,7 +8,7 @@ import { SectionCards } from "@/components/section-cards"
 import { Button } from "@/components/ui/button"
 import { getProductByName, orders } from "@/lib/demo-data"
 
-import data from "./data.json"
+import data from "@/lib/data/orders.json"
 
 const paidOrders = orders.filter((o) => o.payment === "Paid")
 
@@ -64,7 +64,7 @@ export default function Page() {
           <Button
             size="sm"
             nativeButton={false}
-            render={<Link href="/dashboard/products/new" />}
+            render={<Link href="/products/new" />}
           >
             <PlusIcon data-icon="inline-start" />
             Add product

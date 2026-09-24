@@ -129,7 +129,7 @@ export function ProductForm({ product }: { product?: Product }) {
       return
     }
     toast.success(isEdit ? `${form.name} updated` : `${form.name} created`)
-    router.push("/dashboard/products")
+    router.push("/products")
   }
 
   return (
@@ -144,7 +144,7 @@ export function ProductForm({ product }: { product?: Product }) {
             size="icon"
             className="size-8"
             nativeButton={false}
-            render={<Link href="/dashboard/products" />}
+            render={<Link href="/products" />}
           >
             <ArrowLeftIcon />
             <span className="sr-only">Back to products</span>
@@ -167,7 +167,7 @@ export function ProductForm({ product }: { product?: Product }) {
               variant="destructive"
               onClick={() => {
                 toast.success(`${product!.name} deleted`)
-                router.push("/dashboard/products")
+                router.push("/products")
               }}
             >
               Delete
@@ -177,7 +177,7 @@ export function ProductForm({ product }: { product?: Product }) {
             type="button"
             variant="outline"
             nativeButton={false}
-            render={<Link href="/dashboard/products" />}
+            render={<Link href="/products" />}
           >
             Cancel
           </Button>

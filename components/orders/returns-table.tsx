@@ -25,7 +25,7 @@ export function ReturnsTable({ returns: initial }: { returns: ReturnRequest[] })
       key: "order",
       header: "Order",
       cell: (r) => (
-        <Link href={`/dashboard/orders/${r.order.slice(1)}`} className="hover:underline">
+        <Link href={`/orders/${r.order.slice(1)}`} className="hover:underline">
           {r.order}
         </Link>
       ),

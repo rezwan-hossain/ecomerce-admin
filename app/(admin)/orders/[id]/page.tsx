@@ -27,7 +27,7 @@ export function generateStaticParams() {
 
 export default async function OrderDetailPage({
   params,
-}: PageProps<"/dashboard/orders/[id]">) {
+}: PageProps<"/orders/[id]">) {
   const { id } = await params
   const order = getOrder(id)
   if (!order) notFound()
@@ -58,7 +58,7 @@ export default async function OrderDetailPage({
             size="icon"
             className="size-8"
             nativeButton={false}
-            render={<Link href="/dashboard/orders" />}
+            render={<Link href="/orders" />}
           >
             <ArrowLeftIcon />
             <span className="sr-only">Back to orders</span>

@@ -1,4 +1,4 @@
-import orderData from "@/app/dashboard/data.json"
+import orderData from "@/lib/data/orders.json"
 
 // Demo data only — replace these with real API / database calls.
 
