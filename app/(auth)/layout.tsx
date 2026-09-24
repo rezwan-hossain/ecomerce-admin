@@ -20,7 +20,10 @@ export default function AuthLayout({ children }: LayoutProps<"/">) {
           </Link>
         </div>
         <div className="flex flex-1 items-center justify-center">
-          <div className="w-full max-w-xs">{children}</div>
+          {/* Neutral (black) buttons for the auth forms; the rest of the app stays blue. */}
+          <div className="w-full max-w-xs [--primary:var(--foreground)] [--primary-foreground:var(--background)] [--ring:var(--muted-foreground)]">
+            {children}
+          </div>
         </div>
       </div>
       <div className="relative hidden overflow-hidden bg-primary text-primary-foreground lg:flex lg:flex-col lg:justify-between lg:p-10">

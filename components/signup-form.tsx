@@ -76,7 +76,7 @@ export function SignupForm({
             placeholder="John Doe"
             aria-invalid={Boolean(errors.name)}
             required
-            className="bg-background"
+            className="h-10 bg-background"
           />
           <FieldError>{errors.name}</FieldError>
         </Field>
@@ -90,7 +90,7 @@ export function SignupForm({
             placeholder="m@example.com"
             aria-invalid={Boolean(errors.email)}
             required
-            className="bg-background"
+            className="h-10 bg-background"
           />
           {errors.email ? (
             <FieldError>{errors.email}</FieldError>
@@ -110,7 +110,7 @@ export function SignupForm({
             autoComplete="new-password"
             aria-invalid={Boolean(errors.password)}
             required
-            className="bg-background"
+            className="h-10 bg-background"
           />
           {errors.password ? (
             <FieldError>{errors.password}</FieldError>
@@ -127,7 +127,7 @@ export function SignupForm({
             autoComplete="new-password"
             aria-invalid={Boolean(errors.confirm)}
             required
-            className="bg-background"
+            className="h-10 bg-background"
           />
           {errors.confirm ? (
             <FieldError>{errors.confirm}</FieldError>
@@ -136,7 +136,7 @@ export function SignupForm({
           )}
         </Field>
         <Field>
-          <Button type="submit" disabled={loading}>
+          <Button type="submit" size="lg" className="h-10" disabled={loading}>
             {loading && <Loader2Icon className="animate-spin" />}
             {loading ? "Creating account..." : "Create Account"}
           </Button>
@@ -145,6 +145,8 @@ export function SignupForm({
         <Field>
           <Button
             variant="outline"
+            size="lg"
+            className="h-10"
             type="button"
             onClick={() => toast.info("GitHub sign up isn't set up in this demo")}
           >

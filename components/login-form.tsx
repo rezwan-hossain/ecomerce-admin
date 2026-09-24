@@ -70,6 +70,7 @@ export function LoginForm({
             placeholder="m@example.com"
             aria-invalid={Boolean(errors.email)}
             required
+            className="h-10"
           />
           <FieldError>{errors.email}</FieldError>
         </Field>
@@ -94,11 +95,12 @@ export function LoginForm({
             autoComplete="current-password"
             aria-invalid={Boolean(errors.password)}
             required
+            className="h-10"
           />
           <FieldError>{errors.password}</FieldError>
         </Field>
         <Field>
-          <Button type="submit" disabled={loading}>
+          <Button type="submit" size="lg" className="h-10" disabled={loading}>
             {loading && <Loader2Icon className="animate-spin" />}
             {loading ? "Logging in..." : "Login"}
           </Button>
@@ -107,6 +109,8 @@ export function LoginForm({
         <Field>
           <Button
             variant="outline"
+            size="lg"
+            className="h-10"
             type="button"
             onClick={() => toast.info("GitHub login isn't set up in this demo")}
           >
