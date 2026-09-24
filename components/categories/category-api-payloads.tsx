@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useFormContext, useWatch } from "react-hook-form"
 import { CheckIcon, CopyIcon } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -13,10 +14,10 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { nextPosition } from "@/lib/category-tree"
 import type { Category } from "@/lib/demo-data"
 import { cn } from "@/lib/utils"
-
-import type { CategoryDraft } from "./category-editor"
+import type { CategoryFormValues } from "@/lib/validations/category"
 
 type Method = "GET" | "POST" | "PATCH" | "DELETE"
 
@@ -88,24 +89,37 @@ function CodeBlock({ label, value }: { label: string; value: unknown }) {
   )
 }
 
+/**
+ * Shows the request and response for each category action, filled in with
+ * the live form values. Must be rendered inside the page's <FormProvider>.
+ */
 export function CategoryApiPayloads({
   categories,
   original,
-  draft,
   counts,
 }: {
   categories: Category[]
   /** The saved category being edited, or null when creating. */
   original: Category | null
-  draft: CategoryDraft
   counts: (id: string) => { products: number; children: number }
 }) {
+  // Re-renders whenever any form field changes.
+  const { control } = useFormContext<CategoryFormValues>()
+  const draft = useWatch({ control })
+  const parentId = draft.parentId ?? null
+
+  // Same rule as saving: a new parent (or a new category) goes last.
+  const position =
+    original && original.parentId === parentId
+      ? original.position
+      : nextPosition(categories, parentId)
+
   const fields = {
-    name: draft.name.trim(),
-    slug: draft.slug.trim(),
-    parentId: draft.parentId,
-    isActive: draft.isActive,
-    position: Number(draft.position) || 0,
+    name: (draft.name ?? "").trim(),
+    slug: (draft.slug ?? "").trim().toLowerCase(),
+    parentId,
+    isActive: draft.isActive ?? true,
+    position,
   }
   const sample = original ?? categories[0]
   const id = sample?.id ?? ":id"

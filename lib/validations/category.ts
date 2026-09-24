@@ -2,9 +2,23 @@ import { z } from "zod"
 
 import { SLUG_PATTERN } from "@/lib/slug"
 
-// Client-side mirror of the Prisma `Category` model: name String,
-// slug String @unique, isActive Boolean, position Int, parentId String?
-export const categorySchema = z.object({
+/**
+ * Validation rules for the "Edit category" form.
+ *
+ * They mirror the Prisma `Category` model:
+ *   name     String
+ *   slug     String  @unique
+ *   parentId String?          (null = top-level category)
+ *   isActive Boolean          ("Show on storefront")
+ *
+ * `position` is not part of the form: it's changed with the Move up/down
+ * buttons or drag and drop, and saved straight away.
+ *
+ * Rules that need the other categories (unique slug, unique name among
+ * siblings, max depth) can't live here. They're checked in
+ * `findCategoryConflicts` in `lib/category-tree.ts` when the form is saved.
+ */
+export const categoryFormSchema = z.object({
   name: z
     .string()
     .trim()
@@ -18,12 +32,9 @@ export const categorySchema = z.object({
     .regex(SLUG_PATTERN, "Use lowercase letters, numbers and single hyphens"),
   parentId: z.string().nullable(),
   isActive: z.boolean(),
-  position: z.coerce
-    .number({ error: "Enter a number" })
-    .int("Use a whole number")
-    .min(0, "Can't be negative")
-    .max(9999, "Keep it under 10,000"),
 })
 
-export type CategoryInput = z.input<typeof categorySchema>
-export type CategoryValues = z.output<typeof categorySchema>
+/** What the form holds while the user is typing. */
+export type CategoryFormValues = z.input<typeof categoryFormSchema>
+/** What the form gives us after validation (names and slugs trimmed). */
+export type CategoryFormOutput = z.output<typeof categoryFormSchema>

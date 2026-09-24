@@ -1,27 +1,40 @@
 "use client"
 
+/**
+ * The Categories page.
+ *
+ * This component owns the page's data and connects the pieces:
+ *
+ *   ┌──────────────── CategoriesManager ─────────────────┐
+ *   │  CategoryTree          │  CategoryEditor (the form) │
+ *   │  (browse, drag, +)     │                            │
+ *   ├────────────────────────┴────────────────────────────┤
+ *   │  CategoryApiPayloads (what each action would send)  │
+ *   └─────────────────────────────────────────────────────┘
+ *
+ * Data:
+ *   categories  – the saved categories (a flat list, like the database)
+ *   links       – which products are in which category
+ *   selectedId  – the category open in the editor (null = creating a new one)
+ *   form        – React Hook Form state for the editor (see useForm below)
+ *
+ * The tree logic itself (moving, deleting, rules) lives in
+ * lib/category-tree.ts as plain functions, so this file stays about wiring.
+ */
 import * as React from "react"
+import { FormProvider, useForm } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
 import { PlusIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { CategoryApiPayloads } from "@/components/categories/category-api-payloads"
 import {
-  CategoryEditor,
-  type CategoryDraft,
-  type DraftErrors,
-} from "@/components/categories/category-editor"
+  DeleteCategoryDialog,
+  DiscardChangesDialog,
+} from "@/components/categories/category-dialogs"
+import { CategoryEditor } from "@/components/categories/category-editor"
 import { CategoryTree } from "@/components/categories/category-tree"
 import { PageHeader } from "@/components/page-header"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -32,37 +45,40 @@ import {
 } from "@/components/ui/card"
 import {
   buildTree,
-  moveError,
+  deleteCategory,
+  findCategoryConflicts,
+  findSiblingNamed,
   nextPosition,
+  placeCategory,
   sortedSiblings,
 } from "@/lib/category-tree"
 import type { Category, ProductCategoryLink } from "@/lib/demo-data"
 import { uuidv7 } from "@/lib/uuid"
-import { categorySchema } from "@/lib/validations/category"
+import {
+  categoryFormSchema,
+  type CategoryFormOutput,
+  type CategoryFormValues,
+} from "@/lib/validations/category"
 
-function draftFrom(category: Category): CategoryDraft {
+/** Form values for an existing category. */
+function toFormValues(category: Category): CategoryFormValues {
   return {
     name: category.name,
     slug: category.slug,
     parentId: category.parentId,
     isActive: category.isActive,
-    position: String(category.position),
   }
 }
 
-function sameDraft(a: CategoryDraft, b: CategoryDraft) {
-  return (
-    a.name === b.name &&
-    a.slug === b.slug &&
-    a.parentId === b.parentId &&
-    a.isActive === b.isActive &&
-    a.position === b.position
-  )
+/** Form values for a brand-new category. */
+function emptyFormValues(parentId: string | null = null): CategoryFormValues {
+  return { name: "", slug: "", parentId, isActive: true }
 }
 
-type Pending =
-  | { type: "select"; id: string }
-  | { type: "new"; parentId?: string | null }
+/** Something the user asked to open, which may need a "discard?" check first. */
+type OpenRequest =
+  | { type: "edit"; id: string }
+  | { type: "new"; parentId: string | null }
 
 export function CategoriesManager({
   initialCategories,
@@ -71,24 +87,30 @@ export function CategoriesManager({
   initialCategories: Category[]
   initialLinks: ProductCategoryLink[]
 }) {
+  // ── State ────────────────────────────────────────────────────────────────
   const [categories, setCategories] = React.useState(initialCategories)
   const [links, setLinks] = React.useState(initialLinks)
-  const firstId = buildTree(initialCategories)[0]?.id ?? null
-  // null while creating a new category.
-  const [selectedId, setSelectedId] = React.useState<string | null>(firstId)
-  const original = selectedId
-    ? (categories.find((c) => c.id === selectedId) ?? null)
-    : null
-  const [draft, setDraft] = React.useState<CategoryDraft>(() => {
-    const first = initialCategories.find((c) => c.id === firstId)
-    return first ? draftFrom(first) : emptyDraft(initialCategories)
-  })
-  const [slugTouched, setSlugTouched] = React.useState(true)
-  const [errors, setErrors] = React.useState<DraftErrors>({})
-  const [pending, setPending] = React.useState<Pending | null>(null)
-  const [confirmDelete, setConfirmDelete] = React.useState(false)
+  const [selectedId, setSelectedId] = React.useState<string | null>(
+    () => buildTree(initialCategories)[0]?.id ?? null
+  )
+  // Set while the "Discard unsaved changes?" dialog is asking.
+  const [waitingToOpen, setWaitingToOpen] = React.useState<OpenRequest | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = React.useState(false)
 
+  const selected = categories.find((c) => c.id === selectedId) ?? null
+
+  // ── The form ─────────────────────────────────────────────────────────────
+  // zodResolver runs categoryFormSchema on submit and puts any errors into
+  // form.formState.errors. formState.isDirty tells us about unsaved changes.
+  const form = useForm<CategoryFormValues, unknown, CategoryFormOutput>({
+    resolver: zodResolver(categoryFormSchema),
+    defaultValues: selected ? toFormValues(selected) : emptyFormValues(),
+  })
+  const hasUnsavedChanges = form.formState.isDirty
+
+  // ── Derived data ─────────────────────────────────────────────────────────
   const tree = React.useMemo(() => buildTree(categories), [categories])
+
   const productCounts = React.useMemo(() => {
     const counts = new Map<string, number>()
     for (const link of links) {
@@ -96,173 +118,99 @@ export function CategoriesManager({
     }
     return counts
   }, [links])
-  const counts = (id: string) => ({
-    products: productCounts.get(id) ?? 0,
-    children: categories.filter((c) => c.parentId === id).length,
-  })
 
-  const dirty = original
-    ? !sameDraft(draft, draftFrom(original))
-    : Boolean(draft.name.trim() || draft.slug.trim())
+  const productCountOf = (id: string) => productCounts.get(id) ?? 0
+  const childCountOf = (id: string) => categories.filter((c) => c.parentId === id).length
   const hiddenCount = categories.filter((c) => !c.isActive).length
 
-  function emptyDraft(list: Category[], parentId: string | null = null): CategoryDraft {
-    return {
-      name: "",
-      slug: "",
-      parentId,
-      isActive: true,
-      position: String(nextPosition(list, parentId)),
-    }
-  }
+  // ── Opening a category (or a blank form) ─────────────────────────────────
 
-  function load(target: Pending) {
-    setErrors({})
-    if (target.type === "new") {
-      setSelectedId(null)
-      setDraft(emptyDraft(categories, target.parentId ?? null))
-      setSlugTouched(false)
-    } else {
-      const category = categories.find((c) => c.id === target.id)
+  /** Opens something in the editor, no questions asked. */
+  function open(request: OpenRequest) {
+    if (request.type === "edit") {
+      const category = categories.find((c) => c.id === request.id)
       if (!category) return
       setSelectedId(category.id)
-      setDraft(draftFrom(category))
-      setSlugTouched(true)
+      form.reset(toFormValues(category))
+    } else {
+      setSelectedId(null)
+      form.reset(emptyFormValues(request.parentId))
     }
   }
 
-  function request(target: Pending) {
-    if (target.type === "select" && target.id === selectedId) return
-    if (target.type === "new" && !original && !dirty) return load(target)
-    if (dirty) setPending(target)
-    else load(target)
+  /** Opens something, but asks first if the current form has unsaved edits. */
+  function requestOpen(request: OpenRequest) {
+    if (request.type === "edit" && request.id === selectedId) return
+    if (hasUnsavedChanges) setWaitingToOpen(request)
+    else open(request)
   }
 
-  function update<K extends keyof CategoryDraft>(field: K, value: CategoryDraft[K]) {
-    setDraft((current) => {
-      const next = { ...current, [field]: value }
-      // A new parent places it last there; switching back restores its order.
-      if (field === "parentId" && value !== current.parentId) {
-        next.position =
-          original && value === original.parentId
-            ? String(original.position)
-            : String(
-                nextPosition(
-                  categories.filter((c) => c.id !== selectedId),
-                  value as string | null
-                )
-              )
-      }
-      return next
-    })
-    setErrors((current) => ({ ...current, [field]: undefined }))
-  }
+  // ── Saving the form ──────────────────────────────────────────────────────
 
-  function validate(): Category | null {
-    const result = categorySchema.safeParse(draft)
-    const next: DraftErrors = {}
-    if (!result.success) {
-      for (const issue of result.error.issues) {
-        const field = issue.path[0] as keyof CategoryDraft
-        next[field] ??= issue.message
-      }
-      setErrors(next)
-      return null
-    }
-    const values = result.data
-    const others = categories.filter((c) => c.id !== selectedId)
-    if (others.some((c) => c.slug === values.slug)) {
-      next.slug = "This slug is already in use"
-    }
-    if (
-      others.some(
-        (c) =>
-          c.parentId === values.parentId &&
-          c.name.toLowerCase() === values.name.toLowerCase()
-      )
-    ) {
-      next.name = values.parentId
-        ? "Another subcategory here already has this name"
-        : "Another top-level category already has this name"
-    }
-    const parentError = moveError(categories, selectedId, values.parentId)
-    if (parentError) next.parentId = parentError
-    setErrors(next)
-    if (Object.keys(next).length) return null
-
-    const now = new Date().toISOString()
-    return original
-      ? { ...original, ...values, updatedAt: now }
-      : { id: uuidv7(), ...values, createdAt: now, updatedAt: now }
-  }
-
-  function save() {
-    const saved = validate()
-    if (!saved) {
+  /** Called by the form after the zod schema has passed. */
+  function save(values: CategoryFormOutput) {
+    // Rules that depend on other categories (unique slug, sibling names, depth).
+    const conflicts = findCategoryConflicts(categories, selectedId, values)
+    const fields = Object.keys(conflicts) as (keyof typeof conflicts)[]
+    if (fields.length) {
+      fields.forEach((field) => form.setError(field, { message: conflicts[field] }))
       toast.error("Please fix the highlighted fields")
       return
     }
-    if (original) {
-      setCategories((current) => current.map((c) => (c.id === saved.id ? saved : c)))
-      toast.success(`${saved.name} saved`)
+
+    const now = new Date().toISOString()
+
+    if (selected) {
+      // Update. Moving to a new parent puts it at the end there.
+      const parentChanged = values.parentId !== selected.parentId
+      const updated: Category = {
+        ...selected,
+        ...values,
+        position: parentChanged ? nextPosition(categories, values.parentId) : selected.position,
+        updatedAt: now,
+      }
+      setCategories((current) => current.map((c) => (c.id === updated.id ? updated : c)))
+      form.reset(toFormValues(updated)) // saved values become the new "clean" state
+      toast.success(`${updated.name} saved`)
     } else {
-      setCategories((current) => [...current, saved])
-      setSelectedId(saved.id)
-      setSlugTouched(true)
-      toast.success(`${saved.name} created`)
+      // Create. New categories go at the end of their parent.
+      const created: Category = {
+        id: uuidv7(),
+        ...values,
+        position: nextPosition(categories, values.parentId),
+        createdAt: now,
+        updatedAt: now,
+      }
+      setCategories((current) => [...current, created])
+      setSelectedId(created.id)
+      form.reset(toFormValues(created))
+      toast.success(`${created.name} created`)
     }
-    setDraft(draftFrom(saved))
   }
 
-  /**
-   * Moves `id` under `parentId` at `index` among its new siblings, then
-   * renumbers positions in the old and new sibling groups so they stay 0..n.
-   */
-  function place(id: string, parentId: string | null, index: number) {
+  function discardChanges() {
+    if (selected) form.reset() // back to the last saved values
+    else if (tree[0]) open({ type: "edit", id: tree[0].id }) // cancel "new"
+  }
+
+  // ── Moving (drag and drop, Move up / Move down) ──────────────────────────
+  // Moves are saved immediately, unlike form edits.
+
+  function move(id: string, parentId: string | null, index: number) {
     const category = categories.find((c) => c.id === id)
     if (!category) return
+
     const parentChanged = category.parentId !== parentId
-    if (
-      parentChanged &&
-      categories.some(
-        (c) =>
-          c.id !== id &&
-          c.parentId === parentId &&
-          c.name.toLowerCase() === category.name.toLowerCase()
-      )
-    ) {
+    if (parentChanged && findSiblingNamed(categories, category.name, parentId, id)) {
       toast.error(`There's already a “${category.name}” there`)
       return
     }
 
-    const newSiblings = sortedSiblings(categories, parentId).filter((c) => c.id !== id)
-    newSiblings.splice(index, 0, category)
-    const updates = new Map<string, { parentId: string | null; position: number }>()
-    newSiblings.forEach((c, i) => updates.set(c.id, { parentId, position: i }))
-    if (parentChanged) {
-      sortedSiblings(categories, category.parentId)
-        .filter((c) => c.id !== id)
-        .forEach((c, i) => updates.set(c.id, { parentId: c.parentId, position: i }))
-    }
+    setCategories(placeCategory(categories, id, parentId, index))
 
-    const now = new Date().toISOString()
-    setCategories((current) =>
-      current.map((c) => {
-        const u = updates.get(c.id)
-        return !u || (u.parentId === c.parentId && u.position === c.position)
-          ? c
-          : { ...c, ...u, updatedAt: now }
-      })
-    )
-    // Keep the open editor in sync with its saved parent and position.
-    const selected = selectedId ? updates.get(selectedId) : undefined
-    if (selected) {
-      setDraft((current) => ({
-        ...current,
-        ...(selectedId === id ? { parentId: selected.parentId } : {}),
-        position: String(selected.position),
-      }))
-    }
+    // If the open category moved, its saved parent changed too. Update the
+    // form's "saved" value for parentId without losing other unsaved edits.
+    if (id === selectedId) form.resetField("parentId", { defaultValue: parentId })
 
     const parent = categories.find((c) => c.id === parentId)
     toast.success(
@@ -274,49 +222,46 @@ export function CategoriesManager({
     )
   }
 
-  function reorder(direction: "up" | "down") {
-    if (!original) return
-    const siblings = sortedSiblings(categories, original.parentId)
-    const index = siblings.findIndex((c) => c.id === original.id)
-    const target = direction === "up" ? index - 1 : index + 1
-    if (index < 0 || target < 0 || target >= siblings.length) return
-    place(original.id, original.parentId, target)
+  function moveUpOrDown(direction: "up" | "down") {
+    if (!selected) return
+    const siblings = sortedSiblings(categories, selected.parentId)
+    const index = siblings.findIndex((c) => c.id === selected.id)
+    const newIndex = direction === "up" ? index - 1 : index + 1
+    if (newIndex < 0 || newIndex >= siblings.length) return
+    move(selected.id, selected.parentId, newIndex)
   }
 
-  function remove() {
-    if (!original) return
-    const orphans = categories.filter((c) => c.parentId === original.id)
-    let position = nextPosition(categories, null)
-    const remaining = categories
-      .filter((c) => c.id !== original.id)
-      .map((c) =>
-        c.parentId === original.id ? { ...c, parentId: null, position: position++ } : c
-      )
+  // ── Deleting ─────────────────────────────────────────────────────────────
+
+  function confirmDelete() {
+    if (!selected) return
+    const orphanCount = childCountOf(selected.id)
+    const remaining = deleteCategory(categories, selected.id)
+
     setCategories(remaining)
-    setLinks((current) => current.filter((l) => l.categoryId !== original.id))
-    setConfirmDelete(false)
+    setLinks((current) => current.filter((l) => l.categoryId !== selected.id))
+    setConfirmingDelete(false)
     toast.success(
-      orphans.length
-        ? `${original.name} deleted · ${orphans.length} moved to top level`
-        : `${original.name} deleted`
+      orphanCount
+        ? `${selected.name} deleted · ${orphanCount} moved to top level`
+        : `${selected.name} deleted`
     )
-    const next = buildTree(remaining)[0]
-    if (next) {
-      setSelectedId(next.id)
-      setDraft(draftFrom(next))
-      setSlugTouched(true)
+
+    // Open the first remaining category, or a blank form if none are left.
+    const first = buildTree(remaining)[0]
+    if (first) {
+      setSelectedId(first.id)
+      form.reset(toFormValues(first))
     } else {
-      load({ type: "new" })
+      open({ type: "new", parentId: null })
     }
-    setErrors({})
   }
 
-  const deleteCounts = original ? counts(original.id) : { products: 0, children: 0 }
-
+  // ── Page ─────────────────────────────────────────────────────────────────
   return (
-    <>
+    <FormProvider {...form}>
       <PageHeader title="Categories" description="Organize your catalog into a browsable tree.">
-        <Button onClick={() => request({ type: "new" })}>
+        <Button onClick={() => requestOpen({ type: "new", parentId: null })}>
           <PlusIcon data-icon="inline-start" />
           New category
         </Button>
@@ -336,9 +281,9 @@ export function CategoriesManager({
               tree={tree}
               productCounts={productCounts}
               selectedId={selectedId}
-              onSelect={(id) => request({ type: "select", id })}
-              onPlace={place}
-              onAddChild={(parentId) => request({ type: "new", parentId })}
+              onSelect={(id) => requestOpen({ type: "edit", id })}
+              onPlace={move}
+              onAddChild={(parentId) => requestOpen({ type: "new", parentId })}
             />
             <p className="mt-1 text-xs text-muted-foreground">
               {categories.length} categories
@@ -349,27 +294,16 @@ export function CategoriesManager({
 
         <div className="@5xl/main:sticky @5xl/main:top-4">
           <CategoryEditor
+            // A new key per category resets the editor's own UI state
+            // (like "generate slug from name") when you switch categories.
+            key={selectedId ?? "new"}
             categories={categories}
-            editingId={selectedId}
-            draft={draft}
-            errors={errors}
-            dirty={dirty}
-            slugTouched={slugTouched}
-            productCount={original ? (productCounts.get(original.id) ?? 0) : 0}
-            onChange={update}
-            onSlugTouched={setSlugTouched}
+            category={selected}
+            productCount={selected ? productCountOf(selected.id) : 0}
             onSave={save}
-            onDiscard={() => {
-              if (original) {
-                setDraft(draftFrom(original))
-                setErrors({})
-              } else {
-                const first = buildTree(categories)[0]
-                if (first) load({ type: "select", id: first.id })
-              }
-            }}
-            onDelete={() => setConfirmDelete(true)}
-            onReorder={reorder}
+            onDiscard={discardChanges}
+            onDelete={() => setConfirmingDelete(true)}
+            onReorder={moveUpOrDown}
           />
         </div>
       </div>
@@ -377,61 +311,29 @@ export function CategoriesManager({
       <div className="px-4 lg:px-6">
         <CategoryApiPayloads
           categories={categories}
-          original={original}
-          draft={draft}
-          counts={counts}
+          original={selected}
+          counts={(id) => ({ products: productCountOf(id), children: childCountOf(id) })}
         />
       </div>
 
-      <AlertDialog
-        open={pending !== null}
-        onOpenChange={(open) => !open && setPending(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Discard unsaved changes?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Your edits to {original?.name ?? "the new category"} haven&apos;t
-              been saved.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep editing</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={() => {
-                if (pending) load(pending)
-                setPending(null)
-              }}
-            >
-              Discard
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <DiscardChangesDialog
+        open={waitingToOpen !== null}
+        categoryName={selected?.name ?? null}
+        onKeepEditing={() => setWaitingToOpen(null)}
+        onDiscard={() => {
+          if (waitingToOpen) open(waitingToOpen)
+          setWaitingToOpen(null)
+        }}
+      />
 
-      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete {original?.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deleteCounts.children > 0 &&
-                `${deleteCounts.children} subcategor${deleteCounts.children === 1 ? "y" : "ies"} will move to the top level. `}
-              {deleteCounts.products > 0
-                ? `${deleteCounts.products} product${deleteCounts.products === 1 ? "" : "s"} will be unlinked from this category but stay in your catalog. `
-                : "No products are linked to it. "}
-              This can&apos;t be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={remove}>
-              Delete category
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
+      <DeleteCategoryDialog
+        open={confirmingDelete}
+        categoryName={selected?.name ?? ""}
+        subcategoryCount={selected ? childCountOf(selected.id) : 0}
+        productCount={selected ? productCountOf(selected.id) : 0}
+        onCancel={() => setConfirmingDelete(false)}
+        onConfirm={confirmDelete}
+      />
+    </FormProvider>
   )
 }
-

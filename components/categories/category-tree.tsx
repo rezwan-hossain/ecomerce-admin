@@ -1,5 +1,23 @@
 "use client"
 
+/**
+ * The category tree on the left of the Categories page.
+ *
+ * What you can do:
+ *   - Click a row to open it in the editor.
+ *   - Click "+" to create a subcategory under that row.
+ *   - Search by name or slug (matching rows keep their parents visible).
+ *   - Drag a row to move it. Where you drop decides what happens:
+ *       top edge of a row    → placed just before it (same parent)
+ *       middle of a row      → nested inside it (as its last child)
+ *       bottom edge of a row → placed just after it (same parent)
+ *       "Drop here…" area    → becomes a top-level category
+ *
+ * Drag and drop uses @dnd-kit: every row is both draggable (useDraggable)
+ * and a drop target (useDroppable). The rules for whether a drop is allowed
+ * are in `resolveDrop` in lib/category-tree.ts.
+ */
+
 import * as React from "react"
 import {
   DndContext,
@@ -38,7 +56,9 @@ import {
 import type { Category } from "@/lib/demo-data"
 import { cn } from "@/lib/utils"
 
+/** Drop-target id of the "make it top-level" area under the tree. */
 const ROOT = "root"
+/** Layout, in pixels: indent per level, row padding, chevron size. */
 const INDENT = 22
 const ROW_PADDING = 8
 const CHEVRON = 20

@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { Controller, useFormContext, useWatch } from "react-hook-form"
 import { Trash2Icon } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -40,123 +41,50 @@ import {
 } from "@/lib/category-tree"
 import type { Category } from "@/lib/demo-data"
 import { slugify } from "@/lib/slug"
+import type {
+  CategoryFormOutput,
+  CategoryFormValues,
+} from "@/lib/validations/category"
 
-export type CategoryDraft = {
-  name: string
-  slug: string
-  parentId: string | null
-  isActive: boolean
-  position: string
+type CategoryEditorProps = {
+  categories: Category[]
+  /** The saved category being edited, or null when creating a new one. */
+  category: Category | null
+  productCount: number
+  onSave: (values: CategoryFormOutput) => void
+  onDiscard: () => void
+  onDelete: () => void
+  /** Swaps the category with the sibling above or below it. */
+  onReorder: (direction: "up" | "down") => void
 }
 
-export type DraftErrors = Partial<Record<keyof CategoryDraft, string>>
-
-const ROOT_VALUE = "__root__"
-
-function flatten(nodes: CategoryNode[], depth = 1): { node: CategoryNode; depth: number }[] {
-  return nodes.flatMap((node) => [
-    { node, depth },
-    ...flatten(node.children, depth + 1),
-  ])
-}
-
-function describeOrder(
-  categories: Category[],
-  editingId: string | null,
-  draftParentId: string | null
-) {
-  const parentName = (id: string | null) => {
-    const parent = categories.find((c) => c.id === id)
-    return parent ? `in “${parent.name}”` : "at the top level"
-  }
-  const saved = editingId ? categories.find((c) => c.id === editingId) : null
-  if (!saved) {
-    return {
-      label: `Will be added last ${parentName(draftParentId)}.`,
-      canMoveUp: false,
-      canMoveDown: false,
-    }
-  }
-  if (saved.parentId !== draftParentId) {
-    return {
-      label: `Moves to the end ${parentName(draftParentId)} when saved.`,
-      canMoveUp: false,
-      canMoveDown: false,
-    }
-  }
-  const siblings = sortedSiblings(categories, saved.parentId)
-  const index = siblings.findIndex((c) => c.id === saved.id)
-  return {
-    label: `Position ${index + 1} of ${siblings.length} ${parentName(saved.parentId)}`,
-    canMoveUp: index > 0,
-    canMoveDown: index < siblings.length - 1,
-  }
-}
-
+/**
+ * The "Edit category" / "New category" panel.
+ *
+ * The form itself (values, validation, dirty state) lives in the parent's
+ * `useForm`, shared through <FormProvider>. This component only draws it.
+ *
+ * Give it a `key` of the category id, so switching categories starts fresh.
+ */
 export function CategoryEditor({
   categories,
-  editingId,
-  draft,
-  errors,
-  dirty,
-  slugTouched,
+  category,
   productCount,
-  onChange,
-  onSlugTouched,
   onSave,
   onDiscard,
   onDelete,
   onReorder,
-}: {
-  categories: Category[]
-  /** Id of the category being edited, or null when creating a new one. */
-  editingId: string | null
-  draft: CategoryDraft
-  errors: DraftErrors
-  dirty: boolean
-  slugTouched: boolean
-  productCount: number
-  onChange: <K extends keyof CategoryDraft>(field: K, value: CategoryDraft[K]) => void
-  onSlugTouched: (touched: boolean) => void
-  onSave: () => void
-  onDiscard: () => void
-  onDelete: () => void
-  /** Swaps the saved category with its previous or next sibling. */
-  onReorder: (direction: "up" | "down") => void
-}) {
-  const isNew = editingId === null
-  const subcategories = editingId
-    ? categories.filter((c) => c.parentId === editingId).length
-    : 0
-
-  const order = describeOrder(categories, editingId, draft.parentId)
-
-  const parentOptions = React.useMemo(
-    () =>
-      flatten(buildTree(categories))
-        .filter(({ node }) => node.id !== editingId)
-        .map(({ node, depth }) => ({
-          value: node.id,
-          label: node.name,
-          depth,
-          disabledReason: moveError(categories, editingId, node.id),
-        })),
-    [categories, editingId]
-  )
-
-  const selectItems = [
-    { value: ROOT_VALUE, label: "None — top level" },
-    ...parentOptions.map((o) => ({ value: o.value, label: o.label })),
-  ]
+}: CategoryEditorProps) {
+  const isNew = category === null
+  const form = useFormContext<CategoryFormValues, unknown, CategoryFormOutput>()
+  const { isDirty, errors } = form.formState
 
   return (
     <Card className="shadow-xs">
+      {/* handleSubmit validates with the zod schema first, then calls onSave. */}
       <form
         noValidate
-        onSubmit={(e) => {
-          e.preventDefault()
-          onSave()
-        }}
+        onSubmit={form.handleSubmit(onSave)}
         className="flex flex-col gap-(--card-spacing)"
       >
         <CardHeader>
@@ -166,7 +94,7 @@ export function CategoryEditor({
               ? "It will be added at the end of its parent."
               : "Changes apply after you save."}
           </CardDescription>
-          {dirty && (
+          {isDirty && (
             <CardAction>
               <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400">
                 Unsaved changes
@@ -177,172 +105,54 @@ export function CategoryEditor({
 
         <CardContent>
           <FieldGroup>
-            <Field data-invalid={Boolean(errors.name)}>
-              <FieldLabel htmlFor="category-name">
-                Name <span className="text-destructive">*</span>
-              </FieldLabel>
-              <Input
-                id="category-name"
-                value={draft.name}
-                onChange={(e) => {
-                  onChange("name", e.target.value)
-                  if (!slugTouched) onChange("slug", slugify(e.target.value))
-                }}
-                placeholder="e.g. Running Shoes"
-                aria-invalid={Boolean(errors.name)}
-              />
-              <FieldError>{errors.name}</FieldError>
-            </Field>
+            <NameAndSlugFields autoSlugByDefault={isNew} />
 
-            <Field data-invalid={Boolean(errors.slug)}>
-              <div className="flex items-center justify-between">
-                <FieldLabel htmlFor="category-slug">
-                  Slug <span className="text-destructive">*</span>
-                </FieldLabel>
-                {slugTouched ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onSlugTouched(false)
-                      onChange("slug", slugify(draft.name))
-                    }}
-                    className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                  >
-                    Generate from name
-                  </button>
-                ) : (
-                  <span className="text-xs text-muted-foreground">
-                    Generated from name
-                  </span>
-                )}
-              </div>
-              <Input
-                id="category-slug"
-                value={draft.slug}
-                onChange={(e) => {
-                  onSlugTouched(true)
-                  onChange("slug", e.target.value.toLowerCase())
-                }}
-                className="font-mono"
-                aria-invalid={Boolean(errors.slug)}
-              />
-              <FieldError>{errors.slug}</FieldError>
-            </Field>
+            <StorefrontUrl categories={categories} />
 
-            <Field>
-              <FieldLabel>Storefront URL</FieldLabel>
-              <div className="truncate rounded-md border bg-muted/50 px-2.5 py-1.5 font-mono text-xs text-muted-foreground">
-                acme.store
-                <span className="text-foreground">
-                  {storefrontPath(categories, draft.parentId, draft.slug)}
-                </span>
-              </div>
-            </Field>
-
-            <Field data-invalid={Boolean(errors.parentId)}>
-              <FieldLabel htmlFor="category-parent">Parent category</FieldLabel>
-              <Select
-                value={draft.parentId ?? ROOT_VALUE}
-                onValueChange={(value) =>
-                  onChange("parentId", !value || value === ROOT_VALUE ? null : value)
-                }
-                items={selectItems}
-              >
-                <SelectTrigger id="category-parent" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem value={ROOT_VALUE}>None — top level</SelectItem>
-                    {parentOptions.map((o) => (
-                      <SelectItem
-                        key={o.value}
-                        value={o.value}
-                        disabled={Boolean(o.disabledReason)}
-                        style={{ paddingLeft: `${(o.depth - 1) * 16 + 8}px` }}
-                      >
-                        {o.label}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-              {errors.parentId ? (
-                <FieldError>{errors.parentId}</FieldError>
-              ) : (
-                <FieldDescription>
-                  You can also drag it onto another category in the tree.
-                </FieldDescription>
-              )}
-            </Field>
+            <ParentField categories={categories} editingId={category?.id ?? null} />
 
             <Field>
               <FieldLabel htmlFor="category-active">Visibility</FieldLabel>
-              <div className="flex items-center gap-2">
-                <Switch
-                  id="category-active"
-                  checked={draft.isActive}
-                  onCheckedChange={(checked) => onChange("isActive", checked)}
-                />
-                <span className="text-sm">Show on storefront</span>
-              </div>
-              <FieldDescription>
-                {draft.isActive
-                  ? "Customers can browse this category."
-                  : "Hidden from the storefront. Its products can still be found elsewhere."}
-              </FieldDescription>
+              <Controller
+                name="isActive"
+                control={form.control}
+                render={({ field }) => (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="category-active"
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                      <span className="text-sm">Show on storefront</span>
+                    </div>
+                    <FieldDescription>
+                      {field.value
+                        ? "Customers can browse this category."
+                        : "Hidden from the storefront. Its products can still be found elsewhere."}
+                    </FieldDescription>
+                  </>
+                )}
+              />
             </Field>
 
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="flex flex-col gap-1 rounded-lg border p-4">
-                <div className="text-sm font-medium">Order</div>
-                <p className="text-sm text-muted-foreground">{order.label}</p>
-                <div className="mt-2 flex gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={!order.canMoveUp}
-                    onClick={() => onReorder("up")}
-                  >
-                    Move up
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={!order.canMoveDown}
-                    onClick={() => onReorder("down")}
-                  >
-                    Move down
-                  </Button>
-                </div>
-              </div>
-              <div className="flex flex-col gap-1 rounded-lg border p-4">
-                <div className="text-sm font-medium">Contents</div>
-                <p className="text-sm text-muted-foreground">
-                  {isNew
-                    ? "Empty until you add products or subcategories."
-                    : `${productCount} product${productCount === 1 ? "" : "s"}, ${subcategories} direct subcategor${subcategories === 1 ? "y" : "ies"}`}
-                </p>
-              </div>
+              <OrderCard
+                categories={categories}
+                category={category}
+                onReorder={onReorder}
+              />
+              <InfoCard title="Contents">
+                {isNew
+                  ? "Empty until you add products or subcategories."
+                  : contentsSummary(categories, category.id, productCount)}
+              </InfoCard>
             </div>
 
-            {!isNew && (
-              <div className="flex items-center justify-between gap-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
-                <div className="text-sm">
-                  <div className="font-medium">Delete category</div>
-                  <div className="text-xs text-muted-foreground">
-                    Subcategories move up to the top level. Products stay in
-                    your catalog.
-                  </div>
-                </div>
-                <Button type="button" variant="destructive" size="sm" onClick={onDelete}>
-                  <Trash2Icon data-icon="inline-start" />
-                  Delete
-                </Button>
-              </div>
-            )}
+            {!isNew && <DeleteZone onDelete={onDelete} />}
+
+            {/* Errors that don't belong to one field, e.g. a failed save. */}
+            {errors.root && <FieldError>{errors.root.message}</FieldError>}
           </FieldGroup>
         </CardContent>
 
@@ -351,16 +161,293 @@ export function CategoryEditor({
             type="button"
             variant="ghost"
             onClick={onDiscard}
-            disabled={!dirty && !isNew}
+            disabled={!isDirty && !isNew}
           >
             {isNew ? "Cancel" : "Discard"}
           </Button>
-          <Button type="submit" disabled={!dirty}>
+          <Button type="submit" disabled={!isDirty}>
             {isNew ? "Create category" : "Save changes"}
           </Button>
         </CardFooter>
       </form>
-
     </Card>
+  )
+}
+
+// ─── Fields ────────────────────────────────────────────────────────────────
+
+/**
+ * Name + slug. While `autoSlug` is on, typing a name also fills in the slug
+ * ("Running Shoes" → "running-shoes"). Editing the slug by hand turns it off.
+ */
+function NameAndSlugFields({ autoSlugByDefault }: { autoSlugByDefault: boolean }) {
+  const { register, setValue, getValues, formState } =
+    useFormContext<CategoryFormValues>()
+  const [autoSlug, setAutoSlug] = React.useState(autoSlugByDefault)
+  const { errors } = formState
+
+  function fillSlugFromName(name: string) {
+    setValue("slug", slugify(name), {
+      shouldDirty: true,
+      // Re-check the slug right away if the user already tried to save.
+      shouldValidate: formState.isSubmitted,
+    })
+  }
+
+  return (
+    <>
+      <Field data-invalid={Boolean(errors.name)}>
+        <FieldLabel htmlFor="category-name">
+          Name <span className="text-destructive">*</span>
+        </FieldLabel>
+        <Input
+          id="category-name"
+          placeholder="e.g. Running Shoes"
+          aria-invalid={Boolean(errors.name)}
+          {...register("name", {
+            onChange: (e) => {
+              if (autoSlug) fillSlugFromName(e.target.value)
+            },
+          })}
+        />
+        <FieldError>{errors.name?.message}</FieldError>
+      </Field>
+
+      <Field data-invalid={Boolean(errors.slug)}>
+        <div className="flex items-center justify-between">
+          <FieldLabel htmlFor="category-slug">
+            Slug <span className="text-destructive">*</span>
+          </FieldLabel>
+          {autoSlug ? (
+            <span className="text-xs text-muted-foreground">Generated from name</span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setAutoSlug(true)
+                fillSlugFromName(getValues("name"))
+              }}
+              className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              Generate from name
+            </button>
+          )}
+        </div>
+        <Input
+          id="category-slug"
+          className="font-mono lowercase"
+          aria-invalid={Boolean(errors.slug)}
+          {...register("slug", {
+            // Slugs are always lowercase, so lowercase as the user types.
+            setValueAs: (value: string) => value.toLowerCase(),
+            onChange: () => setAutoSlug(false),
+          })}
+        />
+        <FieldError>{errors.slug?.message}</FieldError>
+      </Field>
+    </>
+  )
+}
+
+/** Read-only preview of the category's URL, updated as you type. */
+function StorefrontUrl({ categories }: { categories: Category[] }) {
+  const { control } = useFormContext<CategoryFormValues>()
+  const [slug, parentId] = useWatch({ control, name: ["slug", "parentId"] })
+
+  return (
+    <Field>
+      <FieldLabel>Storefront URL</FieldLabel>
+      <div className="truncate rounded-md border bg-muted/50 px-2.5 py-1.5 font-mono text-xs text-muted-foreground">
+        acme.store
+        <span className="text-foreground">
+          {storefrontPath(categories, parentId, slug)}
+        </span>
+      </div>
+    </Field>
+  )
+}
+
+/** Value used in the <Select> for "no parent", since it can't hold null. */
+const TOP_LEVEL = "__top_level__"
+
+/**
+ * Parent picker. Lists every category indented by depth, and disables the
+ * ones that would break the tree (itself, its own subcategories, too deep).
+ */
+function ParentField({
+  categories,
+  editingId,
+}: {
+  categories: Category[]
+  editingId: string | null
+}) {
+  const { control } = useFormContext<CategoryFormValues>()
+
+  const options = React.useMemo(
+    () =>
+      flattenTree(buildTree(categories))
+        .filter(({ node }) => node.id !== editingId)
+        .map(({ node, depth }) => ({
+          value: node.id,
+          label: node.name,
+          depth,
+          disabled: moveError(categories, editingId, node.id) !== null,
+        })),
+    [categories, editingId]
+  )
+
+  return (
+    <Controller
+      name="parentId"
+      control={control}
+      render={({ field, fieldState }) => (
+        <Field data-invalid={fieldState.invalid}>
+          <FieldLabel htmlFor="category-parent">Parent category</FieldLabel>
+          <Select
+            value={field.value ?? TOP_LEVEL}
+            onValueChange={(value) =>
+              field.onChange(!value || value === TOP_LEVEL ? null : value)
+            }
+            items={[
+              { value: TOP_LEVEL, label: "None — top level" },
+              ...options.map(({ value, label }) => ({ value, label })),
+            ]}
+          >
+            <SelectTrigger id="category-parent" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value={TOP_LEVEL}>None — top level</SelectItem>
+                {options.map((option) => (
+                  <SelectItem
+                    key={option.value}
+                    value={option.value}
+                    disabled={option.disabled}
+                    style={{ paddingLeft: `${(option.depth - 1) * 16 + 8}px` }}
+                  >
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          {fieldState.error ? (
+            <FieldError>{fieldState.error.message}</FieldError>
+          ) : (
+            <FieldDescription>
+              You can also drag it onto another category in the tree.
+            </FieldDescription>
+          )}
+        </Field>
+      )}
+    />
+  )
+}
+
+function flattenTree(
+  nodes: CategoryNode[],
+  depth = 1
+): { node: CategoryNode; depth: number }[] {
+  return nodes.flatMap((node) => [
+    { node, depth },
+    ...flattenTree(node.children, depth + 1),
+  ])
+}
+
+// ─── Cards ─────────────────────────────────────────────────────────────────
+
+function InfoCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1 rounded-lg border p-4">
+      <div className="text-sm font-medium">{title}</div>
+      <div className="text-sm text-muted-foreground">{children}</div>
+    </div>
+  )
+}
+
+/**
+ * "Position 2 of 3 in “Apparel”" plus Move up / Move down.
+ * Moving only works for a saved category that isn't switching parents.
+ */
+function OrderCard({
+  categories,
+  category,
+  onReorder,
+}: {
+  categories: Category[]
+  category: Category | null
+  onReorder: (direction: "up" | "down") => void
+}) {
+  const { control } = useFormContext<CategoryFormValues>()
+  const parentId = useWatch({ control, name: "parentId" })
+
+  const whereLabel = (id: string | null) => {
+    const parent = categories.find((c) => c.id === id)
+    return parent ? `in “${parent.name}”` : "at the top level"
+  }
+
+  let text: string
+  let index = -1
+  let total = 0
+  if (!category) {
+    text = `Will be added last ${whereLabel(parentId)}.`
+  } else if (category.parentId !== parentId) {
+    text = `Moves to the end ${whereLabel(parentId)} when saved.`
+  } else {
+    const siblings = sortedSiblings(categories, category.parentId)
+    index = siblings.findIndex((c) => c.id === category.id)
+    total = siblings.length
+    text = `Position ${index + 1} of ${total} ${whereLabel(category.parentId)}`
+  }
+
+  return (
+    <InfoCard title="Order">
+      <p>{text}</p>
+      <div className="mt-3 flex gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={index <= 0}
+          onClick={() => onReorder("up")}
+        >
+          Move up
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={index < 0 || index >= total - 1}
+          onClick={() => onReorder("down")}
+        >
+          Move down
+        </Button>
+      </div>
+    </InfoCard>
+  )
+}
+
+function contentsSummary(categories: Category[], id: string, productCount: number) {
+  const subcategories = categories.filter((c) => c.parentId === id).length
+  const products = `${productCount} product${productCount === 1 ? "" : "s"}`
+  const subs = `${subcategories} direct subcategor${subcategories === 1 ? "y" : "ies"}`
+  return `${products}, ${subs}`
+}
+
+function DeleteZone({ onDelete }: { onDelete: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+      <div className="text-sm">
+        <div className="font-medium">Delete category</div>
+        <div className="text-xs text-muted-foreground">
+          Subcategories move up to the top level. Products stay in your catalog.
+        </div>
+      </div>
+      <Button type="button" variant="destructive" size="sm" onClick={onDelete}>
+        <Trash2Icon data-icon="inline-start" />
+        Delete
+      </Button>
+    </div>
   )
 }

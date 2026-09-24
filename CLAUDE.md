@@ -49,6 +49,9 @@ app/
   - Tree logic (depth limit `MAX_CATEGORY_DEPTH = 5`, cycle and depth checks, storefront path) is in `lib/category-tree.ts`.
   - Product links mirror `ProductCategory` (`productCategoryLinks` in `lib/demo-data.ts`, linked to every ancestor).
   - The page's "API payloads" section documents a *suggested* REST contract. It isn't the real backend API.
+  - **Forms use React Hook Form + zod** (`react-hook-form`, `@hookform/resolvers`). `categories-manager.tsx` owns `useForm({ resolver: zodResolver(categoryFormSchema) })` and shares it through `<FormProvider>`. The editor and the payloads panel read it with `useFormContext` / `useWatch`.
+    - Rules that need other records (unique slug, sibling names, depth) run on save through `findCategoryConflicts`, and are reported with `form.setError`.
+    - Tree changes are pure functions in `lib/category-tree.ts` (`placeCategory`, `deleteCategory`, `resolveDrop`). Use this setup for new forms.
 - **Shared UI:** `page-header.tsx`, `stat-cards.tsx`, `status-badge.tsx` (maps order, product and return statuses to icons).
 - The dashboard's big orders table (`components/data-table.tsx`) is the original shadcn block adapted to orders: drag to reorder, and a detail drawer.
 
