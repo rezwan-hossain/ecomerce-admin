@@ -231,21 +231,91 @@ export const categories: Category[] = [
   },
 ]
 
+// Mirrors the Prisma `Brand` model. DateTime fields are ISO strings once
+// serialized; `_count` matches Prisma's `include: { _count: { select: { products: true } } }`.
 export type Brand = {
   id: string
   name: string
-  website: string
+  slug: string
+  logoUrl: string | null
+  createdAt: string
+  updatedAt: string
+  _count: { products: number }
 }
 
-export const brands: Brand[] = [
-  { id: "soundwave", name: "Soundwave", website: "soundwave.example.com" },
-  { id: "pulse", name: "Pulse", website: "pulse.example.com" },
-  { id: "stride", name: "Stride", website: "stride.example.com" },
-  { id: "northfold", name: "Northfold", website: "northfold.example.com" },
-  { id: "basics-co", name: "Basics Co.", website: "basics.example.com" },
-  { id: "barista-pro", name: "Barista Pro", website: "baristapro.example.com" },
-  { id: "lumen", name: "Lumen", website: "lumen.example.com" },
+const brandSeed: Omit<Brand, "_count">[] = [
+  {
+    id: "0190f1a2-3b4c-7d5e-8f60-1a2b3c4d5e01",
+    name: "Soundwave",
+    slug: "soundwave",
+    logoUrl: "/brands/soundwave.svg",
+    createdAt: "2024-01-08T09:12:00.000Z",
+    updatedAt: "2024-06-02T14:30:00.000Z",
+  },
+  {
+    id: "0190f1a2-3b4c-7d5e-8f60-1a2b3c4d5e02",
+    name: "Pulse",
+    slug: "pulse",
+    logoUrl: "/brands/pulse.svg",
+    createdAt: "2024-01-15T11:40:00.000Z",
+    updatedAt: "2024-05-21T08:05:00.000Z",
+  },
+  {
+    id: "0190f1a2-3b4c-7d5e-8f60-1a2b3c4d5e03",
+    name: "Stride",
+    slug: "stride",
+    logoUrl: null,
+    createdAt: "2024-02-03T16:22:00.000Z",
+    updatedAt: "2024-02-03T16:22:00.000Z",
+  },
+  {
+    id: "0190f1a2-3b4c-7d5e-8f60-1a2b3c4d5e04",
+    name: "Northfold",
+    slug: "northfold",
+    logoUrl: "/brands/northfold.svg",
+    createdAt: "2024-02-19T10:00:00.000Z",
+    updatedAt: "2024-06-11T12:48:00.000Z",
+  },
+  {
+    id: "0190f1a2-3b4c-7d5e-8f60-1a2b3c4d5e05",
+    name: "Basics Co.",
+    slug: "basics-co",
+    logoUrl: null,
+    createdAt: "2024-03-07T13:15:00.000Z",
+    updatedAt: "2024-04-30T09:20:00.000Z",
+  },
+  {
+    id: "0190f1a2-3b4c-7d5e-8f60-1a2b3c4d5e06",
+    name: "Barista Pro",
+    slug: "barista-pro",
+    logoUrl: null,
+    createdAt: "2024-03-28T07:55:00.000Z",
+    updatedAt: "2024-03-28T07:55:00.000Z",
+  },
+  {
+    id: "0190f1a2-3b4c-7d5e-8f60-1a2b3c4d5e07",
+    name: "Lumen",
+    slug: "lumen",
+    logoUrl: "/brands/lumen.svg",
+    createdAt: "2024-04-12T15:10:00.000Z",
+    updatedAt: "2024-06-18T17:02:00.000Z",
+  },
+  {
+    id: "0190f1a2-3b4c-7d5e-8f60-1a2b3c4d5e08",
+    name: "Terra Outdoor",
+    slug: "terra-outdoor",
+    logoUrl: null,
+    createdAt: "2024-06-20T10:30:00.000Z",
+    updatedAt: "2024-06-20T10:30:00.000Z",
+  },
 ]
+
+export const brands: Brand[] = brandSeed.map((brand) => ({
+  ...brand,
+  _count: {
+    products: products.filter((p) => p.brand === brand.name).length,
+  },
+}))
 
 export type Attribute = {
   id: string

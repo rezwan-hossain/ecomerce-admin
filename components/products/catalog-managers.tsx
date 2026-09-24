@@ -20,7 +20,6 @@ import { Textarea } from "@/components/ui/textarea"
 import {
   products,
   type Attribute,
-  type Brand,
   type Category,
 } from "@/lib/demo-data"
 
@@ -232,116 +231,6 @@ export function CategoriesManager({ initial }: { initial: Category[] }) {
         getRowId={(c) => c.id}
         searchText={(c) => `${c.name} ${c.slug}`}
         searchPlaceholder="Search categories..."
-        className="px-4 lg:px-0"
-      />
-    </ManagerLayout>
-  )
-}
-
-export function BrandsManager({ initial }: { initial: Brand[] }) {
-  const [items, setItems] = React.useState(initial)
-  const [editingId, setEditingId] = React.useState<string | null>(null)
-  const [name, setName] = React.useState("")
-  const [website, setWebsite] = React.useState("")
-
-  function reset() {
-    setEditingId(null)
-    setName("")
-    setWebsite("")
-  }
-
-  function submit() {
-    if (!name.trim()) return toast.error("Brand name is required")
-    const item = { id: editingId ?? slugify(name), name: name.trim(), website }
-    setItems((current) =>
-      editingId
-        ? current.map((b) => (b.id === editingId ? item : b))
-        : [...current, item]
-    )
-    toast.success(editingId ? "Brand updated" : "Brand added")
-    reset()
-  }
-
-  const columns: ListColumn<Brand>[] = [
-    {
-      key: "name",
-      header: "Brand",
-      cell: (b) => (
-        <div className="flex items-center gap-3">
-          <div className="flex size-8 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">
-            {b.name.slice(0, 2).toUpperCase()}
-          </div>
-          <span className="font-medium">{b.name}</span>
-        </div>
-      ),
-    },
-    {
-      key: "website",
-      header: "Website",
-      cell: (b) => <span className="text-muted-foreground">{b.website || "—"}</span>,
-    },
-    {
-      key: "products",
-      header: "Products",
-      className: "text-right tabular-nums",
-      cell: (b) => productCount((p) => p.brand === b.name),
-    },
-    {
-      key: "actions",
-      header: <span className="sr-only">Actions</span>,
-      className: "w-24",
-      cell: (b) => (
-        <RowActions
-          onEdit={() => {
-            setEditingId(b.id)
-            setName(b.name)
-            setWebsite(b.website)
-          }}
-          onDelete={() => {
-            setItems((current) => current.filter((i) => i.id !== b.id))
-            toast.success(`${b.name} deleted`)
-          }}
-        />
-      ),
-    },
-  ]
-
-  return (
-    <ManagerLayout
-      title="Brand"
-      description="Manufacturers or labels your products belong to."
-      editing={Boolean(editingId)}
-      onSubmit={submit}
-      onCancel={reset}
-      fields={
-        <>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="brand-name">Name</Label>
-            <Input
-              id="brand-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Northfold"
-            />
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="brand-website">Website</Label>
-            <Input
-              id="brand-website"
-              value={website}
-              onChange={(e) => setWebsite(e.target.value)}
-              placeholder="brand.example.com"
-            />
-          </div>
-        </>
-      }
-    >
-      <ListTable
-        rows={items}
-        columns={columns}
-        getRowId={(b) => b.id}
-        searchText={(b) => b.name}
-        searchPlaceholder="Search brands..."
         className="px-4 lg:px-0"
       />
     </ManagerLayout>
