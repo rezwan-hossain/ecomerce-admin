@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/card"
 import {
   ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
@@ -132,11 +134,11 @@ const chartConfig = {
   },
   desktop: {
     label: "Online Store",
-    color: "var(--primary)",
+    color: "var(--chart-1)",
   },
   mobile: {
     label: "Mobile App",
-    color: "var(--primary)",
+    color: "var(--chart-2)",
   },
 } satisfies ChartConfig
 
@@ -190,6 +192,11 @@ export function ChartAreaInteractive() {
           </ToggleGroup>
           <Select
             value={timeRange}
+            items={[
+              { label: "Last 3 months", value: "90d" },
+              { label: "Last 30 days", value: "30d" },
+              { label: "Last 7 days", value: "7d" },
+            ]}
             onValueChange={(value) => {
               if (value !== null) {
                 setTimeRange(value)
@@ -220,35 +227,9 @@ export function ChartAreaInteractive() {
       <CardContent className="px-2 pt-4 sm:px-6 sm:pt-6">
         <ChartContainer
           config={chartConfig}
-          className="aspect-auto h-[250px] w-full"
+          className="aspect-auto h-[280px] w-full"
         >
           <AreaChart data={filteredData}>
-            <defs>
-              <linearGradient id="fillDesktop" x1="0" y1="0" x2="0" y2="1">
-                <stop
-                  offset="5%"
-                  stopColor="var(--color-desktop)"
-                  stopOpacity={1.0}
-                />
-                <stop
-                  offset="95%"
-                  stopColor="var(--color-desktop)"
-                  stopOpacity={0.1}
-                />
-              </linearGradient>
-              <linearGradient id="fillMobile" x1="0" y1="0" x2="0" y2="1">
-                <stop
-                  offset="5%"
-                  stopColor="var(--color-mobile)"
-                  stopOpacity={0.8}
-                />
-                <stop
-                  offset="95%"
-                  stopColor="var(--color-mobile)"
-                  stopOpacity={0.1}
-                />
-              </linearGradient>
-            </defs>
             <CartesianGrid vertical={false} />
             <XAxis
               dataKey="date"
@@ -265,7 +246,7 @@ export function ChartAreaInteractive() {
               }}
             />
             <ChartTooltip
-              cursor={false}
+              cursor={{ stroke: "var(--border)", strokeWidth: 1 }}
               content={
                 <ChartTooltipContent
                   labelFormatter={(value) => {
@@ -278,18 +259,23 @@ export function ChartAreaInteractive() {
                 />
               }
             />
+            <ChartLegend content={<ChartLegendContent />} />
             <Area
               dataKey="mobile"
-              type="natural"
-              fill="url(#fillMobile)"
+              type="monotone"
+              fill="var(--color-mobile)"
+              fillOpacity={0.1}
               stroke="var(--color-mobile)"
+              strokeWidth={2}
               stackId="a"
             />
             <Area
               dataKey="desktop"
-              type="natural"
-              fill="url(#fillDesktop)"
+              type="monotone"
+              fill="var(--color-desktop)"
+              fillOpacity={0.1}
               stroke="var(--color-desktop)"
+              strokeWidth={2}
               stackId="a"
             />
           </AreaChart>
