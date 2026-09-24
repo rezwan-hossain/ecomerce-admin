@@ -306,7 +306,7 @@ function TreeNode({
         aria-roledescription="Draggable category"
         onClick={() => onSelect(node.id)}
         className={cn(
-          "group relative flex h-11 cursor-pointer items-center gap-2 rounded-md pr-1 text-sm outline-none select-none hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring",
+          "group relative flex h-9.5 cursor-pointer items-center gap-2 rounded-md pr-1 text-sm outline-none select-none hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring",
           isSelected && "bg-primary/10 text-primary hover:bg-primary/15",
           isDragging && "opacity-40",
           target?.valid && target.zone === "inside" && "bg-primary/10 ring-2 ring-primary",
