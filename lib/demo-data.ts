@@ -191,45 +191,241 @@ export function getProductByName(name: string) {
   return products.find((product) => product.name === name)
 }
 
+// Mirrors the Prisma `Category` model: a tree via `parentId`, `slug` unique,
+// `name` unique among siblings (@@unique([parentId, name])). DateTime fields
+// are ISO strings once serialized.
 export type Category = {
   id: string
   name: string
   slug: string
-  description: string
+  parentId: string | null
+  isActive: boolean
+  position: number
+  createdAt: string
+  updatedAt: string
+}
+
+// Mirrors the Prisma `ProductCategory` join table.
+export type ProductCategoryLink = {
+  productId: string
+  categoryId: string
+  isPrimary: boolean
 }
 
 export const categories: Category[] = [
   {
-    id: "electronics",
+    id: "0190f1b0-5a6b-7c8d-9e0f-00000000c001",
     name: "Electronics",
     slug: "electronics",
-    description: "Audio, wearables and gadgets",
+    parentId: null,
+    isActive: true,
+    position: 0,
+    createdAt: "2024-01-05T09:00:00.000Z",
+    updatedAt: "2024-01-05T09:00:00.000Z",
   },
   {
-    id: "apparel",
+    id: "0190f1b0-5a6b-7c8d-9e0f-00000000c002",
+    name: "Audio",
+    slug: "audio",
+    parentId: "0190f1b0-5a6b-7c8d-9e0f-00000000c001",
+    isActive: true,
+    position: 0,
+    createdAt: "2024-01-05T09:00:00.000Z",
+    updatedAt: "2024-01-05T09:00:00.000Z",
+  },
+  {
+    id: "0190f1b0-5a6b-7c8d-9e0f-00000000c003",
+    name: "Wearables",
+    slug: "wearables",
+    parentId: "0190f1b0-5a6b-7c8d-9e0f-00000000c001",
+    isActive: true,
+    position: 1,
+    createdAt: "2024-01-09T09:00:00.000Z",
+    updatedAt: "2024-01-09T09:00:00.000Z",
+  },
+  {
+    id: "0190f1b0-5a6b-7c8d-9e0f-00000000c004",
     name: "Apparel",
     slug: "apparel",
-    description: "Clothing and footwear",
+    parentId: null,
+    isActive: true,
+    position: 1,
+    createdAt: "2024-01-06T09:00:00.000Z",
+    updatedAt: "2024-01-06T09:00:00.000Z",
   },
   {
-    id: "accessories",
+    id: "0190f1b0-5a6b-7c8d-9e0f-00000000c005",
+    name: "Footwear",
+    slug: "footwear",
+    parentId: "0190f1b0-5a6b-7c8d-9e0f-00000000c004",
+    isActive: true,
+    position: 0,
+    createdAt: "2024-01-12T09:00:00.000Z",
+    updatedAt: "2024-01-12T09:00:00.000Z",
+  },
+  {
+    id: "0190f1b0-5a6b-7c8d-9e0f-00000000c006",
+    name: "Tops",
+    slug: "tops",
+    parentId: "0190f1b0-5a6b-7c8d-9e0f-00000000c004",
+    isActive: true,
+    position: 1,
+    createdAt: "2024-01-12T09:00:00.000Z",
+    updatedAt: "2024-01-12T09:00:00.000Z",
+  },
+  {
+    id: "0190f1b0-5a6b-7c8d-9e0f-00000000c007",
+    name: "Outerwear",
+    slug: "outerwear",
+    parentId: "0190f1b0-5a6b-7c8d-9e0f-00000000c004",
+    isActive: false,
+    position: 2,
+    createdAt: "2024-02-20T09:00:00.000Z",
+    updatedAt: "2024-02-20T09:00:00.000Z",
+  },
+  {
+    id: "0190f1b0-5a6b-7c8d-9e0f-00000000c008",
     name: "Accessories",
     slug: "accessories",
-    description: "Bags, eyewear and more",
+    parentId: null,
+    isActive: true,
+    position: 2,
+    createdAt: "2024-01-06T09:00:00.000Z",
+    updatedAt: "2024-01-06T09:00:00.000Z",
   },
   {
-    id: "home-kitchen",
+    id: "0190f1b0-5a6b-7c8d-9e0f-00000000c009",
+    name: "Bags",
+    slug: "bags",
+    parentId: "0190f1b0-5a6b-7c8d-9e0f-00000000c008",
+    isActive: true,
+    position: 0,
+    createdAt: "2024-01-15T09:00:00.000Z",
+    updatedAt: "2024-01-15T09:00:00.000Z",
+  },
+  {
+    id: "0190f1b0-5a6b-7c8d-9e0f-00000000c010",
+    name: "Eyewear",
+    slug: "eyewear",
+    parentId: "0190f1b0-5a6b-7c8d-9e0f-00000000c008",
+    isActive: true,
+    position: 1,
+    createdAt: "2024-01-15T09:00:00.000Z",
+    updatedAt: "2024-01-15T09:00:00.000Z",
+  },
+  {
+    id: "0190f1b0-5a6b-7c8d-9e0f-00000000c011",
     name: "Home & Kitchen",
     slug: "home-kitchen",
-    description: "Appliances and home essentials",
+    parentId: null,
+    isActive: true,
+    position: 3,
+    createdAt: "2024-01-07T09:00:00.000Z",
+    updatedAt: "2024-01-07T09:00:00.000Z",
   },
   {
-    id: "sports",
+    id: "0190f1b0-5a6b-7c8d-9e0f-00000000c012",
+    name: "Coffee & Tea",
+    slug: "coffee-tea",
+    parentId: "0190f1b0-5a6b-7c8d-9e0f-00000000c011",
+    isActive: true,
+    position: 0,
+    createdAt: "2024-02-02T09:00:00.000Z",
+    updatedAt: "2024-02-02T09:00:00.000Z",
+  },
+  {
+    id: "0190f1b0-5a6b-7c8d-9e0f-00000000c013",
+    name: "Espresso Machines",
+    slug: "espresso-machines",
+    parentId: "0190f1b0-5a6b-7c8d-9e0f-00000000c012",
+    isActive: true,
+    position: 0,
+    createdAt: "2024-02-02T09:00:00.000Z",
+    updatedAt: "2024-02-02T09:00:00.000Z",
+  },
+  {
+    id: "0190f1b0-5a6b-7c8d-9e0f-00000000c014",
+    name: "Lighting",
+    slug: "lighting",
+    parentId: "0190f1b0-5a6b-7c8d-9e0f-00000000c011",
+    isActive: true,
+    position: 1,
+    createdAt: "2024-02-10T09:00:00.000Z",
+    updatedAt: "2024-02-10T09:00:00.000Z",
+  },
+  {
+    id: "0190f1b0-5a6b-7c8d-9e0f-00000000c015",
     name: "Sports",
     slug: "sports",
-    description: "Fitness and outdoor gear",
+    parentId: null,
+    isActive: true,
+    position: 4,
+    createdAt: "2024-01-08T09:00:00.000Z",
+    updatedAt: "2024-01-08T09:00:00.000Z",
+  },
+  {
+    id: "0190f1b0-5a6b-7c8d-9e0f-00000000c016",
+    name: "Fitness",
+    slug: "fitness",
+    parentId: "0190f1b0-5a6b-7c8d-9e0f-00000000c015",
+    isActive: true,
+    position: 0,
+    createdAt: "2024-01-20T09:00:00.000Z",
+    updatedAt: "2024-01-20T09:00:00.000Z",
+  },
+  {
+    id: "0190f1b0-5a6b-7c8d-9e0f-00000000c017",
+    name: "Hydration",
+    slug: "hydration",
+    parentId: "0190f1b0-5a6b-7c8d-9e0f-00000000c015",
+    isActive: true,
+    position: 1,
+    createdAt: "2024-01-20T09:00:00.000Z",
+    updatedAt: "2024-01-20T09:00:00.000Z",
+  },
+  {
+    id: "0190f1b0-5a6b-7c8d-9e0f-00000000c018",
+    name: "Holiday Gifts",
+    slug: "holiday-gifts",
+    parentId: null,
+    isActive: false,
+    position: 5,
+    createdAt: "2024-06-15T09:00:00.000Z",
+    updatedAt: "2024-06-15T09:00:00.000Z",
   },
 ]
+
+// Each product's primary (most specific) category. Products are also linked
+// to every ancestor, so a parent's product count includes its subcategories.
+const primaryCategory: [productId: string, categoryId: string][] = [
+  ["wireless-headphones", "0190f1b0-5a6b-7c8d-9e0f-00000000c002"],
+  ["bluetooth-speaker", "0190f1b0-5a6b-7c8d-9e0f-00000000c002"],
+  ["smart-watch", "0190f1b0-5a6b-7c8d-9e0f-00000000c003"],
+  ["running-shoes", "0190f1b0-5a6b-7c8d-9e0f-00000000c005"],
+  ["cotton-t-shirt", "0190f1b0-5a6b-7c8d-9e0f-00000000c006"],
+  ["denim-jacket", "0190f1b0-5a6b-7c8d-9e0f-00000000c007"],
+  ["leather-backpack", "0190f1b0-5a6b-7c8d-9e0f-00000000c009"],
+  ["sunglasses", "0190f1b0-5a6b-7c8d-9e0f-00000000c010"],
+  ["espresso-machine", "0190f1b0-5a6b-7c8d-9e0f-00000000c013"],
+  ["desk-lamp", "0190f1b0-5a6b-7c8d-9e0f-00000000c014"],
+  ["yoga-mat", "0190f1b0-5a6b-7c8d-9e0f-00000000c016"],
+  ["water-bottle", "0190f1b0-5a6b-7c8d-9e0f-00000000c017"],
+]
+
+export const productCategoryLinks: ProductCategoryLink[] =
+  primaryCategory.flatMap(([productId, categoryId]) => {
+    const links: ProductCategoryLink[] = []
+    let current = categories.find((c) => c.id === categoryId)
+    while (current) {
+      links.push({
+        productId,
+        categoryId: current.id,
+        isPrimary: current.id === categoryId,
+      })
+      current = categories.find((c) => c.id === current!.parentId)
+    }
+    return links
+  })
 
 // Mirrors the Prisma `Brand` model. DateTime fields are ISO strings once
 // serialized; `_count` matches Prisma's `include: { _count: { select: { products: true } } }`.

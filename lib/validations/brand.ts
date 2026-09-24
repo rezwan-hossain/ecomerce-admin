@@ -1,5 +1,7 @@
 import { z } from "zod"
 
+import { SLUG_PATTERN } from "@/lib/slug"
+
 // Client-side mirror of the Prisma `Brand` model constraints:
 // name @unique, slug @unique, logoUrl String?
 export const brandSchema = z.object({
@@ -13,10 +15,7 @@ export const brandSchema = z.object({
     .trim()
     .min(1, "Slug is required")
     .max(100, "Keep it under 100 characters")
-    .regex(
-      /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
-      "Use lowercase letters, numbers and single hyphens"
-    ),
+    .regex(SLUG_PATTERN, "Use lowercase letters, numbers and single hyphens"),
   logoUrl: z
     .union([
       z.literal(""),
@@ -34,12 +33,4 @@ export const brandSchema = z.object({
 export type BrandInput = z.input<typeof brandSchema>
 export type BrandValues = z.output<typeof brandSchema>
 
-export function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/&/g, " and ")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "")
-}
+export { slugify } from "@/lib/slug"

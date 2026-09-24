@@ -360,7 +360,7 @@ export function ProductForm({ product }: { product?: Product }) {
                   label="Category"
                   value={form.category}
                   onChange={(v) => update("category", v)}
-                  options={categories.map((c) => c.name)}
+                  options={categories.filter((c) => !c.parentId).map((c) => c.name)}
                   placeholder="Select a category"
                 />
                 {errors.category && (

@@ -16,20 +16,8 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
-import {
-  products,
-  type Attribute,
-  type Category,
-} from "@/lib/demo-data"
-
-function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/&/g, "and")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "")
-}
+import type { Attribute } from "@/lib/demo-data"
+import { slugify } from "@/lib/slug"
 
 // Shared layout: an add/edit form on the left, the list on the right.
 function ManagerLayout({
@@ -109,133 +97,6 @@ function RowActions({
   )
 }
 
-function productCount(match: (p: (typeof products)[number]) => boolean) {
-  return products.filter(match).length
-}
-
-export function CategoriesManager({ initial }: { initial: Category[] }) {
-  const [items, setItems] = React.useState(initial)
-  const [editingId, setEditingId] = React.useState<string | null>(null)
-  const [name, setName] = React.useState("")
-  const [slug, setSlug] = React.useState("")
-  const [description, setDescription] = React.useState("")
-
-  function reset() {
-    setEditingId(null)
-    setName("")
-    setSlug("")
-    setDescription("")
-  }
-
-  function submit() {
-    if (!name.trim()) return toast.error("Category name is required")
-    const item = {
-      id: editingId ?? slugify(name),
-      name: name.trim(),
-      slug: slug || slugify(name),
-      description,
-    }
-    setItems((current) =>
-      editingId
-        ? current.map((c) => (c.id === editingId ? item : c))
-        : [...current, item]
-    )
-    toast.success(editingId ? "Category updated" : "Category added")
-    reset()
-  }
-
-  const columns: ListColumn<Category>[] = [
-    {
-      key: "name",
-      header: "Name",
-      cell: (c) => (
-        <div className="flex flex-col">
-          <span className="font-medium">{c.name}</span>
-          <span className="text-xs text-muted-foreground">/{c.slug}</span>
-        </div>
-      ),
-    },
-    {
-      key: "description",
-      header: "Description",
-      cell: (c) => <span className="text-muted-foreground">{c.description}</span>,
-    },
-    {
-      key: "products",
-      header: "Products",
-      className: "text-right tabular-nums",
-      cell: (c) => productCount((p) => p.category === c.name),
-    },
-    {
-      key: "actions",
-      header: <span className="sr-only">Actions</span>,
-      className: "w-24",
-      cell: (c) => (
-        <RowActions
-          onEdit={() => {
-            setEditingId(c.id)
-            setName(c.name)
-            setSlug(c.slug)
-            setDescription(c.description)
-          }}
-          onDelete={() => {
-            setItems((current) => current.filter((i) => i.id !== c.id))
-            toast.success(`${c.name} deleted`)
-          }}
-        />
-      ),
-    },
-  ]
-
-  return (
-    <ManagerLayout
-      title="Category"
-      description="Group products so shoppers can browse them."
-      editing={Boolean(editingId)}
-      onSubmit={submit}
-      onCancel={reset}
-      fields={
-        <>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="category-name">Name</Label>
-            <Input
-              id="category-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Outdoor"
-            />
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="category-slug">Slug</Label>
-            <Input
-              id="category-slug"
-              value={slug}
-              onChange={(e) => setSlug(slugify(e.target.value))}
-              placeholder={slugify(name) || "auto-generated"}
-            />
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="category-description">Description</Label>
-            <Textarea
-              id="category-description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-          </div>
-        </>
-      }
-    >
-      <ListTable
-        rows={items}
-        columns={columns}
-        getRowId={(c) => c.id}
-        searchText={(c) => `${c.name} ${c.slug}`}
-        searchPlaceholder="Search categories..."
-        className="px-4 lg:px-0"
-      />
-    </ManagerLayout>
-  )
-}
 
 export function AttributesManager({ initial }: { initial: Attribute[] }) {
   const [items, setItems] = React.useState(initial)
