@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { FolderTreeIcon, PackageIcon, Trash2Icon } from "lucide-react"
+import { Trash2Icon } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -34,6 +34,7 @@ import { Switch } from "@/components/ui/switch"
 import {
   buildTree,
   moveError,
+  sortedSiblings,
   storefrontPath,
   type CategoryNode,
 } from "@/lib/category-tree"
@@ -59,6 +60,39 @@ function flatten(nodes: CategoryNode[], depth = 1): { node: CategoryNode; depth:
   ])
 }
 
+function describeOrder(
+  categories: Category[],
+  editingId: string | null,
+  draftParentId: string | null
+) {
+  const parentName = (id: string | null) => {
+    const parent = categories.find((c) => c.id === id)
+    return parent ? `in “${parent.name}”` : "at the top level"
+  }
+  const saved = editingId ? categories.find((c) => c.id === editingId) : null
+  if (!saved) {
+    return {
+      label: `Will be added last ${parentName(draftParentId)}.`,
+      canMoveUp: false,
+      canMoveDown: false,
+    }
+  }
+  if (saved.parentId !== draftParentId) {
+    return {
+      label: `Moves to the end ${parentName(draftParentId)} when saved.`,
+      canMoveUp: false,
+      canMoveDown: false,
+    }
+  }
+  const siblings = sortedSiblings(categories, saved.parentId)
+  const index = siblings.findIndex((c) => c.id === saved.id)
+  return {
+    label: `Position ${index + 1} of ${siblings.length} ${parentName(saved.parentId)}`,
+    canMoveUp: index > 0,
+    canMoveDown: index < siblings.length - 1,
+  }
+}
+
 export function CategoryEditor({
   categories,
   editingId,
@@ -72,6 +106,7 @@ export function CategoryEditor({
   onSave,
   onDiscard,
   onDelete,
+  onReorder,
 }: {
   categories: Category[]
   /** Id of the category being edited, or null when creating a new one. */
@@ -86,11 +121,15 @@ export function CategoryEditor({
   onSave: () => void
   onDiscard: () => void
   onDelete: () => void
+  /** Swaps the saved category with its previous or next sibling. */
+  onReorder: (direction: "up" | "down") => void
 }) {
   const isNew = editingId === null
   const subcategories = editingId
     ? categories.filter((c) => c.parentId === editingId).length
     : 0
+
+  const order = describeOrder(categories, editingId, draft.parentId)
 
   const parentOptions = React.useMemo(
     () =>
@@ -237,65 +276,57 @@ export function CategoryEditor({
               )}
             </Field>
 
-            <div className="grid grid-cols-2 gap-4">
-              <Field orientation="horizontal" className="items-start">
-                <div className="flex flex-col gap-2">
-                  <FieldLabel htmlFor="category-active">Visibility</FieldLabel>
-                  <div className="flex items-center gap-2">
-                    <Switch
-                      id="category-active"
-                      checked={draft.isActive}
-                      onCheckedChange={(checked) => onChange("isActive", checked)}
-                    />
-                    <span className="text-sm">Show on storefront</span>
-                  </div>
-                </div>
-              </Field>
-              <Field data-invalid={Boolean(errors.position)}>
-                <FieldLabel htmlFor="category-position">Order</FieldLabel>
-                <Input
-                  id="category-position"
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={draft.position}
-                  onChange={(e) => onChange("position", e.target.value)}
-                  aria-invalid={Boolean(errors.position)}
-                  className="tabular-nums"
+            <Field>
+              <FieldLabel htmlFor="category-active">Visibility</FieldLabel>
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="category-active"
+                  checked={draft.isActive}
+                  onCheckedChange={(checked) => onChange("isActive", checked)}
                 />
-                {errors.position ? (
-                  <FieldError>{errors.position}</FieldError>
-                ) : (
-                  <FieldDescription>Lower shows first.</FieldDescription>
-                )}
-              </Field>
-            </div>
+                <span className="text-sm">Show on storefront</span>
+              </div>
+              <FieldDescription>
+                {draft.isActive
+                  ? "Customers can browse this category."
+                  : "Hidden from the storefront. Its products can still be found elsewhere."}
+              </FieldDescription>
+            </Field>
 
-            {!isNew && (
-              <Field>
-                <FieldLabel>Contents</FieldLabel>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="flex items-center gap-2.5 rounded-md border px-3 py-2">
-                    <PackageIcon className="size-4 text-muted-foreground" />
-                    <div className="leading-tight">
-                      <div className="font-medium tabular-nums">{productCount}</div>
-                      <div className="text-xs text-muted-foreground">
-                        product{productCount === 1 ? "" : "s"}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2.5 rounded-md border px-3 py-2">
-                    <FolderTreeIcon className="size-4 text-muted-foreground" />
-                    <div className="leading-tight">
-                      <div className="font-medium tabular-nums">{subcategories}</div>
-                      <div className="text-xs text-muted-foreground">
-                        subcategor{subcategories === 1 ? "y" : "ies"}
-                      </div>
-                    </div>
-                  </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="flex flex-col gap-1 rounded-lg border p-4">
+                <div className="text-sm font-medium">Order</div>
+                <p className="text-sm text-muted-foreground">{order.label}</p>
+                <div className="mt-2 flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={!order.canMoveUp}
+                    onClick={() => onReorder("up")}
+                  >
+                    Move up
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={!order.canMoveDown}
+                    onClick={() => onReorder("down")}
+                  >
+                    Move down
+                  </Button>
                 </div>
-              </Field>
-            )}
+              </div>
+              <div className="flex flex-col gap-1 rounded-lg border p-4">
+                <div className="text-sm font-medium">Contents</div>
+                <p className="text-sm text-muted-foreground">
+                  {isNew
+                    ? "Empty until you add products or subcategories."
+                    : `${productCount} product${productCount === 1 ? "" : "s"}, ${subcategories} direct subcategor${subcategories === 1 ? "y" : "ies"}`}
+                </p>
+              </div>
+            </div>
 
             {!isNew && (
               <div className="flex items-center justify-between gap-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3">

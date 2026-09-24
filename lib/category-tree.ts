@@ -1,12 +1,16 @@
 import type { Category } from "@/lib/demo-data"
 
 /** Deepest nesting allowed: top level = 1. */
-export const MAX_CATEGORY_DEPTH = 3
+export const MAX_CATEGORY_DEPTH = 5
 
 export type CategoryNode = Category & { children: CategoryNode[] }
 
 const byPosition = (a: Category, b: Category) =>
   a.position - b.position || a.name.localeCompare(b.name)
+
+export function sortedSiblings(categories: Category[], parentId: string | null) {
+  return categories.filter((c) => c.parentId === parentId).sort(byPosition)
+}
 
 export function buildTree(categories: Category[]): CategoryNode[] {
   const nodes = new Map<string, CategoryNode>(

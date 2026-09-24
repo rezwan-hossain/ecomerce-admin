@@ -25,12 +25,17 @@ import {
 import { Button } from "@/components/ui/button"
 import {
   Card,
+  CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { buildTree, moveError, nextPosition } from "@/lib/category-tree"
+import {
+  buildTree,
+  moveError,
+  nextPosition,
+  sortedSiblings,
+} from "@/lib/category-tree"
 import type { Category, ProductCategoryLink } from "@/lib/demo-data"
 import { uuidv7 } from "@/lib/uuid"
 import { categorySchema } from "@/lib/validations/category"
@@ -55,7 +60,9 @@ function sameDraft(a: CategoryDraft, b: CategoryDraft) {
   )
 }
 
-type Pending = { type: "select"; id: string } | { type: "new" }
+type Pending =
+  | { type: "select"; id: string }
+  | { type: "new"; parentId?: string | null }
 
 export function CategoriesManager({
   initialCategories,
@@ -99,13 +106,13 @@ export function CategoriesManager({
     : Boolean(draft.name.trim() || draft.slug.trim())
   const hiddenCount = categories.filter((c) => !c.isActive).length
 
-  function emptyDraft(list: Category[]): CategoryDraft {
+  function emptyDraft(list: Category[], parentId: string | null = null): CategoryDraft {
     return {
       name: "",
       slug: "",
-      parentId: null,
+      parentId,
       isActive: true,
-      position: String(nextPosition(list, null)),
+      position: String(nextPosition(list, parentId)),
     }
   }
 
@@ -113,7 +120,7 @@ export function CategoriesManager({
     setErrors({})
     if (target.type === "new") {
       setSelectedId(null)
-      setDraft(emptyDraft(categories))
+      setDraft(emptyDraft(categories, target.parentId ?? null))
       setSlugTouched(false)
     } else {
       const category = categories.find((c) => c.id === target.id)
@@ -126,6 +133,7 @@ export function CategoriesManager({
 
   function request(target: Pending) {
     if (target.type === "select" && target.id === selectedId) return
+    if (target.type === "new" && !original && !dirty) return load(target)
     if (dirty) setPending(target)
     else load(target)
   }
@@ -234,6 +242,33 @@ export function CategoriesManager({
     )
   }
 
+  function reorder(direction: "up" | "down") {
+    if (!original) return
+    const siblings = sortedSiblings(categories, original.parentId)
+    const index = siblings.findIndex((c) => c.id === original.id)
+    const target = direction === "up" ? index - 1 : index + 1
+    if (index < 0 || target < 0 || target >= siblings.length) return
+    const reordered = [...siblings]
+    ;[reordered[index], reordered[target]] = [reordered[target], reordered[index]]
+
+    // Renumber the whole sibling group so positions stay contiguous.
+    const now = new Date().toISOString()
+    const positions = new Map(reordered.map((c, i) => [c.id, i]))
+    setCategories((current) =>
+      current.map((c) => {
+        const position = positions.get(c.id)
+        return position === undefined || position === c.position
+          ? c
+          : { ...c, position, updatedAt: now }
+      })
+    )
+    setDraft((current) => ({ ...current, position: String(target) }))
+    const neighbour = siblings[target]
+    toast.success(
+      `Moved ${original.name} ${direction === "up" ? "above" : "below"} ${neighbour.name}`
+    )
+  }
+
   function remove() {
     if (!original) return
     const orphans = categories.filter((c) => c.parentId === original.id)
@@ -273,17 +308,13 @@ export function CategoriesManager({
         </Button>
       </PageHeader>
 
-      <div className="grid items-start gap-4 px-4 lg:px-6 @5xl/main:grid-cols-[minmax(0,1fr)_400px]">
+      <div className="grid items-start gap-4 px-4 lg:px-6 @5xl/main:grid-cols-2">
         <Card className="shadow-xs">
           <CardHeader>
             <CardTitle>Category tree</CardTitle>
-            <CardDescription>
-              Drag a category onto another to nest it.{" "}
-              <span className="text-muted-foreground/80">
-                {categories.length} categories
-                {hiddenCount ? ` · ${hiddenCount} hidden` : ""}
-              </span>
-            </CardDescription>
+            <CardAction className="self-center text-sm text-muted-foreground">
+              Drag a category onto another to nest it.
+            </CardAction>
           </CardHeader>
           <CardContent>
             <CategoryTree
@@ -293,7 +324,12 @@ export function CategoriesManager({
               selectedId={selectedId}
               onSelect={(id) => request({ type: "select", id })}
               onMove={move}
+              onAddChild={(parentId) => request({ type: "new", parentId })}
             />
+            <p className="mt-1 text-xs text-muted-foreground">
+              {categories.length} categories
+              {hiddenCount ? ` · ${hiddenCount} hidden` : ""}
+            </p>
           </CardContent>
         </Card>
 
@@ -319,6 +355,7 @@ export function CategoriesManager({
               }
             }}
             onDelete={() => setConfirmDelete(true)}
+            onReorder={reorder}
           />
         </div>
       </div>
