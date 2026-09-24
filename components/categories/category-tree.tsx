@@ -12,6 +12,7 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragMoveEvent,
   type DragStartEvent,
 } from "@dnd-kit/core"
 import {
@@ -30,8 +31,9 @@ import {
 } from "@/components/ui/tooltip"
 import {
   MAX_CATEGORY_DEPTH,
-  moveError,
+  resolveDrop,
   type CategoryNode,
+  type DropZone,
 } from "@/lib/category-tree"
 import type { Category } from "@/lib/demo-data"
 import { cn } from "@/lib/utils"
@@ -41,12 +43,7 @@ const INDENT = 22
 const ROW_PADDING = 8
 const CHEVRON = 20
 
-function canMove(categories: Category[], id: string, targetId: string) {
-  const parentId = targetId === ROOT ? null : targetId
-  const current = categories.find((c) => c.id === id)
-  if (current?.parentId === parentId) return false
-  return moveError(categories, id, parentId) === null
-}
+type DropTarget = { id: string; zone: DropZone; valid: boolean }
 
 /** Keeps nodes that match the query, plus the ancestors leading to them. */
 function filterTree(nodes: CategoryNode[], query: string): CategoryNode[] {
@@ -64,7 +61,8 @@ type TreeProps = {
   productCounts: Map<string, number>
   selectedId: string | null
   onSelect: (id: string) => void
-  onMove: (id: string, parentId: string | null) => void
+  /** Moves `id` under `parentId` at `index` among its new siblings. */
+  onPlace: (id: string, parentId: string | null, index: number) => void
   onAddChild: (parentId: string) => void
 }
 
@@ -74,11 +72,12 @@ export function CategoryTree({
   productCounts,
   selectedId,
   onSelect,
-  onMove,
+  onPlace,
   onAddChild,
 }: TreeProps) {
   const [collapsed, setCollapsed] = React.useState<Set<string>>(new Set())
   const [activeId, setActiveId] = React.useState<string | null>(null)
+  const [dropTarget, setDropTarget] = React.useState<DropTarget | null>(null)
   const [query, setQuery] = React.useState("")
   const sensors = useSensors(
     // A short drag distance keeps plain clicks selecting the row.
@@ -91,8 +90,6 @@ export function CategoryTree({
     ? filterTree(tree, query.trim().toLowerCase())
     : tree
   const active = activeId ? categories.find((c) => c.id === activeId) : null
-  const canDropOn = (targetId: string) =>
-    activeId !== null && canMove(categories, activeId, targetId)
 
   function toggle(id: string) {
     setCollapsed((current) => {
@@ -112,18 +109,66 @@ export function CategoryTree({
     })
   }
 
+  /**
+   * Top edge of a row = before it, bottom edge = after it, middle = inside.
+   * An expanded parent has no "after" zone: the row below it is its own
+   * first child, so dropping there reads as "inside".
+   */
+  function computeDrop(event: DragMoveEvent | DragEndEvent): DropTarget | null {
+    const id = String(event.active.id)
+    const over = event.over
+    if (!over) return null
+    const targetId = String(over.id)
+    if (targetId === ROOT) {
+      return { id: ROOT, zone: "inside", valid: Boolean(resolveDrop(categories, id, null, "inside")) }
+    }
+
+    let zone: DropZone = "inside"
+    const start = event.activatorEvent
+    if (start instanceof PointerEvent || start instanceof MouseEvent) {
+      const y = start.clientY + event.delta.y
+      const ratio = (y - over.rect.top) / over.rect.height
+      const hasVisibleChildren =
+        !collapsed.has(targetId) && categories.some((c) => c.parentId === targetId)
+      if (ratio < 0.3) zone = "before"
+      else if (ratio > 0.7 && !hasVisibleChildren) zone = "after"
+    }
+    return {
+      id: targetId,
+      zone,
+      valid: Boolean(resolveDrop(categories, id, targetId, zone)),
+    }
+  }
+
   function handleDragStart(event: DragStartEvent) {
     setActiveId(String(event.active.id))
   }
 
+  function handleDragMove(event: DragMoveEvent) {
+    const next = computeDrop(event)
+    setDropTarget((current) =>
+      current?.id === next?.id && current?.zone === next?.zone && current?.valid === next?.valid
+        ? current
+        : next
+    )
+  }
+
   function handleDragEnd(event: DragEndEvent) {
     const id = String(event.active.id)
-    const target = event.over ? String(event.over.id) : null
+    const target = computeDrop(event)
     setActiveId(null)
-    if (!target || !canMove(categories, id, target)) return
-    onMove(id, target === ROOT ? null : target)
+    setDropTarget(null)
+    if (!target?.valid) return
+    const result = resolveDrop(
+      categories,
+      id,
+      target.id === ROOT ? null : target.id,
+      target.zone
+    )
+    if (!result) return
+    onPlace(id, result.parentId, result.index)
     // Reveal the category in its new place.
-    if (target !== ROOT) expand(target)
+    if (result.parentId) expand(result.parentId)
   }
 
   const shared = {
@@ -137,7 +182,7 @@ export function CategoryTree({
       onAddChild(id)
     },
     activeId,
-    canDropOn,
+    dropTarget,
   }
 
   return (
@@ -145,8 +190,12 @@ export function CategoryTree({
       sensors={sensors}
       collisionDetection={pointerWithin}
       onDragStart={handleDragStart}
+      onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}
-      onDragCancel={() => setActiveId(null)}
+      onDragCancel={() => {
+        setActiveId(null)
+        setDropTarget(null)
+      }}
       accessibility={{
         screenReaderInstructions: {
           draggable:
@@ -183,11 +232,16 @@ export function CategoryTree({
         </p>
       )}
 
-      <RootDropZone visible={Boolean(activeId)} enabled={canDropOn(ROOT)} />
+      <RootDropZone
+        visible={Boolean(activeId)}
+        over={dropTarget?.id === ROOT}
+        valid={dropTarget?.id === ROOT ? dropTarget.valid : true}
+      />
 
       <p className="mt-4 text-xs text-muted-foreground">
-        Up to {MAX_CATEGORY_DEPTH} levels. A category can&apos;t be moved inside
-        its own subcategories.
+        Drop on the top or bottom edge of a row to reorder. Up to{" "}
+        {MAX_CATEGORY_DEPTH} levels. A category can&apos;t be moved inside its
+        own subcategories.
       </p>
 
       <DragOverlay dropAnimation={null}>
@@ -211,7 +265,7 @@ function TreeNode({
   onSelect,
   onAddChild,
   activeId,
-  canDropOn,
+  dropTarget,
 }: {
   node: CategoryNode
   depth: number
@@ -222,7 +276,7 @@ function TreeNode({
   onSelect: (id: string) => void
   onAddChild: (id: string) => void
   activeId: string | null
-  canDropOn: (targetId: string) => boolean
+  dropTarget: DropTarget | null
 }) {
   const drag = useDraggable({ id: node.id })
   const drop = useDroppable({ id: node.id })
@@ -230,8 +284,7 @@ function TreeNode({
   const isOpen = hasChildren && !collapsed.has(node.id)
   const isSelected = selectedId === node.id
   const isDragging = activeId === node.id
-  const valid = drop.isOver && canDropOn(node.id)
-  const invalid = drop.isOver && !isDragging && !canDropOn(node.id)
+  const target = dropTarget?.id === node.id && !isDragging ? dropTarget : null
   const canAddChild = depth < MAX_CATEGORY_DEPTH
   const indent = (depth - 1) * INDENT + ROW_PADDING
 
@@ -253,14 +306,27 @@ function TreeNode({
         aria-roledescription="Draggable category"
         onClick={() => onSelect(node.id)}
         className={cn(
-          "group flex h-11 cursor-pointer items-center gap-2 rounded-md pr-1 text-sm outline-none select-none hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring",
+          "group relative flex h-11 cursor-pointer items-center gap-2 rounded-md pr-1 text-sm outline-none select-none hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring",
           isSelected && "bg-primary/10 text-primary hover:bg-primary/15",
           isDragging && "opacity-40",
-          valid && "bg-primary/10 ring-2 ring-primary",
-          invalid && "cursor-not-allowed bg-destructive/10"
+          target?.valid && target.zone === "inside" && "bg-primary/10 ring-2 ring-primary",
+          target && !target.valid && "cursor-not-allowed bg-destructive/10"
         )}
         style={{ paddingLeft: indent }}
       >
+        {target?.valid && target.zone !== "inside" && (
+          <span
+            aria-hidden
+            className={cn(
+              "pointer-events-none absolute right-2 z-10 flex items-center",
+              target.zone === "before" ? "-top-[3px]" : "-bottom-[3px]"
+            )}
+            style={{ left: indent }}
+          >
+            <span className="size-1.5 shrink-0 rounded-full border-2 border-primary bg-background" />
+            <span className="h-0.5 flex-1 rounded-full bg-primary" />
+          </span>
+        )}
         {hasChildren ? (
           <button
             type="button"
@@ -359,7 +425,7 @@ function TreeNode({
                 onSelect={onSelect}
                 onAddChild={onAddChild}
                 activeId={activeId}
-                canDropOn={canDropOn}
+                dropTarget={dropTarget}
               />
             ))}
           </ul>
@@ -369,18 +435,25 @@ function TreeNode({
   )
 }
 
-function RootDropZone({ visible, enabled }: { visible: boolean; enabled: boolean }) {
-  const { setNodeRef, isOver } = useDroppable({ id: ROOT, disabled: !enabled })
+function RootDropZone({
+  visible,
+  over,
+  valid,
+}: {
+  visible: boolean
+  over: boolean
+  valid: boolean
+}) {
+  const { setNodeRef } = useDroppable({ id: ROOT })
 
   return (
     <div
       ref={setNodeRef}
       className={cn(
         "flex items-center justify-center gap-2 rounded-md border border-dashed text-sm text-muted-foreground transition-all",
-        visible && enabled
-          ? "mt-2 h-12 opacity-100"
-          : "h-0 overflow-hidden border-0 opacity-0",
-        isOver && "border-primary bg-primary/10 text-primary"
+        visible ? "mt-2 h-12 opacity-100" : "h-0 overflow-hidden border-0 opacity-0",
+        over && valid && "border-primary bg-primary/10 text-primary",
+        over && !valid && "bg-destructive/10"
       )}
     >
       <CornerLeftUpIcon className="size-4" />

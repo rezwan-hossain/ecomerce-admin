@@ -214,31 +214,63 @@ export function CategoriesManager({
     setDraft(draftFrom(saved))
   }
 
-  function move(id: string, parentId: string | null) {
+  /**
+   * Moves `id` under `parentId` at `index` among its new siblings, then
+   * renumbers positions in the old and new sibling groups so they stay 0..n.
+   */
+  function place(id: string, parentId: string | null, index: number) {
     const category = categories.find((c) => c.id === id)
     if (!category) return
-    const clash = categories.some(
-      (c) =>
-        c.id !== id &&
-        c.parentId === parentId &&
-        c.name.toLowerCase() === category.name.toLowerCase()
-    )
-    if (clash) {
+    const parentChanged = category.parentId !== parentId
+    if (
+      parentChanged &&
+      categories.some(
+        (c) =>
+          c.id !== id &&
+          c.parentId === parentId &&
+          c.name.toLowerCase() === category.name.toLowerCase()
+      )
+    ) {
       toast.error(`There's already a “${category.name}” there`)
       return
     }
-    const position = nextPosition(
-      categories.filter((c) => c.id !== id),
-      parentId
-    )
-    const moved = { ...category, parentId, position, updatedAt: new Date().toISOString() }
-    setCategories((current) => current.map((c) => (c.id === id ? moved : c)))
-    if (id === selectedId) {
-      setDraft((current) => ({ ...current, parentId, position: String(position) }))
+
+    const newSiblings = sortedSiblings(categories, parentId).filter((c) => c.id !== id)
+    newSiblings.splice(index, 0, category)
+    const updates = new Map<string, { parentId: string | null; position: number }>()
+    newSiblings.forEach((c, i) => updates.set(c.id, { parentId, position: i }))
+    if (parentChanged) {
+      sortedSiblings(categories, category.parentId)
+        .filter((c) => c.id !== id)
+        .forEach((c, i) => updates.set(c.id, { parentId: c.parentId, position: i }))
     }
+
+    const now = new Date().toISOString()
+    setCategories((current) =>
+      current.map((c) => {
+        const u = updates.get(c.id)
+        return !u || (u.parentId === c.parentId && u.position === c.position)
+          ? c
+          : { ...c, ...u, updatedAt: now }
+      })
+    )
+    // Keep the open editor in sync with its saved parent and position.
+    const selected = selectedId ? updates.get(selectedId) : undefined
+    if (selected) {
+      setDraft((current) => ({
+        ...current,
+        ...(selectedId === id ? { parentId: selected.parentId } : {}),
+        position: String(selected.position),
+      }))
+    }
+
     const parent = categories.find((c) => c.id === parentId)
     toast.success(
-      parent ? `Moved ${category.name} into ${parent.name}` : `${category.name} is now top-level`
+      !parentChanged
+        ? `Moved ${category.name} to position ${index + 1}`
+        : parent
+          ? `Moved ${category.name} into ${parent.name}`
+          : `${category.name} is now top-level`
     )
   }
 
@@ -248,25 +280,7 @@ export function CategoriesManager({
     const index = siblings.findIndex((c) => c.id === original.id)
     const target = direction === "up" ? index - 1 : index + 1
     if (index < 0 || target < 0 || target >= siblings.length) return
-    const reordered = [...siblings]
-    ;[reordered[index], reordered[target]] = [reordered[target], reordered[index]]
-
-    // Renumber the whole sibling group so positions stay contiguous.
-    const now = new Date().toISOString()
-    const positions = new Map(reordered.map((c, i) => [c.id, i]))
-    setCategories((current) =>
-      current.map((c) => {
-        const position = positions.get(c.id)
-        return position === undefined || position === c.position
-          ? c
-          : { ...c, position, updatedAt: now }
-      })
-    )
-    setDraft((current) => ({ ...current, position: String(target) }))
-    const neighbour = siblings[target]
-    toast.success(
-      `Moved ${original.name} ${direction === "up" ? "above" : "below"} ${neighbour.name}`
-    )
+    place(original.id, original.parentId, target)
   }
 
   function remove() {
@@ -323,7 +337,7 @@ export function CategoriesManager({
               productCounts={productCounts}
               selectedId={selectedId}
               onSelect={(id) => request({ type: "select", id })}
-              onMove={move}
+              onPlace={place}
               onAddChild={(parentId) => request({ type: "new", parentId })}
             />
             <p className="mt-1 text-xs text-muted-foreground">

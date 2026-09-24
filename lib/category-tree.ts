@@ -100,3 +100,41 @@ export function nextPosition(categories: Category[], parentId: string | null) {
   const siblings = categories.filter((c) => c.parentId === parentId)
   return siblings.length ? Math.max(...siblings.map((c) => c.position)) + 1 : 0
 }
+
+export type DropZone = "before" | "inside" | "after"
+
+/**
+ * Where dropping `id` on `targetId` (null = the top-level drop zone) puts it:
+ * the new parent, and its index among the new siblings (excluding itself).
+ * Returns null when the drop is invalid or wouldn't change anything.
+ */
+export function resolveDrop(
+  categories: Category[],
+  id: string,
+  targetId: string | null,
+  zone: DropZone
+): { parentId: string | null; index: number } | null {
+  const current = categories.find((c) => c.id === id)
+  if (!current || targetId === id) return null
+
+  let parentId: string | null
+  let index: number
+  if (targetId === null || zone === "inside") {
+    parentId = targetId
+    index = sortedSiblings(categories, parentId).filter((c) => c.id !== id).length
+  } else {
+    const target = categories.find((c) => c.id === targetId)
+    if (!target) return null
+    parentId = target.parentId
+    const siblings = sortedSiblings(categories, parentId).filter((c) => c.id !== id)
+    const targetIndex = siblings.findIndex((c) => c.id === targetId)
+    index = zone === "before" ? targetIndex : targetIndex + 1
+  }
+
+  if (moveError(categories, id, parentId)) return null
+  if (current.parentId === parentId) {
+    const currentIndex = sortedSiblings(categories, parentId).findIndex((c) => c.id === id)
+    if (currentIndex === index) return null
+  }
+  return { parentId, index }
+}
