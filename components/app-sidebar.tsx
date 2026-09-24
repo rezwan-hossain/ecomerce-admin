@@ -15,6 +15,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
+import { orders } from "@/lib/demo-data"
 import {
   LayoutDashboardIcon,
   ShoppingCartIcon,
@@ -31,6 +32,10 @@ import {
   StoreIcon,
 } from "lucide-react"
 
+const pendingCount = orders.filter(
+  (o) => o.status === "Pending" || o.status === "Processing"
+).length
+
 const data = {
   user: {
     name: "Store Admin",
@@ -45,7 +50,7 @@ const data = {
       icon: <ShoppingCartIcon />,
       items: [
         { title: "All Orders", url: "/dashboard/orders" },
-        { title: "Pending", url: "/dashboard/orders/pending", badge: "12" },
+        { title: "Pending", url: "/dashboard/orders/pending", badge: String(pendingCount) },
         { title: "Returns & Refunds", url: "/dashboard/orders/returns" },
         { title: "Abandoned Carts", url: "/dashboard/orders/abandoned" },
       ],
