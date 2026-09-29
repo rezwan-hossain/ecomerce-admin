@@ -3,15 +3,31 @@
 import { useEffect, useState } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { ArrowDownIcon, ArrowUpIcon, Trash2Icon } from "lucide-react"
+import { ArrowDownIcon, ArrowUpIcon, FolderIcon, Trash2Icon } from "lucide-react"
 import { z } from "zod"
 
 import type { ActionResponse } from "@/lib/action-response"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  FieldSeparator,
+} from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
@@ -131,179 +147,189 @@ export function CategoryForm({
     }
   }
 
+  const productCount = category?._count.products ?? 0
+  const childCount = category?.children?.length ?? 0
+
   return (
-    <Card className="shadow-sm">
-      <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-(--card-spacing)">
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>{isNew ? "New Category" : "Edit Category"}</CardTitle>
-          {isDirty && <Badge variant="secondary">Unsaved Changes</Badge>}
+    <Card className="gap-0 py-0 shadow-xs">
+      <form onSubmit={form.handleSubmit(onSubmit)}>
+        <CardHeader className="border-b py-(--card-spacing)">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-primary/5 text-primary">
+              <FolderIcon className="size-5" />
+            </div>
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <CardTitle className="truncate">
+                {isNew ? "New category" : category.name}
+              </CardTitle>
+              <CardDescription className="truncate">
+                {isNew
+                  ? "Fill in the details, then create it."
+                  : `${productCount} ${productCount === 1 ? "product" : "products"} · ${childCount} ${childCount === 1 ? "subcategory" : "subcategories"}`}
+              </CardDescription>
+            </div>
+          </div>
+          {isDirty && (
+            <CardAction>
+              <Badge variant="secondary">Unsaved changes</Badge>
+            </CardAction>
+          )}
         </CardHeader>
 
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="name">
-              Name <span className="text-destructive">*</span>
-            </Label>
-            <Input id="name" placeholder="e.g. Running Shoes" {...form.register("name")} />
-            {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
-          </div>
+        <CardContent className="py-(--card-spacing)">
+          <FieldGroup className="gap-5">
+            <Field data-invalid={Boolean(errors.name)}>
+              <FieldLabel htmlFor="name">Name</FieldLabel>
+              <Input
+                id="name"
+                placeholder="e.g. Running Shoes"
+                aria-invalid={Boolean(errors.name)}
+                {...form.register("name")}
+              />
+              <FieldError>{errors.name?.message}</FieldError>
+            </Field>
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="slug">
-                Slug <span className="text-destructive">*</span>
-              </Label>
-              <button
-                type="button"
-                onClick={() => setAutoSlug(!autoSlug)}
-                className="text-xs text-muted-foreground hover:text-foreground hover:underline"
-              >
-                {autoSlug ? "Edit manually" : "Auto-generate"}
-              </button>
-            </div>
-            {/* readOnly, not disabled: disabled fields are left out of the submitted values */}
-            <Input
-              id="slug"
-              readOnly={autoSlug}
-              className="font-mono lowercase read-only:opacity-60"
-              {...form.register("slug", { onChange: () => setAutoSlug(false) })}
-            />
-            {errors.slug && <p className="text-xs text-destructive">{errors.slug.message}</p>}
-          </div>
-
-          <div className="space-y-2">
-            <Label>Storefront URL Preview</Label>
-            <div className="truncate rounded-md border bg-muted/50 px-3 py-2 font-mono text-xs text-muted-foreground">
-              yourstore.com
-              <span className="text-foreground">{buildPath(categories, parentId, slug)}</span>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="parent">Parent Category</Label>
-            <Controller
-              name="parentId"
-              control={form.control}
-              render={({ field }) => (
-                <Select
-                  value={field.value ?? TOP_LEVEL}
-                  onValueChange={(value) => field.onChange(value === TOP_LEVEL ? null : value)}
-                  items={[
-                    { value: TOP_LEVEL, label: "None — Top Level" },
-                    ...parentOptions.map((option) => ({ value: option.id, label: option.name })),
-                  ]}
+            <Field data-invalid={Boolean(errors.slug)}>
+              <div className="flex items-center justify-between">
+                <FieldLabel htmlFor="slug">Slug</FieldLabel>
+                <button
+                  type="button"
+                  onClick={() => setAutoSlug(!autoSlug)}
+                  className="text-xs text-muted-foreground hover:text-foreground hover:underline"
                 >
-                  <SelectTrigger id="parent" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={TOP_LEVEL}>None — Top Level</SelectItem>
-                    {parentOptions.map((option) => (
-                      <SelectItem
-                        key={option.id}
-                        value={option.id}
-                        disabled={option.disabled}
-                        style={{ paddingLeft: (option.depth - 1) * 12 + 8 }}
-                      >
-                        {option.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  {autoSlug ? "Edit manually" : "Generate from name"}
+                </button>
+              </div>
+              {/* readOnly, not disabled: disabled fields are left out of the submitted values */}
+              <Input
+                id="slug"
+                readOnly={autoSlug}
+                aria-invalid={Boolean(errors.slug)}
+                className="font-mono lowercase read-only:bg-muted/50 read-only:text-muted-foreground"
+                {...form.register("slug", { onChange: () => setAutoSlug(false) })}
+              />
+              {errors.slug ? (
+                <FieldError>{errors.slug.message}</FieldError>
+              ) : (
+                <FieldDescription className="truncate font-mono text-xs">
+                  yourstore.com
+                  <span className="text-foreground">{buildPath(categories, parentId, slug)}</span>
+                </FieldDescription>
               )}
-            />
-            {errors.parentId && (
-              <p className="text-xs text-destructive">{errors.parentId.message}</p>
+            </Field>
+
+            <Field data-invalid={Boolean(errors.parentId)}>
+              <FieldLabel htmlFor="parent">Parent category</FieldLabel>
+              <Controller
+                name="parentId"
+                control={form.control}
+                render={({ field }) => (
+                  <Select
+                    value={field.value ?? TOP_LEVEL}
+                    onValueChange={(value) => field.onChange(value === TOP_LEVEL ? null : value)}
+                    items={[
+                      { value: TOP_LEVEL, label: "None — top level" },
+                      ...parentOptions.map((option) => ({ value: option.id, label: option.name })),
+                    ]}
+                  >
+                    <SelectTrigger id="parent" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={TOP_LEVEL}>None — top level</SelectItem>
+                      {parentOptions.map((option) => (
+                        <SelectItem
+                          key={option.id}
+                          value={option.id}
+                          disabled={option.disabled}
+                          style={{ paddingLeft: (option.depth - 1) * 12 + 8 }}
+                        >
+                          {option.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+              <FieldError>{errors.parentId?.message}</FieldError>
+            </Field>
+
+            <FieldSeparator />
+
+            <Field orientation="horizontal" className="has-[>[data-slot=field-content]]:items-center">
+              <FieldContent>
+                <FieldLabel htmlFor="active">Show on storefront</FieldLabel>
+                <FieldDescription>Hidden categories stay out of the shop menu.</FieldDescription>
+              </FieldContent>
+              <Controller
+                name="isActive"
+                control={form.control}
+                render={({ field }) => (
+                  <Switch id="active" checked={field.value} onCheckedChange={field.onChange} />
+                )}
+              />
+            </Field>
+
+            {category && (
+              <Field orientation="horizontal" className="has-[>[data-slot=field-content]]:items-center">
+                <FieldContent>
+                  <FieldLabel>Order</FieldLabel>
+                  <FieldDescription>
+                    Position {index + 1} of {siblings.length} in its level
+                  </FieldDescription>
+                </FieldContent>
+                <div className="flex gap-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon-sm"
+                    aria-label="Move up"
+                    title="Move up"
+                    disabled={index === 0 || isReordering}
+                    onClick={onMoveUp}
+                  >
+                    <ArrowUpIcon />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon-sm"
+                    aria-label="Move down"
+                    title="Move down"
+                    disabled={index === siblings.length - 1 || isReordering}
+                    onClick={onMoveDown}
+                  >
+                    <ArrowDownIcon />
+                  </Button>
+                </div>
+              </Field>
             )}
-          </div>
-
-          <div className="flex items-center justify-between rounded-lg border p-3">
-            <div>
-              <Label htmlFor="active">Show on storefront</Label>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Controls customer visibility for this category
-              </p>
-            </div>
-            <Controller
-              name="isActive"
-              control={form.control}
-              render={({ field }) => (
-                <Switch id="active" checked={field.value} onCheckedChange={field.onChange} />
-              )}
-            />
-          </div>
-
-          {category && (
-            <div className="flex items-center justify-between rounded-lg border p-3">
-              <div>
-                <div className="text-sm font-medium">Order</div>
-                <p className="text-xs text-muted-foreground">
-                  Position {index + 1} of {siblings.length}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={index === 0 || isReordering}
-                  onClick={onMoveUp}
-                >
-                  <ArrowUpIcon data-icon="inline-start" />
-                  Move up
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={index === siblings.length - 1 || isReordering}
-                  onClick={onMoveDown}
-                >
-                  <ArrowDownIcon data-icon="inline-start" />
-                  Move down
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {category && (
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-lg border p-3 text-center">
-                <div className="text-xs text-muted-foreground">Products</div>
-                <div className="text-lg font-semibold">{category._count.products}</div>
-              </div>
-              <div className="rounded-lg border p-3 text-center">
-                <div className="text-xs text-muted-foreground">Subcategories</div>
-                <div className="text-lg font-semibold">{category.children?.length ?? 0}</div>
-              </div>
-            </div>
-          )}
-
-          {onDelete && (
-            <div className="flex items-center justify-between rounded-lg border border-destructive/30 bg-destructive/5 p-3">
-              <div className="text-sm">
-                <div className="font-medium">Delete category</div>
-                <div className="text-xs text-muted-foreground">This action cannot be undone</div>
-              </div>
-              <Button type="button" variant="destructive" size="sm" onClick={onDelete}>
-                <Trash2Icon data-icon="inline-start" />
-                Delete
-              </Button>
-            </div>
-          )}
+          </FieldGroup>
         </CardContent>
 
-        <CardFooter className="justify-end gap-2">
+        <CardFooter className="gap-2">
+          {onDelete && (
+            <Button
+              type="button"
+              variant="ghost"
+              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+              onClick={onDelete}
+            >
+              <Trash2Icon data-icon="inline-start" />
+              Delete
+            </Button>
+          )}
           <Button
             type="button"
             variant="ghost"
+            className="ml-auto"
             onClick={() => form.reset()}
             disabled={!isDirty || isSubmitting}
           >
             Reset
           </Button>
           <Button type="submit" disabled={!isDirty || isSubmitting}>
-            {isSubmitting ? "Saving..." : isNew ? "Create Category" : "Save Changes"}
+            {isSubmitting ? "Saving..." : isNew ? "Create category" : "Save changes"}
           </Button>
         </CardFooter>
       </form>

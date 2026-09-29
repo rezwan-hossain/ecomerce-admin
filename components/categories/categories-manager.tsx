@@ -13,8 +13,16 @@ import {
   updateCategory,
 } from "@/app/actions/category.actions"
 import { PageHeader } from "@/components/page-header"
+import { StatCards } from "@/components/stat-cards"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import { flattenTree, validateMove } from "@/lib/categories/tree-utils"
 import type { Category, CreateCategoryDto } from "@/types/category.type"
 
@@ -39,6 +47,8 @@ export function CategoriesManager({ initialTree }: { initialTree: Category[] }) 
   const selected =
     selection?.mode === "edit" ? categories.find((c) => c.id === selection.id) : undefined
   const deletingCategory = categories.find((c) => c.id === deletingId)
+  const hiddenCount = categories.filter((c) => !c.isActive).length
+  const emptyCount = categories.filter((c) => c._count.products === 0).length
 
   async function refresh() {
     const res = await getCategoryTree()
@@ -148,16 +158,26 @@ export function CategoriesManager({ initialTree }: { initialTree: Category[] }) 
       <PageHeader title="Categories" description="Organize your catalog into a browsable tree.">
         <Button onClick={() => handleSelect({ mode: "new", parentId: null })}>
           <PlusIcon data-icon="inline-start" />
-          New Category
+          New category
         </Button>
       </PageHeader>
 
+      <StatCards
+        stats={[
+          { label: "Total categories", value: String(categories.length), hint: "Across every level" },
+          { label: "Top level", value: String(tree.length), hint: "Shown in the storefront menu" },
+          { label: "Hidden", value: String(hiddenCount), hint: "Not visible to shoppers" },
+          { label: "Empty", value: String(emptyCount), hint: "No products assigned yet" },
+        ]}
+      />
+
       <div className="grid items-start gap-4 px-4 md:grid-cols-2 lg:px-6">
-        <Card className="shadow-sm">
-          <CardHeader>
-            <CardTitle>Category Tree</CardTitle>
+        <Card className="gap-0 py-0 shadow-xs">
+          <CardHeader className="border-b py-(--card-spacing)">
+            <CardTitle>Category tree</CardTitle>
+            <CardDescription>Drag a category onto another to nest it.</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="py-(--card-spacing)">
             <CategoryTree
               tree={tree}
               categories={categories}
@@ -166,10 +186,10 @@ export function CategoriesManager({ initialTree }: { initialTree: Category[] }) 
               onAddChild={(parentId) => handleSelect({ mode: "new", parentId })}
               onMove={handleMove}
             />
-            <p className="mt-3 text-xs text-muted-foreground">
-              {categories.length} categories total
-            </p>
           </CardContent>
+          <CardFooter className="text-sm text-muted-foreground">
+            {categories.length === 1 ? "1 category" : `${categories.length} categories`}
+          </CardFooter>
         </Card>
 
         <div className="md:sticky md:top-4">

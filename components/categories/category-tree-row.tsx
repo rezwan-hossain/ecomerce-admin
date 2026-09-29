@@ -1,7 +1,7 @@
 "use client"
 
 import { useDraggable, useDroppable } from "@dnd-kit/core"
-import { ChevronRightIcon, PlusIcon } from "lucide-react"
+import { ChevronRightIcon, EyeOffIcon, FolderIcon, FolderOpenIcon, PlusIcon } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { MAX_DEPTH } from "@/lib/categories/tree-utils"
@@ -67,25 +67,26 @@ export function CategoryTreeRow(props: CategoryTreeRowProps) {
               stop(event)
               onToggle(node.id)
             }}
-            className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             <ChevronRightIcon className={cn("size-4 transition-transform", isOpen && "rotate-90")} />
           </button>
         ) : (
-          <span className="flex size-5 items-center justify-center">
-            <span
-              className={cn(
-                "size-1.5 rounded-full",
-                isSelected ? "bg-primary/60" : "bg-muted-foreground/40"
-              )}
-            />
-          </span>
+          <span className="size-5 shrink-0" />
+        )}
+
+        {isOpen ? (
+          <FolderOpenIcon className="size-4 shrink-0 text-primary" />
+        ) : (
+          <FolderIcon
+            className={cn("size-4 shrink-0", isSelected ? "text-primary" : "text-muted-foreground")}
+          />
         )}
 
         <span
           className={cn(
             "truncate",
-            depth === 1 && "font-semibold",
+            depth === 1 && "font-medium",
             !node.isActive && !isSelected && "text-muted-foreground"
           )}
         >
@@ -95,16 +96,17 @@ export function CategoryTreeRow(props: CategoryTreeRowProps) {
         {!node.isActive && (
           <Badge
             variant="secondary"
-            className="bg-amber-500/15 text-xs text-amber-700 dark:text-amber-400"
+            className="bg-amber-500/15 text-amber-700 dark:text-amber-400"
           >
+            <EyeOffIcon data-icon="inline-start" />
             Hidden
           </Badge>
         )}
 
         <span
           className={cn(
-            "ml-auto pl-2 text-xs tabular-nums",
-            isSelected ? "text-primary" : "text-muted-foreground"
+            "ml-auto min-w-7 rounded-full px-2 py-0.5 text-center text-xs tabular-nums",
+            isSelected ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
           )}
         >
           {node._count.products}

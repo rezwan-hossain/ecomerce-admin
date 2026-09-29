@@ -103,7 +103,7 @@ export function CategoryTree({
 
       <div className="flex items-center justify-between border-b px-2 pb-2 text-xs font-medium text-muted-foreground">
         <span>Name</span>
-        <span className="pr-9">Products</span>
+        <span className="pr-10">Products</span>
       </div>
 
       {visibleTree.length > 0 ? (
