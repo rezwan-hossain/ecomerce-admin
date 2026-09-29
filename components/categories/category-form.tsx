@@ -6,7 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { ArrowDownIcon, ArrowUpIcon, Trash2Icon } from "lucide-react"
 import { z } from "zod"
 
-import type { ActionResponse } from "@/app/actions/category.actions"
+import type { ActionResponse } from "@/lib/action-response"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"

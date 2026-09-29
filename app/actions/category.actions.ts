@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache"
 
-import { api, ApiError } from "@/lib/api"
+import { handleRequest } from "@/lib/action-response"
+import { api } from "@/lib/api"
 import type {
   Category,
   CreateCategoryDto,
@@ -11,23 +12,6 @@ import type {
 } from "@/types/category.type"
 
 const PAGE_PATH = "/products/categories"
-
-export type ActionResponse<T> =
-  | { success: true; data: T }
-  | { success: false; error: string; fieldErrors?: Record<string, string> }
-
-// Runs an API call and turns thrown errors into a result the UI can show.
-// (Next.js hides thrown error messages from the browser in production.)
-async function handleRequest<T>(fn: () => Promise<T>): Promise<ActionResponse<T>> {
-  try {
-    return { success: true, data: await fn() }
-  } catch (error) {
-    if (error instanceof ApiError) {
-      return { success: false, error: error.message, fieldErrors: error.fieldErrors }
-    }
-    return { success: false, error: "Something went wrong" }
-  }
-}
 
 export async function getCategoryTree() {
   return handleRequest(async () => {

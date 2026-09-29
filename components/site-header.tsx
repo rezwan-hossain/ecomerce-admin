@@ -26,6 +26,7 @@ const labels: Record<string, string> = {
   edit: "Edit",
   categories: "Categories",
   brands: "Brands",
+  tags: "Tags",
   attributes: "Attributes",
 }
 

@@ -64,6 +64,7 @@ const data = {
         { title: "Create Product", url: "/products/new" },
         { title: "Categories", url: "/products/categories" },
         { title: "Brands", url: "/products/brands" },
+        { title: "Tags", url: "/products/tags" },
         { title: "Attributes", url: "/products/attributes" },
       ],
     },
