@@ -1,6 +1,6 @@
-"use client"
+"use client";
 
-import * as React from "react"
+import * as React from "react";
 import {
   ArrowDownAZIcon,
   CopyIcon,
@@ -8,23 +8,23 @@ import {
   PencilIcon,
   PlusIcon,
   Trash2Icon,
-} from "lucide-react"
-import { toast } from "sonner"
+} from "lucide-react";
+import { toast } from "sonner";
 
-import { BrandFormSheet } from "@/components/brands/brand-form-sheet"
-import { BrandLogo } from "@/components/brands/brand-logo"
-import { DeleteBrandDialog } from "@/components/brands/delete-brand-dialog"
-import { ListTable, type ListColumn } from "@/components/list-table"
-import { PageHeader } from "@/components/page-header"
-import { StatCards } from "@/components/stat-cards"
-import { Button } from "@/components/ui/button"
+import { BrandFormSheet } from "@/components/brands/brand-form-sheet";
+import { BrandLogo } from "@/components/brands/brand-logo";
+import { DeleteBrandDialog } from "@/components/brands/delete-brand-dialog";
+import { ListTable, type ListColumn } from "@/components/list-table";
+import { PageHeader } from "@/components/page-header";
+import { StatCards } from "@/components/stat-cards";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from "@/components/ui/dropdown-menu";
 import {
   Select,
   SelectContent,
@@ -32,10 +32,15 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { formatDate, type Brand } from "@/lib/demo-data"
-import { uuidv7 } from "@/lib/uuid"
-import type { BrandValues } from "@/lib/validations/brand"
+} from "@/components/ui/select";
+import { formatDate } from "@/lib/demo-data";
+import type { Brand, CreateBrandDto } from "@/types/brand.type";
+import {
+  createBrand,
+  deleteBrand,
+  getBrands,
+  updateBrand,
+} from "@/app/actions/brand.actions";
 
 const sorts = {
   name: {
@@ -55,73 +60,79 @@ const sorts = {
     label: "Recently updated",
     compare: (a: Brand, b: Brand) => b.updatedAt.localeCompare(a.updatedAt),
   },
-} as const
+} as const;
 
-type SortKey = keyof typeof sorts
+type SortKey = keyof typeof sorts;
 
 export function BrandsManager({ initial }: { initial: Brand[] }) {
-  const [brands, setBrands] = React.useState(initial)
-  const [sort, setSort] = React.useState<SortKey>("name")
-  const [sheetOpen, setSheetOpen] = React.useState(false)
-  const [editing, setEditing] = React.useState<Brand | null>(null)
-  const [deleting, setDeleting] = React.useState<Brand | null>(null)
+  const [brands, setBrands] = React.useState(initial);
+  const [sort, setSort] = React.useState<SortKey>("name");
+  const [sheetOpen, setSheetOpen] = React.useState(false);
+  const [editing, setEditing] = React.useState<Brand | null>(null);
+  const [deleting, setDeleting] = React.useState<Brand | null>(null);
+  const [isDeleting, setIsDeleting] = React.useState(false);
+
+  async function refresh() {
+    const res = await getBrands();
+    if (res.success) setBrands(res.data);
+  }
 
   const sorted = React.useMemo(
     () => [...brands].sort(sorts[sort].compare),
-    [brands, sort]
-  )
+    [brands, sort],
+  );
 
-  const branded = brands.reduce((sum, b) => sum + b._count.products, 0)
-  const withoutProducts = brands.filter((b) => b._count.products === 0).length
-  const withoutLogo = brands.filter((b) => !b.logoUrl).length
+  const branded = brands.reduce((sum, b) => sum + b._count.products, 0);
+  const withoutProducts = brands.filter((b) => b._count.products === 0).length;
+  const withoutLogo = brands.filter((b) => !b.logoUrl).length;
 
   function openCreate() {
-    setEditing(null)
-    setSheetOpen(true)
+    setEditing(null);
+    setSheetOpen(true);
   }
 
   function openEdit(brand: Brand) {
-    setEditing(brand)
-    setSheetOpen(true)
+    setEditing(brand);
+    setSheetOpen(true);
   }
 
-  function save(values: BrandValues) {
-    const now = new Date().toISOString()
-    if (editing) {
-      setBrands((current) =>
-        current.map((b) =>
-          b.id === editing.id ? { ...b, ...values, updatedAt: now } : b
-        )
-      )
-      toast.success(`${values.name} updated`)
-    } else {
-      setBrands((current) => [
-        ...current,
-        {
-          id: uuidv7(),
-          ...values,
-          createdAt: now,
-          updatedAt: now,
-          _count: { products: 0 },
-        },
-      ])
-      toast.success(`${values.name} added`)
+  async function handleSave(values: CreateBrandDto) {
+    const res = editing
+      ? await updateBrand(editing.id, values)
+      : await createBrand(values);
+
+    if (!res.success) {
+      toast.error(res.error);
+      return res;
     }
-    setSheetOpen(false)
+
+    toast.success(editing ? `${values.name} updated` : `${values.name} added`);
+    setSheetOpen(false);
+    await refresh();
+    return res;
   }
 
-  function remove(brand: Brand) {
-    setBrands((current) => current.filter((b) => b.id !== brand.id))
-    setDeleting(null)
-    toast.success(`${brand.name} deleted`)
+  async function handleDelete(brand: Brand) {
+    setIsDeleting(true);
+    const res = await deleteBrand(brand.id);
+    setIsDeleting(false);
+
+    if (!res.success) {
+      toast.error(res.error);
+      return;
+    }
+
+    setDeleting(null);
+    toast.success(`${brand.name} deleted`);
+    await refresh();
   }
 
   async function copySlug(brand: Brand) {
     try {
-      await navigator.clipboard.writeText(brand.slug)
-      toast.success("Slug copied")
+      await navigator.clipboard.writeText(brand.slug);
+      toast.success("Slug copied");
     } catch {
-      toast.error("Couldn't copy to clipboard")
+      toast.error("Couldn't copy to clipboard");
     }
   }
 
@@ -179,7 +190,7 @@ export function BrandsManager({ initial }: { initial: Brand[] }) {
       key: "actions",
       header: <span className="sr-only">Actions</span>,
       className: "w-12 text-right",
-      cell: (b) => (
+      cell: (brand) => (
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -191,19 +202,22 @@ export function BrandsManager({ initial }: { initial: Brand[] }) {
             }
           >
             <EllipsisVerticalIcon />
-            <span className="sr-only">Actions for {b.name}</span>
+            <span className="sr-only">Actions for {brand.name}</span>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-40">
-            <DropdownMenuItem onClick={() => openEdit(b)}>
+            <DropdownMenuItem onClick={() => openEdit(brand)}>
               <PencilIcon />
               Edit
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => copySlug(b)}>
+            <DropdownMenuItem onClick={() => copySlug(brand)}>
               <CopyIcon />
               Copy slug
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onClick={() => setDeleting(b)}>
+            <DropdownMenuItem
+              variant="destructive"
+              onClick={() => setDeleting(brand)}
+            >
               <Trash2Icon />
               Delete
             </DropdownMenuItem>
@@ -211,7 +225,7 @@ export function BrandsManager({ initial }: { initial: Brand[] }) {
         </DropdownMenu>
       ),
     },
-  ]
+  ];
 
   return (
     <>
@@ -227,10 +241,26 @@ export function BrandsManager({ initial }: { initial: Brand[] }) {
 
       <StatCards
         stats={[
-          { label: "Total brands", value: String(brands.length), hint: "In your catalog" },
-          { label: "Branded products", value: String(branded), hint: "Products linked to a brand" },
-          { label: "Without products", value: String(withoutProducts), hint: "Brands not used yet" },
-          { label: "Missing logo", value: String(withoutLogo), hint: "Showing initials instead" },
+          {
+            label: "Total brands",
+            value: String(brands.length),
+            hint: "In your catalog",
+          },
+          {
+            label: "Branded products",
+            value: String(branded),
+            hint: "Products linked to a brand",
+          },
+          {
+            label: "Without products",
+            value: String(withoutProducts),
+            hint: "Brands not used yet",
+          },
+          {
+            label: "Missing logo",
+            value: String(withoutLogo),
+            hint: "Showing initials instead",
+          },
         ]}
       />
 
@@ -242,8 +272,16 @@ export function BrandsManager({ initial }: { initial: Brand[] }) {
         searchPlaceholder="Search brands..."
         filters={[
           { label: "All", value: "all", match: () => true },
-          { label: "In use", value: "in-use", match: (b) => b._count.products > 0 },
-          { label: "Unused", value: "unused", match: (b) => b._count.products === 0 },
+          {
+            label: "In use",
+            value: "in-use",
+            match: (b) => b._count.products > 0,
+          },
+          {
+            label: "Unused",
+            value: "unused",
+            match: (b) => b._count.products === 0,
+          },
           { label: "Missing logo", value: "no-logo", match: (b) => !b.logoUrl },
         ]}
         emptyText="No brands match your search."
@@ -278,13 +316,14 @@ export function BrandsManager({ initial }: { initial: Brand[] }) {
         onOpenChange={setSheetOpen}
         brand={editing}
         brands={brands}
-        onSubmit={save}
+        onSubmit={handleSave}
       />
       <DeleteBrandDialog
         brand={deleting}
         onOpenChange={(open) => !open && setDeleting(null)}
-        onConfirm={remove}
+        onConfirm={handleDelete}
+        isDeleting={isDeleting}
       />
     </>
-  )
+  );
 }

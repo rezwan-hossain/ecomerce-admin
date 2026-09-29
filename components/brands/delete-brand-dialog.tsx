@@ -12,16 +12,18 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import type { Brand } from "@/lib/demo-data"
+import type { Brand } from "@/types/brand.type"
 
 export function DeleteBrandDialog({
   brand,
   onOpenChange,
   onConfirm,
+  isDeleting,
 }: {
   brand: Brand | null
   onOpenChange: (open: boolean) => void
   onConfirm: (brand: Brand) => void
+  isDeleting: boolean
 }) {
   // Keep showing the last brand while the dialog animates closed.
   const [shown, setShown] = React.useState(brand)
@@ -47,11 +49,13 @@ export function DeleteBrandDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
+          {/* Disabled while deleting, so a double-click can't send two deletes. */}
           <AlertDialogAction
             variant="destructive"
+            disabled={isDeleting}
             onClick={() => brand && onConfirm(brand)}
           >
-            Delete brand
+            {isDeleting ? "Deleting..." : "Delete brand"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

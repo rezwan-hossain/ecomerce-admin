@@ -20,7 +20,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import type { Brand } from "@/lib/demo-data"
+import type { Brand } from "@/types/brand.type"
 import {
   brandSchema,
   slugify,

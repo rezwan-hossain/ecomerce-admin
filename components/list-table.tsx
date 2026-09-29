@@ -87,7 +87,7 @@ export function ListTable<T>({
               setPage(0)
             }}
           >
-            <TabsList className="max-w-full overflow-x-auto **:data-[slot=badge]:size-5 **:data-[slot=badge]:rounded-full **:data-[slot=badge]:bg-muted-foreground/30 **:data-[slot=badge]:px-1">
+            <TabsList className="max-w-full overflow-x-auto overflow-y-hidden **:data-[slot=badge]:size-5 **:data-[slot=badge]:rounded-full **:data-[slot=badge]:bg-muted-foreground/30 **:data-[slot=badge]:px-1">
               {filters.map((f, index) => {
                 const count = rows.filter(f.match).length
                 return (

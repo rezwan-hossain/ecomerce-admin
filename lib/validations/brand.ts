@@ -2,32 +2,24 @@ import { z } from "zod"
 
 import { SLUG_PATTERN } from "@/lib/slug"
 
-// Client-side mirror of the Prisma `Brand` model constraints:
-// name @unique, slug @unique, logoUrl String?
+// Same rules as the backend's createBrandSchema (NestJS brand DTO).
 export const brandSchema = z.object({
   name: z
     .string()
     .trim()
-    .min(1, "Brand name is required")
+    .min(2, "Use at least 2 characters")
     .max(100, "Keep it under 100 characters"),
   slug: z
     .string()
     .trim()
-    .min(1, "Slug is required")
-    .max(100, "Keep it under 100 characters")
+    .min(2, "Use at least 2 characters")
+    .max(120, "Keep it under 120 characters")
     .regex(SLUG_PATTERN, "Use lowercase letters, numbers and single hyphens"),
-  logoUrl: z
-    .union([
-      z.literal(""),
-      z
-        .string()
-        .trim()
-        .refine(
-          (value) => value.startsWith("/") || URL.canParse(value),
-          "Enter a full URL (https://…) or a path starting with /"
-        ),
-    ])
-    .transform((value) => value || null),
+  // The backend accepts a full URL or an empty string (never null).
+  logoUrl: z.union([
+    z.literal(""),
+    z.url("Enter a full URL, like https://example.com/logo.png"),
+  ]),
 })
 
 export type BrandInput = z.input<typeof brandSchema>

@@ -77,6 +77,7 @@ export function TagsManager({ initialTags }: { initialTags: Tag[] }) {
   const [sheetOpen, setSheetOpen] = useState(false)
   const [editing, setEditing] = useState<Tag | null>(null)
   const [deleting, setDeleting] = useState<Tag | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
   // Changes on every open, so the form inside the panel starts fresh.
   const [formKey, setFormKey] = useState(0)
 
@@ -116,7 +117,9 @@ export function TagsManager({ initialTags }: { initialTags: Tag[] }) {
 
   async function handleDelete() {
     const tag = deleting!
+    setIsDeleting(true)
     const res = await deleteTag(tag.id)
+    setIsDeleting(false)
 
     if (!res.success) {
       toast.error(res.error)
@@ -287,8 +290,8 @@ export function TagsManager({ initialTags }: { initialTags: Tag[] }) {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <Button variant="destructive" onClick={handleDelete}>
-              Delete tag
+            <Button variant="destructive" onClick={handleDelete} disabled={isDeleting}>
+              {isDeleting ? "Deleting..." : "Delete tag"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
