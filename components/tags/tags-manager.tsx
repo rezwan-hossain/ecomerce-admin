@@ -1,11 +1,21 @@
 "use client"
 
 import { useState } from "react"
-import { PencilIcon, PlusIcon, SearchIcon, TagIcon, Trash2Icon } from "lucide-react"
+import {
+  ArrowDownAZIcon,
+  CopyIcon,
+  EllipsisVerticalIcon,
+  PencilIcon,
+  PlusIcon,
+  TagIcon,
+  Trash2Icon,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import { createTag, deleteTag, getTags, updateTag } from "@/app/actions/tag.actions"
+import { ListTable, type ListColumn } from "@/components/list-table"
 import { PageHeader } from "@/components/page-header"
+import { StatCards } from "@/components/stat-cards"
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -16,48 +26,96 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { cn } from "@/lib/utils"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { formatDate } from "@/lib/demo-data"
 import type { CreateTagDto, Tag } from "@/types/tag.type"
 
-import { TagForm } from "./tag-form"
+import { TagFormSheet } from "./tag-form-sheet"
+
+const sortOptions = [
+  { value: "name", label: "Name A–Z" },
+  { value: "products", label: "Most products" },
+  { value: "newest", label: "Newest" },
+  { value: "updated", label: "Recently updated" },
+]
+
+function sortTags(tags: Tag[], sort: string) {
+  const sorted = [...tags]
+  if (sort === "products") {
+    sorted.sort((a, b) => b._count.products - a._count.products || a.name.localeCompare(b.name))
+  } else if (sort === "newest") {
+    sorted.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  } else if (sort === "updated") {
+    sorted.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  } else {
+    sorted.sort((a, b) => a.name.localeCompare(b.name))
+  }
+  return sorted
+}
+
+function productsLabel(count: number) {
+  return count === 1 ? "1 product" : `${count} products`
+}
 
 export function TagsManager({ initialTags }: { initialTags: Tag[] }) {
   const [tags, setTags] = useState(initialTags)
-  const [search, setSearch] = useState("")
-  // The tag open in the form. null = the "New Tag" form.
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [deletingTag, setDeletingTag] = useState<Tag | null>(null)
+  const [sort, setSort] = useState("name")
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const [editing, setEditing] = useState<Tag | null>(null)
+  const [deleting, setDeleting] = useState<Tag | null>(null)
+  // Changes on every open, so the form inside the panel starts fresh.
+  const [formKey, setFormKey] = useState(0)
 
-  const selected = tags.find((t) => t.id === selectedId) ?? null
-
-  const searchText = search.trim().toLowerCase()
-  const visibleTags = tags
-    .filter((t) => t.name.toLowerCase().includes(searchText) || t.slug.includes(searchText))
-    .sort((a, b) => a.name.localeCompare(b.name))
+  const taggedProducts = tags.reduce((sum, t) => sum + t._count.products, 0)
+  const inUse = tags.filter((t) => t._count.products > 0).length
 
   async function refresh() {
     const res = await getTags()
     if (res.success) setTags(res.data)
   }
 
+  function openCreate() {
+    setEditing(null)
+    setFormKey(formKey + 1)
+    setSheetOpen(true)
+  }
+
+  function openEdit(tag: Tag) {
+    setEditing(tag)
+    setFormKey(formKey + 1)
+    setSheetOpen(true)
+  }
+
   async function handleSave(values: CreateTagDto) {
-    const res = selected ? await updateTag(selected.id, values) : await createTag(values)
+    const res = editing ? await updateTag(editing.id, values) : await createTag(values)
 
     if (!res.success) {
       toast.error(res.error)
       return res
     }
 
-    toast.success(`${values.name} saved`)
+    toast.success(editing ? `${values.name} updated` : `${values.name} added`)
+    setSheetOpen(false)
     await refresh()
-    setSelectedId(res.data.id)
     return res
   }
 
   async function handleDelete() {
-    const tag = deletingTag!
+    const tag = deleting!
     const res = await deleteTag(tag.id)
 
     if (!res.success) {
@@ -66,107 +124,171 @@ export function TagsManager({ initialTags }: { initialTags: Tag[] }) {
     }
 
     toast.success(`${tag.name} deleted`)
-    setDeletingTag(null)
-    if (selectedId === tag.id) setSelectedId(null)
+    setDeleting(null)
     await refresh()
   }
 
+  async function copySlug(tag: Tag) {
+    await navigator.clipboard.writeText(tag.slug)
+    toast.success("Slug copied")
+  }
+
+  const columns: ListColumn<Tag>[] = [
+    {
+      key: "tag",
+      header: "Tag",
+      cell: (tag) => (
+        <button
+          type="button"
+          onClick={() => openEdit(tag)}
+          className="group flex items-center gap-3 text-left"
+        >
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted text-muted-foreground">
+            <TagIcon className="size-4" />
+          </div>
+          <div className="flex min-w-0 flex-col">
+            <span className="truncate font-medium group-hover:underline">{tag.name}</span>
+            <span className="truncate font-mono text-xs text-muted-foreground">{tag.slug}</span>
+          </div>
+        </button>
+      ),
+    },
+    {
+      key: "products",
+      header: "Products",
+      cell: (tag) =>
+        tag._count.products > 0 ? (
+          <span className="tabular-nums">{productsLabel(tag._count.products)}</span>
+        ) : (
+          <span className="text-muted-foreground">No products</span>
+        ),
+    },
+    {
+      key: "created",
+      header: "Created",
+      className: "hidden md:table-cell",
+      cell: (tag) => <span className="text-muted-foreground">{formatDate(tag.createdAt)}</span>,
+    },
+    {
+      key: "updated",
+      header: "Last updated",
+      className: "hidden lg:table-cell",
+      cell: (tag) => <span className="text-muted-foreground">{formatDate(tag.updatedAt)}</span>,
+    },
+    {
+      key: "actions",
+      header: <span className="sr-only">Actions</span>,
+      className: "w-12 text-right",
+      cell: (tag) => (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 text-muted-foreground data-open:bg-muted"
+              />
+            }
+          >
+            <EllipsisVerticalIcon />
+            <span className="sr-only">Actions for {tag.name}</span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-40">
+            <DropdownMenuItem onClick={() => openEdit(tag)}>
+              <PencilIcon />
+              Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => copySlug(tag)}>
+              <CopyIcon />
+              Copy slug
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={() => setDeleting(tag)}>
+              <Trash2Icon />
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ),
+    },
+  ]
+
   return (
     <>
-      <PageHeader title="Tags" description="Label products so shoppers can filter and find them.">
-        <Button onClick={() => setSelectedId(null)}>
+      <PageHeader title="Tags" description="Labels that help shoppers filter and find products.">
+        <Button onClick={openCreate}>
           <PlusIcon data-icon="inline-start" />
-          New Tag
+          Add tag
         </Button>
       </PageHeader>
 
-      <div className="grid items-start gap-4 px-4 md:grid-cols-2 lg:px-6">
-        <Card className="shadow-sm">
-          <CardHeader>
-            <CardTitle>All Tags</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="relative mb-3">
-              <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                type="search"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search by name or slug"
-                className="pl-9"
-              />
-            </div>
+      <StatCards
+        stats={[
+          { label: "Total tags", value: String(tags.length), hint: "In your catalog" },
+          { label: "Tagged products", value: String(taggedProducts), hint: "Product–tag links" },
+          { label: "In use", value: String(inUse), hint: "Tags on at least one product" },
+          { label: "Unused", value: String(tags.length - inUse), hint: "Tags not used yet" },
+        ]}
+      />
 
-            {visibleTags.length > 0 ? (
-              <ul className="flex flex-col gap-0.5">
-                {visibleTags.map((tag) => (
-                  <li
-                    key={tag.id}
-                    onClick={() => setSelectedId(tag.id)}
-                    className={cn(
-                      "group flex h-10 cursor-pointer items-center gap-3 rounded-md px-2 text-sm hover:bg-muted/70",
-                      selectedId === tag.id && "bg-primary/10 text-primary hover:bg-primary/15"
-                    )}
-                  >
-                    <TagIcon className="size-4 shrink-0 text-muted-foreground" />
-                    <span className="truncate font-medium">{tag.name}</span>
-                    <span className="truncate font-mono text-xs text-muted-foreground">
-                      {tag.slug}
-                    </span>
-                    <div className="ml-auto flex gap-1 opacity-0 group-hover:opacity-100">
-                      <Button variant="ghost" size="icon" className="size-7" aria-label={`Edit ${tag.name}`}>
-                        <PencilIcon />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 text-destructive"
-                        aria-label={`Delete ${tag.name}`}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          setDeletingTag(tag)
-                        }}
-                      >
-                        <Trash2Icon />
-                      </Button>
-                    </div>
-                  </li>
+      <ListTable
+        rows={sortTags(tags, sort)}
+        columns={columns}
+        getRowId={(tag) => tag.id}
+        searchText={(tag) => `${tag.name} ${tag.slug}`}
+        searchPlaceholder="Search tags..."
+        filters={[
+          { label: "All", value: "all", match: () => true },
+          { label: "In use", value: "in-use", match: (tag) => tag._count.products > 0 },
+          { label: "Unused", value: "unused", match: (tag) => tag._count.products === 0 },
+        ]}
+        emptyText={tags.length === 0 ? "No tags yet. Add your first one." : "No tags match your search."}
+        toolbar={
+          <Select
+            value={sort}
+            onValueChange={(value) => setSort(value ?? "name")}
+            items={sortOptions}
+          >
+            <SelectTrigger size="sm" className="w-44" aria-label="Sort tags">
+              <ArrowDownAZIcon className="text-muted-foreground" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              <SelectGroup>
+                {sortOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
                 ))}
-              </ul>
-            ) : (
-              <p className="py-10 text-center text-sm text-muted-foreground">
-                {searchText ? `No tags match "${search}"` : "No tags yet. Create your first one!"}
-              </p>
-            )}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        }
+      />
 
-            <p className="mt-3 text-xs text-muted-foreground">
-              {tags.length === 1 ? "1 tag" : `${tags.length} tags`} total
-            </p>
-          </CardContent>
-        </Card>
+      <TagFormSheet
+        key={formKey}
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        tag={editing}
+        onSave={handleSave}
+      />
 
-        <div className="md:sticky md:top-4">
-          <TagForm
-            key={selectedId ?? "new"}
-            tag={selected}
-            onSave={handleSave}
-            onCancel={() => setSelectedId(null)}
-          />
-        </div>
-      </div>
-
-      <AlertDialog open={deletingTag !== null} onOpenChange={(open) => !open && setDeletingTag(null)}>
+      <AlertDialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete &ldquo;{deletingTag?.name}&rdquo;?</AlertDialogTitle>
+            <AlertDialogTitle>Delete {deleting?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              The tag is removed from every product that uses it. The products themselves stay.
+              {deleting && deleting._count.products > 0
+                ? `It will be removed from ${productsLabel(deleting._count.products)}. The products stay in your catalog. `
+                : "No products use this tag. "}
+              This can&apos;t be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <Button variant="destructive" onClick={handleDelete}>
-              Delete
+              Delete tag
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

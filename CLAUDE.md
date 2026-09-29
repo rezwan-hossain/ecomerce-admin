@@ -57,7 +57,7 @@ app/
     - `category-dialogs.tsx`.
   - `lib/categories/tree-utils.ts`: `flattenTree`, `validateMove` (cycles, depth `MAX_DEPTH = 4`, inactive parent), `buildPath`, `slugify`.
   - Backend rules: `DELETE /:id` only works on an empty category (no children, no products). `/cascade` deletes the whole subtree. `/move` takes `{ newParentId, position }`.
-- **Tags** (`/products/tags`) is also connected to the backend (`/tags` API). Files: `app/actions/tag.actions.ts`, `types/tag.type.ts`, `components/tags/tags-manager.tsx` (list, search, delete dialog), and `components/tags/tag-form.tsx`. Both action files share `handleRequest` / `ActionResponse` from `lib/action-response.ts`.
+- **Tags** (`/products/tags`) is also connected to the backend (`/tags` API). Files: `app/actions/tag.actions.ts`, `types/tag.type.ts`, `components/tags/tags-manager.tsx` (styled like Brands: stat cards, `ListTable` with tabs, search, sort and a row menu, and a delete dialog), and `components/tags/tag-form-sheet.tsx` (a side-panel add/edit form). Both action files share `handleRequest` / `ActionResponse` from `lib/action-response.ts`.
 - **Code style (the user's explicit preference):**
   - Clean, minimal, production-ready code.
   - No custom hooks, abstraction layers or design patterns unless asked.
