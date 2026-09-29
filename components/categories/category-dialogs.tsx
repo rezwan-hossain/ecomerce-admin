@@ -2,7 +2,6 @@
 
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -10,79 +9,86 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { Button } from "@/components/ui/button"
 
-/** Asks before throwing away unsaved form changes. */
 export function DiscardChangesDialog({
   open,
-  categoryName,
-  onKeepEditing,
+  onCancel,
   onDiscard,
 }: {
   open: boolean
-  /** Name of the category being edited, or null for a new one. */
-  categoryName: string | null
-  onKeepEditing: () => void
+  onCancel: () => void
   onDiscard: () => void
 }) {
   return (
-    <AlertDialog open={open} onOpenChange={(isOpen) => !isOpen && onKeepEditing()}>
+    <AlertDialog open={open} onOpenChange={(isOpen) => !isOpen && onCancel()}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Discard unsaved changes?</AlertDialogTitle>
           <AlertDialogDescription>
-            Your edits to {categoryName ?? "the new category"} haven&apos;t been
-            saved.
+            You have unsaved changes that will be lost.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Keep editing</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" onClick={onDiscard}>
-            Discard
-          </AlertDialogAction>
+          <AlertDialogCancel>Keep Editing</AlertDialogCancel>
+          <Button variant="destructive" onClick={onDiscard}>
+            Discard Changes
+          </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
   )
 }
 
-/** Confirms deleting a category and explains what happens to its contents. */
 export function DeleteCategoryDialog({
   open,
   categoryName,
-  subcategoryCount,
+  childCount,
   productCount,
   onCancel,
   onConfirm,
 }: {
   open: boolean
   categoryName: string
-  subcategoryCount: number
+  childCount: number
   productCount: number
   onCancel: () => void
-  onConfirm: () => void
+  onConfirm: (cascade: boolean) => void
 }) {
-  const plural = (count: number, one: string, many: string) =>
-    `${count} ${count === 1 ? one : many}`
-
   return (
     <AlertDialog open={open} onOpenChange={(isOpen) => !isOpen && onCancel()}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete {categoryName}?</AlertDialogTitle>
-          <AlertDialogDescription>
-            {subcategoryCount > 0 &&
-              `${plural(subcategoryCount, "subcategory", "subcategories")} will move to the top level. `}
-            {productCount > 0
-              ? `${plural(productCount, "product", "products")} will be unlinked from this category but stay in your catalog. `
-              : "No products are linked to it. "}
-            This can&apos;t be undone.
+          <AlertDialogTitle>Delete &ldquo;{categoryName}&rdquo;?</AlertDialogTitle>
+          <AlertDialogDescription render={<div className="space-y-2" />}>
+            <p>
+              This category has <strong>{productCount}</strong>{" "}
+              {productCount === 1 ? "product" : "products"} and <strong>{childCount}</strong>{" "}
+              {childCount === 1 ? "subcategory" : "subcategories"}.
+            </p>
+            {childCount > 0 && (
+              <p className="text-xs">
+                <strong className="text-foreground">Delete all</strong> removes this category and
+                every subcategory inside it.
+              </p>
+            )}
+            <p className="text-xs">
+              A category can only be deleted on its own when it has no subcategories and no
+              products. Products are never deleted, only unlinked.
+            </p>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" onClick={onConfirm}>
-            Delete category
-          </AlertDialogAction>
+          {childCount > 0 ? (
+            <Button variant="destructive" onClick={() => onConfirm(true)}>
+              Delete all
+            </Button>
+          ) : (
+            <Button variant="destructive" onClick={() => onConfirm(false)}>
+              Delete
+            </Button>
+          )}
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

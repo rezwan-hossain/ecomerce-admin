@@ -45,13 +45,24 @@ app/
 - **Demo data:** everything is in `lib/demo-data.ts` (types, products, categories, brands, attributes, returns, abandoned carts, `currency`, `formatDate`). Orders come from `lib/data/orders.json`. Replace this module when a real backend arrives.
 - **List pages** use the generic client component `components/list-table.tsx` (search, filter tabs, pagination). Pass it `columns` with `cell` functions. Functions can't cross the server-to-client boundary, so each list lives in its own client component (`components/orders/*`, `components/products/*`), and `page.tsx` stays a server component that passes data in.
 - **Brands** (`/products/brands`) is the reference pattern for schema-aligned pages: the `Brand` type in `lib/demo-data.ts` mirrors the Prisma model (ISO date strings, `_count.products`), `lib/validations/brand.ts` holds the zod schema, and `components/brands/` holds the manager, the add/edit form (a side panel), and the delete confirmation. New records get IDs from `uuidv7()` in `lib/uuid.ts`. Follow this pattern when aligning other pages with the backend schema.
-- **Categories** (`/products/categories`) follow the same pattern for the `Category` tree (`components/categories/`, `lib/validations/category.ts`).
-  - Tree logic (depth limit `MAX_CATEGORY_DEPTH = 5`, cycle and depth checks, storefront path) is in `lib/category-tree.ts`.
-  - Product links mirror `ProductCategory` (`productCategoryLinks` in `lib/demo-data.ts`, linked to every ancestor).
-  - The page's "API payloads" section documents a *suggested* REST contract. It isn't the real backend API.
-  - **Forms use React Hook Form + zod** (`react-hook-form`, `@hookform/resolvers`). `categories-manager.tsx` owns `useForm({ resolver: zodResolver(categoryFormSchema) })` and shares it through `<FormProvider>`. The editor and the payloads panel read it with `useFormContext` / `useWatch`.
-    - Rules that need other records (unique slug, sibling names, depth) run on save through `findCategoryConflicts`, and are reported with `form.setError`.
-    - Tree changes are pure functions in `lib/category-tree.ts` (`placeCategory`, `deleteCategory`, `resolveDrop`). Use this setup for new forms.
+- **Categories** (`/products/categories`) is **connected to the real NestJS backend** (the other pages still use demo data).
+  - `page.tsx` (server, `await connection()`) loads `GET /categories/tree` through `getCategoryTree()`.
+  - `app/actions/category.actions.ts`: server actions return `{ success, data }` or `{ success: false, error, fieldErrors }`, and call `revalidatePath("/products/categories")`.
+  - `lib/api.ts`: the fetch helper. It throws `ApiError` with `fieldErrors`.
+  - `types/category.type.ts`: the API shapes. Tree nodes have `children?` and `_count.products`.
+  - `components/categories/`:
+    - `categories-manager.tsx` holds state (`useState`) and calls the actions, then `refresh()`es the tree.
+    - `category-form.tsx` owns its own `useForm` + zod schema.
+    - `category-tree.tsx` and `category-tree-row.tsx`: drop on a row = make it the last child; the drop zone = top level.
+    - `category-dialogs.tsx`.
+  - `lib/categories/tree-utils.ts`: `flattenTree`, `validateMove` (cycles, depth `MAX_DEPTH = 4`, inactive parent), `buildPath`, `slugify`.
+  - Backend rules: `DELETE /:id` only works on an empty category (no children, no products). `/cascade` deletes the whole subtree. `/move` takes `{ newParentId, position }`.
+- **Code style (the user's explicit preference):**
+  - Clean, minimal, production-ready code.
+  - No custom hooks, abstraction layers or design patterns unless asked.
+  - No defensive boilerplate or speculative features.
+  - Few files, and props over context.
+  - `if/else` over nested ternaries, and short *why*-only comments.
 - **Shared UI:** `page-header.tsx`, `stat-cards.tsx`, `status-badge.tsx` (maps order, product and return statuses to icons).
 - The dashboard's big orders table (`components/data-table.tsx`) is the original shadcn block adapted to orders: drag to reorder, and a detail drawer.
 
@@ -82,5 +93,5 @@ npx next typegen     # regenerate route types after adding/moving routes
 
 - Customers and Analytics pages. The sidebar links to them, but they return 404.
 - Real authentication (no provider chosen yet) and middleware to protect the `(admin)` routes.
-- Persistence: a database or API.
+- Persistence for pages other than Categories (they still use `lib/demo-data.ts`).
 - A theme toggle.
