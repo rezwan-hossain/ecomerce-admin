@@ -22,7 +22,7 @@ const labels: Record<string, string> = {
   returns: "Returns & Refunds",
   abandoned: "Abandoned Carts",
   products: "Products",
-  new: "Create",
+  new: "New product",
   edit: "Edit",
   categories: "Categories",
   brands: "Brands",
