@@ -1,8 +1,12 @@
 "use client"
 
 import { useRef, useState } from "react"
-import { ImageUpIcon } from "lucide-react"
+import { ImageUpIcon, LinkIcon } from "lucide-react"
 import { toast } from "sonner"
+import { z } from "zod"
+
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 
 import { cn } from "@/lib/utils"
 
@@ -24,6 +28,29 @@ export function MediaPanel({
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropId, setDropId] = useState<string | null>(null)
   const [editingAlt, setEditingAlt] = useState<string | null>(null)
+  const [urlOpen, setUrlOpen] = useState(false)
+  const [url, setUrl] = useState("")
+  const [urlError, setUrlError] = useState("")
+
+  function addUrl() {
+    const trimmed = url.trim()
+    if (!z.url().safeParse(trimmed).success) {
+      setUrlError("Enter a full URL, like https://example.com/shoe.jpg")
+      return
+    }
+    if (images.some((image) => image.src === trimmed)) {
+      setUrlError("This image is already added")
+      return
+    }
+    // The file name makes a starting alt text: ".../red-shoe.jpg" → "red shoe".
+    const fileName = decodeURIComponent(trimmed.split(/[?#]/)[0].split("/").pop() ?? "")
+    const alt = fileName.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ")
+    onChange([...images, { id: uid(), src: trimmed, alt }])
+    setUrl("")
+    setUrlError("")
+    setUrlOpen(false)
+    toast.success("Image added")
+  }
 
   function addFiles(fileList: FileList) {
     const files = Array.from(fileList).filter((f) => f.type.startsWith("image/"))
@@ -119,6 +146,49 @@ export function MediaPanel({
           event.target.value = ""
         }}
       />
+
+      {urlOpen ? (
+        <div className="mt-2.5">
+          <div className="flex gap-2">
+            <Input
+              autoFocus
+              type="url"
+              value={url}
+              placeholder="https://example.com/shoe.jpg"
+              aria-label="Image URL"
+              aria-invalid={Boolean(urlError)}
+              className="h-8"
+              onChange={(event) => {
+                setUrl(event.target.value)
+                setUrlError("")
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault()
+                  addUrl()
+                }
+                if (event.key === "Escape") setUrlOpen(false)
+              }}
+            />
+            <Button type="button" size="sm" className="h-8" onClick={addUrl}>
+              Add
+            </Button>
+            <Button type="button" size="sm" variant="ghost" className="h-8" onClick={() => setUrlOpen(false)}>
+              Cancel
+            </Button>
+          </div>
+          {urlError && <p className="mt-1.5 text-[12.5px] text-destructive">{urlError}</p>}
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="mt-2 inline-flex items-center gap-1.5 text-[12.5px] text-muted-foreground hover:text-primary"
+          onClick={() => setUrlOpen(true)}
+        >
+          <LinkIcon className="size-3.5" />
+          Add from URL
+        </button>
+      )}
 
       <div className="mt-3 grid empty:hidden grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3 sm:grid-cols-[repeat(auto-fill,minmax(210px,1fr))]">
         {images.map((image, index) => (
