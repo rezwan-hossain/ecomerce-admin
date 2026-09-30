@@ -55,6 +55,16 @@ const abbr = (value: string) =>
 export const buildSku = (prefix: string, parts: VariantPart[]) =>
   [prefix.trim(), ...parts.map((p) => abbr(p.value))].filter(Boolean).join("-").toUpperCase()
 
+// Used when the bulk SKU prefix is empty: "Nike Air Max Alpha 5" → "NAMA5".
+export const namePrefix = (name: string) =>
+  name
+    .split(/\s+/)
+    .map((word) => (/^\d+$/.test(word) ? word : word.charAt(0)))
+    .join("")
+    .replace(/[^a-z0-9]/gi, "")
+    .slice(0, 6)
+    .toUpperCase()
+
 // Keyed by option id, so renaming an option keeps its variants.
 // A product without options has one variant, keyed "default".
 export const keyOf = (parts: VariantPart[]) =>

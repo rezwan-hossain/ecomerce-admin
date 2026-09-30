@@ -1,6 +1,15 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import {
+  BoldIcon,
+  ImageIcon,
+  ItalicIcon,
+  LinkIcon,
+  ListIcon,
+  RemoveFormattingIcon,
+  UnderlineIcon,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -8,10 +17,10 @@ import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 
 const TOOLS = [
-  { cmd: "bold", label: <b>B</b>, aria: "Bold" },
-  { cmd: "italic", label: <i>I</i>, aria: "Italic" },
-  { cmd: "underline", label: <u>U</u>, aria: "Underline" },
-  { cmd: "insertUnorderedList", label: "• List", aria: "Bulleted list" },
+  { cmd: "bold", icon: BoldIcon, aria: "Bold" },
+  { cmd: "italic", icon: ItalicIcon, aria: "Italic" },
+  { cmd: "underline", icon: UnderlineIcon, aria: "Underline" },
+  { cmd: "insertUnorderedList", icon: ListIcon, aria: "Bulleted list" },
 ]
 
 export function BasicInfoPanel({
@@ -112,7 +121,7 @@ export function BasicInfoPanel({
   }
 
   const toolClass =
-    "h-7.5 min-w-8 rounded-md px-1.5 text-[13px] text-foreground hover:bg-muted aria-pressed:bg-primary/10 aria-pressed:text-primary"
+    "h-7.5 min-w-8 rounded-md px-1.5 text-[13px] text-muted-foreground hover:text-foreground hover:bg-muted aria-pressed:bg-primary/10 aria-pressed:text-primary"
 
   return (
     <section className="mb-5 rounded-[10px] border bg-card p-5">
@@ -212,16 +221,19 @@ export function BasicInfoPanel({
                 key={tool.cmd}
                 type="button"
                 aria-label={tool.aria}
+                title={tool.aria}
                 aria-pressed={pressed.includes(tool.cmd)}
                 className={toolClass}
                 onClick={() => run(tool.cmd)}
               >
-                {tool.label}
+                <tool.icon className="mx-auto size-4" />
               </button>
             ))}
             <span className="mx-1 h-4.5 w-px bg-border" aria-hidden />
             <button
               type="button"
+              aria-label="Insert link"
+              title="Insert link"
               className={toolClass}
               onClick={() => {
                 saveRange()
@@ -229,10 +241,15 @@ export function BasicInfoPanel({
                 setLinkOpen(true)
               }}
             >
-              Link
+              <LinkIcon className="mx-auto size-4" />
             </button>
-            <label className={cn(toolClass, "flex cursor-pointer items-center")} onClick={saveRange}>
-              Image
+            <label
+              aria-label="Insert image"
+              title="Insert image"
+              className={cn(toolClass, "flex cursor-pointer items-center justify-center")}
+              onClick={saveRange}
+            >
+              <ImageIcon className="size-4" />
               <input
                 type="file"
                 accept="image/*"
@@ -244,8 +261,14 @@ export function BasicInfoPanel({
                 }}
               />
             </label>
-            <button type="button" className={toolClass} onClick={() => run("removeFormat")}>
-              Clear
+            <button
+              type="button"
+              aria-label="Clear formatting"
+              title="Clear formatting"
+              className={toolClass}
+              onClick={() => run("removeFormat")}
+            >
+              <RemoveFormattingIcon className="mx-auto size-4" />
             </button>
           </div>
 

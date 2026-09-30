@@ -320,6 +320,7 @@ export function VariantsPanel({
                       value={v.sku}
                       spellCheck={false}
                       aria-label="SKU"
+                      placeholder="e.g. TEE-RED-M"
                       aria-invalid={showErrors && Boolean(errors.sku)}
                       title={showErrors ? errors.sku : undefined}
                       className={cn(cellInput, "font-mono text-[13px]")}
@@ -332,6 +333,7 @@ export function VariantsPanel({
                       value={v.price}
                       inputMode="decimal"
                       aria-label="Price"
+                      placeholder="0.00"
                       aria-invalid={showErrors && Boolean(errors.price)}
                       title={showErrors ? errors.price : undefined}
                       className={cn(cellInput, "text-right tabular-nums")}

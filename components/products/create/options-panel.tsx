@@ -189,7 +189,7 @@ export function OptionsPanel({
             onValueChange={(value) => value && addSavedOption(value)}
             items={unusedSaved.map((s) => ({ value: s.id, label: s.name }))}
           >
-            <SelectTrigger size="sm" className="w-52" aria-label="Add from your options" disabled={options.length >= MAX_OPTIONS}>
+            <SelectTrigger className="h-8 w-52" aria-label="Add from your options" disabled={options.length >= MAX_OPTIONS}>
               <SelectValue placeholder="Add from your options" />
             </SelectTrigger>
             <SelectContent>
@@ -204,7 +204,7 @@ export function OptionsPanel({
             </SelectContent>
           </Select>
         )}
-        <Button type="button" variant="outline" size="sm" disabled={options.length >= MAX_OPTIONS} onClick={addOption}>
+        <Button type="button" variant="outline" className="h-8" disabled={options.length >= MAX_OPTIONS} onClick={addOption}>
           {unusedSaved.length > 0 ? "Add custom option" : "Add another option"}
         </Button>
         <span className="text-[12.5px] text-muted-foreground">

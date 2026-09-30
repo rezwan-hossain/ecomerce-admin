@@ -1,6 +1,7 @@
 "use client"
 
 import { useRef, useState } from "react"
+import { ImageUpIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { cn } from "@/lib/utils"
@@ -103,6 +104,7 @@ export function MediaPanel({
           addFiles(event.dataTransfer.files)
         }}
       >
+        <ImageUpIcon className="mx-auto mb-1.5 size-6" />
         <strong className="font-semibold text-foreground">Drop images here</strong> or click to upload
         <div className="text-[12.5px]">PNG, JPG, WebP or GIF</div>
       </div>
@@ -118,7 +120,7 @@ export function MediaPanel({
         }}
       />
 
-      <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3 sm:grid-cols-[repeat(auto-fill,minmax(210px,1fr))]">
+      <div className="mt-3 grid empty:hidden grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3 sm:grid-cols-[repeat(auto-fill,minmax(210px,1fr))]">
         {images.map((image, index) => (
           <figure
             key={image.id}
@@ -224,6 +226,8 @@ export function MediaPanel({
           </figure>
         ))}
 
+        {/* With no images the drop zone above does this job. */}
+        {images.length > 0 && (
         <button
           type="button"
           className="flex min-h-45 flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-input font-medium text-muted-foreground hover:border-primary hover:bg-primary/10 hover:text-primary"
@@ -232,6 +236,7 @@ export function MediaPanel({
           <span className="text-[26px] leading-none">+</span>
           Add media
         </button>
+        )}
       </div>
     </section>
   )

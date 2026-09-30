@@ -26,6 +26,7 @@ import {
   isPrice,
   isStock,
   keyOf,
+  namePrefix,
   plural,
   uid,
   withNewVariants,
@@ -145,7 +146,8 @@ export function CreateProductPage({
 
   function updateOptions(next: ProductOption[]) {
     setOptions(next)
-    setVariants((current) => withNewVariants(next, current, bulk))
+    const prefix = bulk.prefix || namePrefix(name)
+    setVariants((current) => withNewVariants(next, current, { ...bulk, prefix }))
     clearError("fOptions")
   }
 
@@ -224,7 +226,7 @@ export function CreateProductPage({
       for (const { key, parts } of selected) {
         next[key] = {
           ...next[key],
-          sku: buildSku(bulk.prefix, parts),
+          sku: buildSku(bulk.prefix || namePrefix(name), parts),
           ...(bulk.price.trim() && { price: Number(bulk.price).toFixed(2) }),
           ...(bulk.stock.trim() && { stock: String(Number(bulk.stock)) }),
         }
