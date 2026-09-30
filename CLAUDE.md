@@ -33,7 +33,7 @@ app/
 │   ├── dashboard/        /dashboard
 │   ├── orders/           /orders, /orders/{pending,returns,abandoned}, /orders/[id]
 │   └── products/         /products, /products/new, /products/[id]/edit,
-│                         /products/{categories,brands,attributes}
+│                         /products/{categories,brands,tags,options,variant-templates}
 └── (auth)/               route group: split-screen layout, no sidebar
     ├── login/            /login
     └── signup/           /signup
@@ -58,6 +58,8 @@ app/
   - `lib/categories/tree-utils.ts`: `flattenTree`, `validateMove` (cycles, depth `MAX_DEPTH = 4`, inactive parent), `buildPath`, `slugify`.
   - Backend rules: `DELETE /:id` only works on an empty category (no children, no products). `/cascade` deletes the whole subtree. `/move` takes `{ newParentId, position }`.
 - **Tags** (`/products/tags`) is also connected to the backend (`/tags` API). Files: `app/actions/tag.actions.ts`, `types/tag.type.ts`, `components/tags/tags-manager.tsx` (styled like Brands: stat cards, `ListTable` with tabs, search, sort and a row menu, and a delete dialog), and `components/tags/tag-form-sheet.tsx` (a side-panel add/edit form). Both action files share `handleRequest` / `ActionResponse` from `lib/action-response.ts`.
+- **Options** (`/products/options`, replaces the old demo Attributes page) is connected to the backend (`/options` API). Files: `app/actions/option.actions.ts` (options and their values), `types/option.type.ts`, `components/options/options-manager.tsx` (Tags-style list), and `components/options/option-form-sheet.tsx`. A new option's name and values are created together. On an existing option, value changes save right away and the name saves with "Save name".
+- **Variant Templates** (`/products/variant-templates`) is connected to the backend (`/variant-templates` API). Files: `app/actions/variant-template.actions.ts`, `types/variant-template.type.ts`, `components/variant-templates/variant-templates-manager.tsx` (list, shows how many variants each template makes), and `components/variant-templates/template-form-sheet.tsx` (pick options, then toggle their values). `page.tsx` also loads `getOptions()` for the form. A PATCH with `options` replaces all of them.
 - **Code style (the user's explicit preference):**
   - Clean, minimal, production-ready code.
   - No custom hooks, abstraction layers or design patterns unless asked.

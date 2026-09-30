@@ -65,7 +65,8 @@ const data = {
         { title: "Categories", url: "/products/categories" },
         { title: "Brands", url: "/products/brands" },
         { title: "Tags", url: "/products/tags" },
-        { title: "Attributes", url: "/products/attributes" },
+        { title: "Options", url: "/products/options" },
+        { title: "Variant Templates", url: "/products/variant-templates" },
       ],
     },
     {

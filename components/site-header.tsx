@@ -27,7 +27,8 @@ const labels: Record<string, string> = {
   categories: "Categories",
   brands: "Brands",
   tags: "Tags",
-  attributes: "Attributes",
+  options: "Options",
+  "variant-templates": "Variant Templates",
 }
 
 // "3209" -> "#3209", "wireless-headphones" -> "Wireless Headphones"
