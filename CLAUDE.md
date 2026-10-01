@@ -61,6 +61,21 @@ app/
 - **Options** (`/products/options`, replaces the old demo Attributes page) is connected to the backend (`/options` API). Files: `app/actions/option.actions.ts` (options and their values), `types/option.type.ts`, `components/options/options-manager.tsx` (Tags-style list), and `components/options/option-form-sheet.tsx`. A new option's name and values are created together. On an existing option, value changes save right away and the name saves with "Save name".
 - **Variant Templates** (`/products/variant-templates`) is connected to the backend (`/variant-templates` API). Files: `app/actions/variant-template.actions.ts`, `types/variant-template.type.ts`, `components/variant-templates/variant-templates-manager.tsx` (list, shows how many variants each template makes), and `components/variant-templates/template-form-sheet.tsx` (pick options, then toggle their values). `page.tsx` also loads `getOptions()` for the form. A PATCH with `options` replaces all of them.
 - **Create product** (`/products/new`) follows the user's HTML mockup and is **UI only**: Publish validates but sends nothing. `page.tsx` loads brands, tags, the category tree and variant templates from the API. Options also come from the API: the Options panel's "Add from your options" adds a saved option with its values, and options match saved ones by name to suggest their values. The Tags panel picks existing tags by ID, and "Create tag" saves a new one through `createTag`. It uses plain `useState` (no React Hook Form); all state lives in `components/products/create/create-product-page.tsx`. Its panels are `basic-info-panel`, `media-panel`, `side-panels`, `options-panel` and `variants-panel`, and pure helpers are in `product-utils.ts`. Drafts are saved in `localStorage`. With no options the product has one "Default" variant (key `"default"`), which can't be removed. The edit page still uses the old `components/products/product-form.tsx`.
+- **Marketing** (a sidebar group after Analytics) follows the user's "Season planner" HTML mockup and is connected to the backend. `/marketing/planner`, `/marketing/campaigns` and `/marketing/promotions` all render `components/marketing/marketing-workspace.tsx` with a different `view`.
+  - `app/actions/marketing.actions.ts`:
+    - `loadMarketing()` loads campaigns (with banners, sections, rules and section products), promotions (with targets and campaign links) and the catalog (brands, tags, the category tree, and ACTIVE products).
+    - `saveCampaign` and `savePromotion` save a whole drawer: the record, then its nested rows through their own endpoints.
+  - `components/marketing/`:
+    - `marketing-utils.ts`: types and pure helpers, ported from the mockup (status hints, offer text, rule and target matching, cart math, "Needs attention").
+    - `planner-view.tsx` (timeline), `campaign-list.tsx` (table), `promotion-cards.tsx` (ticket cards).
+    - `campaign-drawer.tsx` and `promotion-drawer.tsx`.
+    - `form-bits.tsx` and `status.tsx` (shared pieces).
+  - Ids starting with `new-` aren't saved yet. Dates are ISO strings; `lib/datetime.ts` converts them for `datetime-local` inputs.
+  - Backend rules the save flow works around:
+    - Nested changes (banners, sections, targets, links) return 403 while the record is inactive or archived. Saving orders the steps so changes land while the record is editable, and links run last.
+    - Banner and section PATCH reject `null`, so null fields are left out.
+    - Banner `linkUrl` must be a full URL.
+    - Section titles need at least 2 characters.
 - **Code style (the user's explicit preference):**
   - Clean, minimal, production-ready code.
   - No custom hooks, abstraction layers or design patterns unless asked.

@@ -22,6 +22,7 @@ import {
   PackageIcon,
   UsersIcon,
   ChartBarIcon,
+  MegaphoneIcon,
   TagIcon,
   WarehouseIcon,
   TruckIcon,
@@ -89,6 +90,16 @@ const data = {
         { title: "Traffic", url: "/analytics/traffic" },
       ],
     },
+    {
+      title: "Marketing",
+      url: "/marketing",
+      icon: <MegaphoneIcon />,
+      items: [
+        { title: "Planner", url: "/marketing/planner" },
+        { title: "Campaigns", url: "/marketing/campaigns" },
+        { title: "Promotions", url: "/marketing/promotions" },
+      ],
+    },
   ] satisfies NavMainItem[],
   navSecondary: [
     { title: "Settings", url: "#", icon: <Settings2Icon /> },
@@ -97,7 +108,7 @@ const data = {
   ],
   documents: [
     { name: "Inventory", url: "#", icon: <WarehouseIcon /> },
-    { name: "Discounts", url: "#", icon: <TagIcon /> },
+    { name: "Discounts", url: "/marketing/promotions", icon: <TagIcon /> },
     { name: "Shipping", url: "#", icon: <TruckIcon /> },
     { name: "Reviews", url: "#", icon: <StarIcon /> },
   ],
