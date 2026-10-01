@@ -1,8 +1,11 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 
+import { updateProduct } from "@/app/actions/product.actions"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -15,6 +18,7 @@ import {
 import { slugify } from "@/lib/slug"
 import { cn } from "@/lib/utils"
 import type { Category } from "@/types/category.type"
+import type { ProductDetail } from "@/types/product.type"
 
 import { BasicInfoPanel } from "./basic-info-panel"
 import { MediaPanel } from "./media-panel"
@@ -23,6 +27,7 @@ import {
   buildSku,
   checkRows,
   combos,
+  fromProduct,
   isPrice,
   isStock,
   keyOf,
@@ -72,39 +77,48 @@ export function CreateProductPage({
   savedOptions,
   categoryTree,
   templates,
+  product,
 }: {
   initialBrands: BrandItem[]
   initialTags: TagItem[]
   savedOptions: SavedOption[]
   categoryTree: Category[]
   templates: TemplateData[]
+  product?: ProductDetail // edit mode: the form starts from this product and saves to it
 }) {
-  const [name, setName] = useState("")
-  const [slug, setSlug] = useState("")
-  const [slugAuto, setSlugAuto] = useState(true)
-  const [shortDesc, setShortDesc] = useState("")
-  const [descHtml, setDescHtml] = useState("")
+  const router = useRouter()
+  const [initial] = useState(() => (product ? fromProduct(product) : null))
+
+  const [name, setName] = useState(product?.name ?? "")
+  const [slug, setSlug] = useState(product?.slug ?? "")
+  const [slugAuto, setSlugAuto] = useState(!product)
+  const [shortDesc, setShortDesc] = useState(product?.shortDescription ?? "")
+  const [descHtml, setDescHtml] = useState(product?.description ?? "")
   const [descKey, setDescKey] = useState(0) // bump to load a draft into the editor
-  const [status, setStatus] = useState<Status>("ACTIVE")
-  const [isActive, setIsActive] = useState(true)
+  const [status, setStatus] = useState<Status>(product?.status ?? "ACTIVE")
+  const [isActive, setIsActive] = useState(product?.isActive ?? true)
   const [brands, setBrands] = useState(initialBrands)
-  const [brandId, setBrandId] = useState<string | null>(null)
-  const [categoryIds, setCategoryIds] = useState<string[]>([])
-  const [allTags, setAllTags] = useState(initialTags)
-  const [tagIds, setTagIds] = useState<string[]>([])
-  const [templateId, setTemplateId] = useState("none")
-  const [images, setImages] = useState<ProductImage[]>([])
-  const [options, setOptions] = useState<ProductOption[]>([])
-  // Starts with the default variant, used while the product has no options.
-  const [variants, setVariants] = useState<Record<string, VariantState>>(() =>
-    withNewVariants([], {}, { price: "", stock: "", prefix: "" })
+  const [brandId, setBrandId] = useState<string | null>(product?.brand?.id ?? null)
+  // The primary category goes first.
+  const [categoryIds, setCategoryIds] = useState<string[]>(
+    () => product?.categories.toSorted((a, b) => Number(b.isPrimary) - Number(a.isPrimary)).map((c) => c.category.id) ?? []
   )
-  const [removed, setRemoved] = useState<string[]>([])
+  const [allTags, setAllTags] = useState(initialTags)
+  const [tagIds, setTagIds] = useState<string[]>(product?.tags.map((t) => t.tag.id) ?? [])
+  const [templateId, setTemplateId] = useState("none")
+  const [images, setImages] = useState<ProductImage[]>(initial?.images ?? [])
+  const [options, setOptions] = useState<ProductOption[]>(initial?.options ?? [])
+  // A new product starts with the default variant, used while it has no options.
+  const [variants, setVariants] = useState<Record<string, VariantState>>(
+    () => initial?.variants ?? withNewVariants([], {}, { price: "", stock: "", prefix: "" })
+  )
+  const [removed, setRemoved] = useState<string[]>(initial?.removed ?? [])
   const [bulk, setBulk] = useState<Bulk>({ price: "", stock: "", prefix: "" })
 
   const [errors, setErrors] = useState<ErrorItem[]>([])
   const [triedPublish, setTriedPublish] = useState(false)
-  const [saveMeta, setSaveMeta] = useState("Not saved yet")
+  const [saving, setSaving] = useState(false)
+  const [saveMeta, setSaveMeta] = useState(product ? "" : "Not saved yet")
   const [savedDraft, setSavedDraft] = useState<ReturnType<typeof serialize> | null>(null)
   const [payloadOpen, setPayloadOpen] = useState(false)
 
@@ -114,13 +128,14 @@ export function CreateProductPage({
     .map((parts) => ({ key: keyOf(parts), parts, v: variants[keyOf(parts)] }))
     .filter((row) => row.v && !removed.includes(row.key))
 
-  // Offer the saved draft once the page is in the browser.
+  // Offer the saved draft once the page is in the browser. Drafts are for new products only.
   useEffect(() => {
+    if (product) return
     try {
       const raw = localStorage.getItem(DRAFT_KEY)
       if (raw) setSavedDraft(JSON.parse(raw))
     } catch {}
-  }, [])
+  }, [product])
 
   function clearError(id: string) {
     if (errorIds.includes(id)) setErrors(errors.filter((e) => e.id !== id))
@@ -261,17 +276,56 @@ export function CreateProductPage({
     if (totals.badStock) {
       found.push({ id: "fMatrix", message: `${totals.badStock} ${plural(totals.badStock, "variant has", "variants have")} a stock count that isn't a whole number.` })
     }
+    // The API takes image URLs only.
+    if (product && images.some((image) => image.src.startsWith("data:"))) {
+      found.push({ id: "fMedia", message: "Uploaded images can't be saved yet. Remove them and add images from a URL." })
+    }
     return found
   }
 
-  function publish() {
+  function checkForm() {
     const found = validateAll()
     setErrors(found)
     setTriedPublish(true)
-    if (found.length > 0) {
-      window.scrollTo({ top: 0, behavior: "smooth" })
+    if (found.length > 0) window.scrollTo({ top: 0, behavior: "smooth" })
+    return found.length === 0
+  }
+
+  async function saveChanges() {
+    if (!checkForm()) return
+    setSaving(true)
+    const res = await updateProduct(product!.id, {
+      name: name.trim(),
+      slug,
+      shortDescription: shortDesc.trim(),
+      description: descHtml,
+      status,
+      isActive: status === "ACTIVE" && isActive,
+      brand: brands.find((b) => b.id === brandId)!,
+      categoryIds,
+      tagIds,
+      images: images.map((image) => ({ url: image.src, altText: image.alt.trim() })),
+      variants: rows.map(({ parts, v }) => ({
+        id: v.id,
+        sku: v.sku.trim(),
+        price: Number(v.price),
+        stock: Number(v.stock),
+        isActive: v.active,
+        options: parts.map((p) => ({ optionId: p.option.id, value: p.value })),
+        imageUrl: images.find((image) => image.id === v.imageId)?.src ?? null,
+      })),
+    })
+    setSaving(false)
+    if (!res.success) {
+      toast.error(res.error)
       return
     }
+    toast.success(`${name.trim()} saved`)
+    router.push("/products")
+  }
+
+  function publish() {
+    if (!checkForm()) return
     // UI only for now: nothing is sent to the API yet.
     setStatus("ACTIVE")
     try {
@@ -408,21 +462,34 @@ export function CreateProductPage({
       <header className="sticky top-0 z-20 border-b bg-card">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-3 lg:px-6">
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="text-[22px] leading-tight font-bold tracking-tight">Create product</h1>
+            <h1 className="text-[22px] leading-tight font-bold tracking-tight">
+              {product ? "Edit product" : "Create product"}
+            </h1>
             <span className={cn("rounded-full px-2.5 py-0.5 text-xs font-semibold", pill.className)}>{pill.label}</span>
             <span className="text-[12.5px] text-muted-foreground">{saveMeta}</span>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="ghost" onClick={() => setPayloadOpen(true)}>
-              View payload
-            </Button>
-            <Button type="button" variant="outline" onClick={saveDraft}>
-              Save draft
-            </Button>
-            <Button type="button" onClick={publish}>
-              Publish product
-            </Button>
-          </div>
+          {product ? (
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" nativeButton={false} render={<Link href="/products" />}>
+                Cancel
+              </Button>
+              <Button type="button" onClick={saveChanges} disabled={saving}>
+                {saving ? "Saving..." : "Save changes"}
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="ghost" onClick={() => setPayloadOpen(true)}>
+                View payload
+              </Button>
+              <Button type="button" variant="outline" onClick={saveDraft}>
+                Save draft
+              </Button>
+              <Button type="button" onClick={publish}>
+                Publish product
+              </Button>
+            </div>
+          )}
         </div>
       </header>
 
@@ -448,7 +515,7 @@ export function CreateProductPage({
             className="mb-5 rounded-[10px] border border-destructive/45 bg-destructive/10 px-4.5 py-3.5"
           >
             <h2 className="mb-1.5 text-[15px] font-semibold text-destructive">
-              Fix {errors.length} {plural(errors.length, "issue", "issues")} before publishing
+              Fix {errors.length} {plural(errors.length, "issue", "issues")} before {product ? "saving" : "publishing"}
             </h2>
             <ul className="list-disc pl-4.5">
               {errors.map((error) => (
@@ -519,13 +586,14 @@ export function CreateProductPage({
               }}
             />
             <TagsPanel allTags={allTags} selectedIds={tagIds} onAllTagsChange={setAllTags} onChange={setTagIds} />
-            <TemplatePanel templates={templates} templateId={templateId} onChange={changeTemplate} />
+            {!product && <TemplatePanel templates={templates} templateId={templateId} onChange={changeTemplate} />}
           </aside>
         </div>
 
         <OptionsPanel
           options={options}
           savedOptions={savedOptions}
+          locked={Boolean(product)}
           hasError={errorIds.includes("fOptions")}
           onChange={updateOptions}
           onRemove={removeOption}

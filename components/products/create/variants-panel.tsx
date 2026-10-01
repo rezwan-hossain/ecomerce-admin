@@ -91,7 +91,7 @@ export function VariantsPanel({
     const colorPart = row.parts.find((p) => isColorOption(p.option))
     if (pickAll && colorPart && images.length > 0) {
       const keys = rows
-        .filter((r) => r.parts.some((p) => p.option.id === colorPart.option.id && p.value === colorPart.value))
+        .filter((r) => !r.v.id && r.parts.some((p) => p.option.id === colorPart.option.id && p.value === colorPart.value))
         .map((r) => r.key)
       onUpdate(keys, { imageId })
       toast.success(
@@ -254,66 +254,81 @@ export function VariantsPanel({
                     </div>
                   </td>
                   <td className={dim}>
-                    <Popover
-                      open={pickerKey === key}
-                      onOpenChange={(open) => {
-                        setPickerKey(open ? key : null)
-                        setPickAll(true)
-                      }}
-                    >
-                      <PopoverTrigger
-                        aria-label={`${image ? "Change" : "Assign"} image for ${label}`}
-                        className={cn(
-                          "grid h-10.5 w-14 place-items-center overflow-hidden rounded-md border border-dashed border-input bg-muted/60 p-0 text-[11.5px] text-muted-foreground hover:border-primary hover:text-primary",
-                          image && "border-solid border-border"
-                        )}
+                    {v.id ? (
+                      // The API can't change a saved variant's image.
+                      <div
+                        title="A saved variant keeps its image"
+                        className="grid h-10.5 w-14 place-items-center overflow-hidden rounded-md border bg-muted/60 text-[11.5px] text-muted-foreground"
                       >
                         {image ? (
-                          // eslint-disable-next-line @next/next/no-img-element -- local data URLs
+                          // eslint-disable-next-line @next/next/no-img-element -- any image host is allowed
                           <img src={image.src} alt="" className="size-full object-cover" />
                         ) : (
-                          "Assign"
+                          "None"
                         )}
-                      </PopoverTrigger>
-                      <PopoverContent align="start" className="w-63">
-                        {images.length > 0 ? (
-                          <div className="grid grid-cols-3 gap-1.5">
-                            {images.map((img) => (
-                              <button
-                                key={img.id}
-                                type="button"
-                                aria-pressed={v.imageId === img.id}
-                                aria-label={`Use image: ${img.alt || "untitled"}`}
-                                className={cn(
-                                  "aspect-[4/3] overflow-hidden rounded-md border-2 border-transparent bg-muted p-0 hover:border-input",
-                                  v.imageId === img.id && "border-primary hover:border-primary"
-                                )}
-                                onClick={() => pickImage(row, img.id)}
-                              >
-                                {/* eslint-disable-next-line @next/next/no-img-element -- local data URLs */}
-                                <img src={img.src} alt="" className="size-full object-cover" />
-                              </button>
-                            ))}
+                      </div>
+                    ) : (
+                      <Popover
+                        open={pickerKey === key}
+                        onOpenChange={(open) => {
+                          setPickerKey(open ? key : null)
+                          setPickAll(true)
+                        }}
+                      >
+                        <PopoverTrigger
+                          aria-label={`${image ? "Change" : "Assign"} image for ${label}`}
+                          className={cn(
+                            "grid h-10.5 w-14 place-items-center overflow-hidden rounded-md border border-dashed border-input bg-muted/60 p-0 text-[11.5px] text-muted-foreground hover:border-primary hover:text-primary",
+                            image && "border-solid border-border"
+                          )}
+                        >
+                          {image ? (
+                            // eslint-disable-next-line @next/next/no-img-element -- local data URLs
+                            <img src={image.src} alt="" className="size-full object-cover" />
+                          ) : (
+                            "Assign"
+                          )}
+                        </PopoverTrigger>
+                        <PopoverContent align="start" className="w-63">
+                          {images.length > 0 ? (
+                            <div className="grid grid-cols-3 gap-1.5">
+                              {images.map((img) => (
+                                <button
+                                  key={img.id}
+                                  type="button"
+                                  aria-pressed={v.imageId === img.id}
+                                  aria-label={`Use image: ${img.alt || "untitled"}`}
+                                  className={cn(
+                                    "aspect-[4/3] overflow-hidden rounded-md border-2 border-transparent bg-muted p-0 hover:border-input",
+                                    v.imageId === img.id && "border-primary hover:border-primary"
+                                  )}
+                                  onClick={() => pickImage(row, img.id)}
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element -- local data URLs */}
+                                  <img src={img.src} alt="" className="size-full object-cover" />
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-[12.5px] text-muted-foreground">Upload images in the media gallery first.</p>
+                          )}
+                          {colorPart && images.length > 0 && (
+                            <label className="flex cursor-pointer items-center gap-2 text-[12.5px]">
+                              <Checkbox checked={pickAll} onCheckedChange={setPickAll} />
+                              Use for every {colorPart.value} variant
+                            </label>
+                          )}
+                          <div className="flex items-center justify-between text-[12.5px]">
+                            <button type="button" className="font-medium text-primary hover:underline" onClick={() => pickImage(row, null)}>
+                              Remove image
+                            </button>
+                            <button type="button" className="font-medium text-primary hover:underline" onClick={() => setPickerKey(null)}>
+                              Close
+                            </button>
                           </div>
-                        ) : (
-                          <p className="text-[12.5px] text-muted-foreground">Upload images in the media gallery first.</p>
-                        )}
-                        {colorPart && images.length > 0 && (
-                          <label className="flex cursor-pointer items-center gap-2 text-[12.5px]">
-                            <Checkbox checked={pickAll} onCheckedChange={setPickAll} />
-                            Use for every {colorPart.value} variant
-                          </label>
-                        )}
-                        <div className="flex items-center justify-between text-[12.5px]">
-                          <button type="button" className="font-medium text-primary hover:underline" onClick={() => pickImage(row, null)}>
-                            Remove image
-                          </button>
-                          <button type="button" className="font-medium text-primary hover:underline" onClick={() => setPickerKey(null)}>
-                            Close
-                          </button>
-                        </div>
-                      </PopoverContent>
-                    </Popover>
+                        </PopoverContent>
+                      </Popover>
+                    )}
                   </td>
                   <td className={dim}>
                     <input

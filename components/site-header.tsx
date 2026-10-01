@@ -35,6 +35,8 @@ const labels: Record<string, string> = {
   promotions: "Promotions",
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 // "3209" -> "#3209", "wireless-headphones" -> "Wireless Headphones"
 function formatId(segment: string) {
   if (/^\d+$/.test(segment)) return `#${segment}`
@@ -44,12 +46,16 @@ function formatId(segment: string) {
 export function SiteHeader() {
   const pathname = usePathname()
   const segments = pathname.split("/").filter(Boolean)
-  const crumbs = segments.map((segment, index) => ({
-    href: "/" + segments.slice(0, index + 1).join("/"),
-    label: labels[segment] ?? formatId(decodeURIComponent(segment)),
-    // "/products/[id]" has no page of its own, only "/products/[id]/edit".
-    linkable: segments[index + 1] !== "edit",
-  }))
+  const crumbs = segments
+    .map((segment, index) => ({
+      segment,
+      href: "/" + segments.slice(0, index + 1).join("/"),
+      label: labels[segment] ?? formatId(decodeURIComponent(segment)),
+      // "/products/[id]" has no page of its own, only "/products/[id]/edit".
+      linkable: segments[index + 1] !== "edit",
+    }))
+    // Database UUIDs mean nothing to a reader: "/products/<uuid>/edit" reads "Products › Edit".
+    .filter((crumb) => !UUID.test(crumb.segment))
 
   return (
     <header className="flex h-(--header-height) shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)">

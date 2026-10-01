@@ -1,5 +1,7 @@
 // Types and pure helpers shared by the Create product page and its panels.
 
+import type { ProductDetail } from "@/types/product.type"
+
 export type ProductImage = { id: string; src: string; alt: string }
 
 export type ProductOption = { id: string; name: string; values: string[] }
@@ -8,6 +10,7 @@ export type ProductOption = { id: string; name: string; values: string[] }
 export type SavedOption = { id: string; name: string; displayName: string | null; values: string[] }
 
 export type VariantState = {
+  id?: string // set when the variant is already saved (edit mode)
   sku: string
   price: string
   stock: string
@@ -108,6 +111,49 @@ export function withNewVariants(
     }
   }
   return next
+}
+
+// Turns a saved product into the form's images, options and variants, keyed like new ones.
+export function fromProduct(product: ProductDetail) {
+  const images: ProductImage[] = [...product.images]
+    .sort((a, b) => a.position - b.position)
+    .map((image) => ({ id: image.id, src: image.url, alt: image.altText ?? "" }))
+
+  const used = (optionId: string, value: string) =>
+    product.variants.some((variant) =>
+      variant.optionValues.some((o) => o.optionValue.optionId === optionId && o.optionValue.value === value)
+    )
+  // Only the values the variants use, in the option's own order.
+  const options: ProductOption[] = product.options.map(({ option }) => ({
+    id: option.id,
+    name: option.name,
+    values: option.values.map((v) => v.value).filter((value) => used(option.id, value)),
+  }))
+
+  const variants: Record<string, VariantState> = {}
+  for (const variant of product.variants) {
+    const parts = options.flatMap((option) => {
+      const match = variant.optionValues.find((o) => o.optionValue.optionId === option.id)
+      return match ? [{ option, value: match.optionValue.value }] : []
+    })
+    variants[keyOf(parts)] = {
+      id: variant.id,
+      sku: variant.sku,
+      price: variant.price,
+      stock: String(variant.stock),
+      active: variant.isActive,
+      selected: false,
+      imageId: images.find((image) => image.src === variant.images[0]?.url)?.id ?? null,
+      compareAt: "",
+      cost: "",
+      barcode: "",
+      weight: "",
+    }
+  }
+
+  // Combinations the product never had start out as removed rows.
+  const removed = combos(options).map(keyOf).filter((key) => !variants[key])
+  return { images, options, variants, removed }
 }
 
 export type CellErrors = { sku: string; price: string; stock: string }

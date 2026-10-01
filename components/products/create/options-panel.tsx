@@ -41,12 +41,14 @@ const findSaved = (saved: SavedOption[], name: string) =>
 export function OptionsPanel({
   options,
   savedOptions,
+  locked,
   hasError,
   onChange,
   onRemove,
 }: {
   options: ProductOption[]
   savedOptions: SavedOption[]
+  locked: boolean // a saved product's options can't be added, removed or renamed, only their values
   hasError: boolean
   onChange: (options: ProductOption[]) => void
   onRemove: (index: number) => void // the page shows an Undo toast
@@ -107,6 +109,7 @@ export function OptionsPanel({
             </span>
             <input
               value={option.name}
+              readOnly={locked}
               autoFocus={focusId === option.id}
               placeholder="Name, e.g. Size"
               aria-label={`Option ${index + 1} name`}
@@ -120,13 +123,15 @@ export function OptionsPanel({
               </span>
             )}
             <span className="flex-1" />
-            <button
-              type="button"
-              className="text-[12.5px] font-medium text-destructive hover:underline"
-              onClick={() => onRemove(index)}
-            >
-              Remove option
-            </button>
+            {!locked && (
+              <button
+                type="button"
+                className="text-[12.5px] font-medium text-destructive hover:underline"
+                onClick={() => onRemove(index)}
+              >
+                Remove option
+              </button>
+            )}
           </div>
 
           <div
@@ -182,7 +187,13 @@ export function OptionsPanel({
         </div>
       ))}
 
-      <div className="mt-3.5 flex flex-wrap items-center gap-3">
+      {locked && (
+        <p className="mt-3.5 text-[12.5px] text-muted-foreground">
+          A saved product keeps its options. Add or remove values to change its variants.
+        </p>
+      )}
+
+      <div className={cn("mt-3.5 flex flex-wrap items-center gap-3", locked && "hidden")}>
         {unusedSaved.length > 0 && (
           <Select
             value={null}
