@@ -34,6 +34,12 @@ import {
 import { Segmented } from "./planner-view"
 import { HintText, StatusBadge } from "./status"
 
+const scopeItems = [
+  { value: "ANY", label: "Any scope" },
+  { value: "ALL", label: "All products" },
+  { value: "SPECIFIC", label: "Specific products" },
+]
+
 const typeItems = [{ value: "ALL", label: "All offer types" }, ...PROMO_TYPES.map((t) => ({ value: t.value, label: t.label }))]
 
 export function PromotionCards({
@@ -56,6 +62,7 @@ export function PromotionCards({
   const [search, setSearch] = useState("")
   const [status, setStatus] = useState("ALL")
   const [type, setType] = useState("ALL")
+  const [scope, setScope] = useState("ANY")
 
   const q = search.trim().toLowerCase()
   const rows = data.promotions
@@ -63,6 +70,7 @@ export function PromotionCards({
       (p) =>
         (status === "ALL" || p.status === status) &&
         (type === "ALL" || p.type === type) &&
+        (scope === "ANY" || p.scope === scope) &&
         (!q || p.name.toLowerCase().includes(q))
     )
     .sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || b.priority - a.priority)
@@ -105,6 +113,18 @@ export function PromotionCards({
             ))}
           </SelectContent>
         </Select>
+        <Select value={scope} onValueChange={(value) => setScope(value ?? "ANY")} items={scopeItems}>
+          <SelectTrigger aria-label="Filter by scope" className="h-9 w-44 bg-card">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {scopeItems.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {data.promotions.length === 0 && (
@@ -126,6 +146,7 @@ export function PromotionCards({
                 setSearch("")
                 setStatus("ALL")
                 setType("ALL")
+                setScope("ANY")
               }}
             >
               Clear filters
@@ -170,7 +191,24 @@ export function PromotionCards({
                 </div>
                 <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3.5 gap-y-0.5 text-[13px]">
                   <dt className="text-muted-foreground">Applies to</dt>
-                  <dd>{targetsSummary(data.catalog, p)}</dd>
+                  <dd className="flex min-w-0 flex-wrap items-center gap-1.5">
+                    {p.scope === "ALL" && (
+                      <span className="rounded-full bg-emerald-50 px-2 text-xs leading-5 font-semibold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                        All products
+                      </span>
+                    )}
+                    {p.scope === "SPECIFIC" && p.targets.length === 0 && (
+                      <span className="rounded-full bg-amber-100 px-2 text-xs leading-5 font-semibold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                        No targets
+                      </span>
+                    )}
+                    {p.scope === "SPECIFIC" && p.targets.length > 0 && (
+                      <>
+                        <span className="rounded-full bg-muted px-2 text-xs leading-5 font-semibold">{plural(p.targets.length, "target")}</span>
+                        <span className="truncate">{targetsSummary(data.catalog, p)}</span>
+                      </>
+                    )}
+                  </dd>
                   <dt className="text-muted-foreground">Runs</dt>
                   <dd>{schedText(p)}</dd>
                   <dt className="text-muted-foreground">Conditions</dt>

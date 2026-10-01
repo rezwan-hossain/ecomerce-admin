@@ -76,6 +76,7 @@ app/
     - Banner and section PATCH reject `null`, so null fields are left out.
     - Banner `linkUrl` must be a full URL.
     - Section titles need at least 2 characters.
+  - Promotions have `scope`: `ALL` (every product, no targets) or `SPECIFIC` (only what the targets match; zero targets means no products). There is no `ALL_PRODUCTS` target type. Switching to ALL asks before dropping saved targets; Save then leaves the targets for the backend to remove, and only edits targets while the scope is SPECIFIC.
 - **Code style (the user's explicit preference):**
   - Clean, minimal, production-ready code.
   - No custom hooks, abstraction layers or design patterns unless asked.

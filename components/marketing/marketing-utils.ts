@@ -9,7 +9,9 @@ export type PromoType =
   | "BUY_X_GET_Y"
   | "FREE_SHIPPING"
   | "SHIPPING_DISCOUNT"
-export type TargetType = "CATEGORY" | "BRAND" | "TAG" | "PRODUCT" | "VARIANT" | "ALL_PRODUCTS"
+export type TargetType = "CATEGORY" | "BRAND" | "TAG" | "PRODUCT" | "VARIANT"
+// ALL applies to every product (and has no targets); SPECIFIC applies only to what the targets match.
+export type PromotionScope = "ALL" | "SPECIFIC"
 
 export type Banner = {
   id: string
@@ -61,7 +63,7 @@ export type Campaign = {
   promotionIds: string[]
 }
 
-export type Target = { id: string; targetType: TargetType; refId: string | null } // refId is null for ALL_PRODUCTS
+export type Target = { id: string; targetType: TargetType; refId: string } // the category, brand, tag, product or variant id
 
 export type Promotion = {
   id: string
@@ -78,6 +80,7 @@ export type Promotion = {
   endsAt: string | null
   isActive: boolean
   priority: number
+  scope: PromotionScope
   targets: Target[]
   campaignIds: string[]
 }
@@ -140,7 +143,6 @@ export const TARGET_TYPES: { value: TargetType; label: string }[] = [
   { value: "TAG", label: "Tag" },
   { value: "PRODUCT", label: "Product" },
   { value: "VARIANT", label: "Variant" },
-  { value: "ALL_PRODUCTS", label: "All products" },
 ]
 
 /* ---------- Formatting ---------- */
@@ -318,7 +320,6 @@ export function campaignProductCount(catalog: Catalog, c: Campaign) {
 export function targetInfo(catalog: Catalog, t: Target) {
   const type = TARGET_TYPES.find((x) => x.value === t.targetType)!.label
   let name = ""
-  if (t.targetType === "ALL_PRODUCTS") name = "Every product"
   if (t.targetType === "CATEGORY") name = catPath(catalog, t.refId)
   if (t.targetType === "BRAND") name = catalog.brands.find((b) => b.id === t.refId)?.name ?? "Unknown brand"
   if (t.targetType === "TAG") name = catalog.tags.find((x) => x.id === t.refId)?.name ?? "Unknown tag"
@@ -332,29 +333,28 @@ export function targetInfo(catalog: Catalog, t: Target) {
 }
 
 export function targetsSummary(catalog: Catalog, p: Promotion) {
-  if (p.targets.length === 0) return "Nothing yet"
-  if (p.targets.some((t) => t.targetType === "ALL_PRODUCTS")) return "All products"
+  if (p.scope === "ALL") return "All products"
+  if (p.targets.length === 0) return "No targets"
   const names = p.targets.map((t) => targetInfo(catalog, t).name)
   return names.slice(0, 2).join(", ") + (names.length > 2 ? ` and ${names.length - 2} more` : "")
 }
 
 function targetMatches(catalog: Catalog, t: Target, p: CatalogProduct, variantId: string) {
-  if (t.targetType === "ALL_PRODUCTS") return true
   if (t.targetType === "PRODUCT") return p.id === t.refId
   if (t.targetType === "VARIANT") return variantId === t.refId
-  if (t.targetType === "CATEGORY") return t.refId !== null && inCategory(catalog, p, t.refId)
+  if (t.targetType === "CATEGORY") return inCategory(catalog, p, t.refId)
   if (t.targetType === "BRAND") return p.brandId === t.refId
-  return t.refId !== null && p.tagIds.includes(t.refId)
+  return p.tagIds.includes(t.refId)
 }
 
 export const allVariants = (catalog: Catalog) =>
   catalog.products.flatMap((p) => p.variants.map((v) => ({ p, v })))
 
-export const affectedVariants = (catalog: Catalog, promo: Promotion) =>
-  allVariants(catalog).filter(({ p, v }) => promo.targets.some((t) => targetMatches(catalog, t, p, v.id)))
-
 export const isEligible = (catalog: Catalog, promo: Promotion, p: CatalogProduct, variantId: string) =>
-  promo.targets.some((t) => targetMatches(catalog, t, p, variantId))
+  promo.scope === "ALL" || promo.targets.some((t) => targetMatches(catalog, t, p, variantId))
+
+export const affectedVariants = (catalog: Catalog, promo: Promotion) =>
+  allVariants(catalog).filter(({ p, v }) => isEligible(catalog, promo, p, v.id))
 
 // The short offer printed on tags and ticket stubs: "15% off", "Buy 2 get 1", …
 export function offerText(p: Promotion) {
@@ -438,8 +438,8 @@ export function attention(data: MarketingData, now: number) {
   for (const p of data.promotions) {
     const h = hint(p, now)
     if (h?.warn) push("promotion", p, h.text)
-    if ((p.status === "ACTIVE" || p.status === "SCHEDULED") && p.targets.length === 0) {
-      push("promotion", p, "Doesn’t apply to any products yet.")
+    if ((p.status === "ACTIVE" || p.status === "SCHEDULED") && p.scope === "SPECIFIC" && p.targets.length === 0) {
+      push("promotion", p, "No targets: this promotion currently applies to no products.")
     }
   }
   for (const p of data.promotions) {
@@ -452,7 +452,7 @@ export function attention(data: MarketingData, now: number) {
   }
 
   const contenders = data.promotions.filter(
-    (p) => (p.status === "ACTIVE" || p.status === "SCHEDULED") && p.isActive && !isShip(p.type) && p.targets.length > 0
+    (p) => (p.status === "ACTIVE" || p.status === "SCHEDULED") && p.isActive && !isShip(p.type) && (p.scope === "ALL" || p.targets.length > 0)
   )
   for (let i = 0; i < contenders.length; i++) {
     for (let j = i + 1; j < contenders.length; j++) {

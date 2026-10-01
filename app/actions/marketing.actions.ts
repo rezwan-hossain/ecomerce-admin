@@ -8,7 +8,7 @@ import type {
   MarketingData,
   Promotion,
   Rule,
-  Target,
+  PromotionScope,
   TargetType,
 } from "@/components/marketing/marketing-utils"
 import { handleRequest } from "@/lib/action-response"
@@ -42,6 +42,7 @@ type ApiPromotion = {
   endsAt: string | null
   isActive: boolean
   priority: number
+  scope?: PromotionScope // missing until the backend returns it
   targets: { id: string; targetType: TargetType; productId: string | null; variantId: string | null; categoryId: string | null; brandId: string | null; tagId: string | null }[]
   campaigns: { campaignId: string }[]
 }
@@ -58,7 +59,7 @@ type ApiProduct = {
 const num = (value: string | null) => (value === null ? null : Number(value))
 
 // Which id field of a PromotionTarget holds the target, by type.
-const TARGET_FIELD: Record<Exclude<TargetType, "ALL_PRODUCTS">, string> = {
+const TARGET_FIELD: Record<TargetType, "categoryId" | "brandId" | "tagId" | "productId" | "variantId"> = {
   CATEGORY: "categoryId",
   BRAND: "brandId",
   TAG: "tagId",
@@ -109,10 +110,12 @@ export async function loadMarketing() {
           endsAt: p.endsAt,
           isActive: p.isActive,
           priority: p.priority,
+          // The schema's default, until the running backend returns scope.
+          scope: p.scope ?? "SPECIFIC",
           targets: p.targets.map((t) => ({
             id: t.id,
             targetType: t.targetType,
-            refId: t.targetType === "ALL_PRODUCTS" ? null : (t[TARGET_FIELD[t.targetType] as keyof typeof t] as string),
+            refId: t[TARGET_FIELD[t.targetType]]!,
           })),
           campaignIds: p.campaigns.map((c) => c.campaignId),
         } satisfies Promotion
@@ -368,6 +371,7 @@ export async function savePromotion(draft: Promotion, before: { targetIds: strin
       endsAt: draft.endsAt,
       isActive: draft.isActive,
       priority: draft.priority,
+      scope: draft.scope,
     }
 
     // A new promotion starts editable; its chosen on/off state and status are applied at the end.
@@ -385,18 +389,20 @@ export async function savePromotion(draft: Promotion, before: { targetIds: strin
     const coreFirst = !editable(current)
     if (coreFirst) await api.patch(`/promotions/${id}`, core)
 
-    for (const targetId of before.targetIds.filter((tid) => !draft.targets.some((x) => x.id === tid))) {
-      await api.delete(`/promotions/targets/${targetId}`)
-    }
-    const added = draft.targets.filter((x: Target) => isNew(x.id))
-    if (added.length > 0) {
-      await api.post(`/promotions/${id}/targets`, {
-        targets: added.map((x) =>
-          x.targetType === "ALL_PRODUCTS"
-            ? { targetType: x.targetType }
-            : { targetType: x.targetType, [TARGET_FIELD[x.targetType]]: x.refId }
-        ),
-      })
+    // Targets only exist on SPECIFIC promotions. Switching to ALL leaves them for
+    // the backend to remove, so they're only edited while the scope is SPECIFIC.
+    if (draft.scope === "SPECIFIC") {
+      // An ALL promotion rejects targets, so move it to SPECIFIC before attaching any.
+      if (current.scope === "ALL" && !coreFirst) await api.patch(`/promotions/${id}`, { scope: "SPECIFIC" })
+      for (const targetId of before.targetIds.filter((tid) => !draft.targets.some((x) => x.id === tid))) {
+        await api.delete(`/promotions/targets/${targetId}`)
+      }
+      const added = draft.targets.filter((x) => isNew(x.id))
+      if (added.length > 0) {
+        await api.post(`/promotions/${id}/targets`, {
+          targets: added.map((x) => ({ targetType: x.targetType, [TARGET_FIELD[x.targetType]]: x.refId })),
+        })
+      }
     }
 
     const linked = draft.campaignIds.filter((c) => !before.campaignIds.includes(c))

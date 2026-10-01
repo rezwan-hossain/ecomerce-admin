@@ -2,8 +2,16 @@
 
 import { useState } from "react"
 import { PlusIcon, XIcon } from "lucide-react"
-import { toast } from "sonner"
 
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { cn } from "@/lib/utils"
@@ -72,7 +80,6 @@ function validate(p: Promotion) {
   }
   if (p.minOrderAmount !== null && p.minOrderAmount < 0) e.minOrderAmount = "Minimum order can’t be negative."
   if (!Number.isInteger(p.priority)) e.priority = "Use a whole number."
-  if (p.targets.length === 0) e.targets = "Add at least one target, or choose All products."
   if (p.startsAt && p.endsAt && new Date(p.endsAt) <= new Date(p.startsAt)) e.endsAt = "End must be after the start."
   if (p.status === "SCHEDULED" && !p.startsAt) e.startsAt = "Scheduled promotions need a start date."
   return e
@@ -86,7 +93,6 @@ const LABELS: Record<string, string> = {
   maxDiscountAmount: "Maximum discount",
   minOrderAmount: "Minimum order",
   priority: "Priority",
-  targets: "Applies to",
   startsAt: "Start date",
   endsAt: "End date",
 }
@@ -118,6 +124,7 @@ export function PromotionDrawer({
   const [showErrors, setShowErrors] = useState(false)
   const [targetType, setTargetType] = useState<TargetType>("CATEGORY")
   const [targetRef, setTargetRef] = useState("")
+  const [confirmAll, setConfirmAll] = useState(false)
   const [sim, setSim] = useState(() => {
     const first = affectedVariants(catalog, initial)[0] ?? allVariants(catalog)[0]
     const qty = initial.type === "BUY_X_GET_Y" ? (initial.buyQuantity ?? 1) + (initial.getQuantity ?? 1) : 1
@@ -155,23 +162,27 @@ export function PromotionDrawer({
     return options.map((o) => ({ ...o, taken: taken.includes(o.value) }))
   }
 
-  function addTarget() {
-    if (targetType === "ALL_PRODUCTS") {
-      const replaced = draft.targets.length
-      update({ targets: [{ id: newId(), targetType, refId: null }] })
-      if (replaced > 0) toast(`Replaced ${plural(replaced, "target")} with all products`)
+  // Saved targets are removed when the promotion switches to All products, so ask first.
+  const savedTargets = isNew ? 0 : initial.targets.length
+
+  function changeScope(scope: Promotion["scope"]) {
+    if (scope === "ALL" && draft.scope === "SPECIFIC" && savedTargets > 0) {
+      setConfirmAll(true)
       return
     }
+    update({ scope })
+  }
+
+  function addTarget() {
     const options = refOptions(targetType).filter((o) => !o.taken)
     const ref = options.some((o) => o.value === targetRef) ? targetRef : options[0]?.value
     if (!ref) return
     update({ targets: [...draft.targets, { id: newId(), targetType, refId: ref }] })
   }
 
-  const coversAll = draft.targets.some((t) => t.targetType === "ALL_PRODUCTS")
   const affected = affectedVariants(catalog, draft)
   const ship = isShip(draft.type)
-  const options = targetType === "ALL_PRODUCTS" ? [] : refOptions(targetType)
+  const options = refOptions(targetType)
   const refValue = options.some((o) => o.value === targetRef && !o.taken) ? targetRef : (options.find((o) => !o.taken)?.value ?? "")
 
   const panel = "border-t py-6 first:border-t-0"
@@ -284,53 +295,76 @@ export function PromotionDrawer({
 
               {/* Applies to */}
               <section className={panel}>
-                <h2 className={panelTitle}>Applies to</h2>
-                <p className={help}>
-                  {ship ? "The delivery offer kicks in when the cart has at least one matching item." : "Items only need to match one target."}
-                </p>
-                {draft.targets.length > 0 && (
-                  <div className="my-3 flex flex-wrap gap-1.5">
-                    {draft.targets.map((t, i) => {
-                      const info = targetInfo(catalog, t)
-                      return (
-                        <span key={t.id} className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[12.5px] font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                          <em className="text-[11.5px] text-muted-foreground not-italic">{info.type}</em>
-                          {t.targetType !== "ALL_PRODUCTS" && info.name}
-                          <button
-                            type="button"
-                            aria-label={`Remove ${info.type} ${info.name}`}
-                            className="grid rounded-full opacity-70 hover:opacity-100"
-                            onClick={() => update({ targets: draft.targets.filter((_, j) => j !== i) })}
-                          >
-                            <XIcon className="size-3.5" />
-                          </button>
-                        </span>
-                      )
-                    })}
-                  </div>
-                )}
-                {errors.targets && (
-                  <p data-err="targets" className="mb-2.5 text-[12.5px] font-medium text-destructive">
-                    {errors.targets}
-                  </p>
-                )}
-                {coversAll ? (
-                  <p className={cn(help, "mt-3")}>This promotion covers every product. Remove “All products” to target specific items instead.</p>
-                ) : (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <select
-                      aria-label="Target type"
-                      value={targetType}
-                      className={cn(inputClass, "w-auto flex-[0_1_170px]")}
-                      onChange={(event) => setTargetType(event.target.value as TargetType)}
+                <h2 className={cn(panelTitle, "mb-3")}>Applies to</h2>
+                <div className="mb-3 inline-flex flex-wrap gap-0.5 rounded-lg bg-muted p-[3px]" role="radiogroup" aria-label="Applies to">
+                  {(
+                    [
+                      ["ALL", "All products"],
+                      ["SPECIFIC", "Specific products"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      aria-checked={draft.scope === value}
+                      onClick={() => changeScope(value)}
+                      className="rounded-md px-3 py-1.5 text-[13px] font-semibold text-foreground/75 aria-checked:bg-card aria-checked:text-foreground aria-checked:shadow-sm"
                     >
-                      {TARGET_TYPES.map((t) => (
-                        <option key={t.value} value={t.value}>
-                          {t.label}
-                        </option>
-                      ))}
-                    </select>
-                    {targetType !== "ALL_PRODUCTS" && (
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {draft.scope === "ALL" ? (
+                  <p className={help}>
+                    This promotion applies to all products.
+                    {savedTargets > 0 && ` Its ${plural(savedTargets, "target")} will be removed when you save.`}
+                  </p>
+                ) : (
+                  <>
+                    <p className={help}>
+                      {ship ? "The delivery offer kicks in when the cart has at least one matching item." : "Items only need to match one target."}
+                    </p>
+                    {draft.targets.length === 0 && (
+                      <p className="mt-3 rounded-lg bg-amber-50 px-3.5 py-2.5 text-[13px] text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                        No targets: this promotion currently applies to no products.
+                      </p>
+                    )}
+                    {draft.targets.length > 0 && (
+                      <div className="my-3 flex flex-wrap gap-1.5">
+                        {draft.targets.map((t, i) => {
+                          const info = targetInfo(catalog, t)
+                          return (
+                            <span key={t.id} className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[12.5px] font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                              <em className="text-[11.5px] text-muted-foreground not-italic">{info.type}</em>
+                              {info.name}
+                              <button
+                                type="button"
+                                aria-label={`Remove ${info.type} ${info.name}`}
+                                className="grid rounded-full opacity-70 hover:opacity-100"
+                                onClick={() => update({ targets: draft.targets.filter((_, j) => j !== i) })}
+                              >
+                                <XIcon className="size-3.5" />
+                              </button>
+                            </span>
+                          )
+                        })}
+                      </div>
+                    )}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <select
+                        aria-label="Target type"
+                        value={targetType}
+                        className={cn(inputClass, "w-auto flex-[0_1_170px]")}
+                        onChange={(event) => setTargetType(event.target.value as TargetType)}
+                      >
+                        {TARGET_TYPES.map((t) => (
+                          <option key={t.value} value={t.value}>
+                            {t.label}
+                          </option>
+                        ))}
+                      </select>
                       <select
                         aria-label={`Choose the ${targetType.toLowerCase()}`}
                         value={refValue}
@@ -346,13 +380,35 @@ export function PromotionDrawer({
                           </option>
                         ))}
                       </select>
-                    )}
-                    <Button variant="outline" className="h-10" disabled={targetType !== "ALL_PRODUCTS" && !refValue} onClick={addTarget}>
-                      <PlusIcon data-icon="inline-start" />
-                      {targetType === "ALL_PRODUCTS" ? "Apply to all products" : "Add target"}
-                    </Button>
-                  </div>
+                      <Button variant="outline" className="h-10" disabled={!refValue} onClick={addTarget}>
+                        <PlusIcon data-icon="inline-start" />
+                        Add target
+                      </Button>
+                    </div>
+                  </>
                 )}
+
+                <AlertDialog open={confirmAll} onOpenChange={setConfirmAll}>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Switch to All products?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Switching to All products will remove the {plural(savedTargets, "existing target")}. Continue?
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <Button
+                        onClick={() => {
+                          update({ scope: "ALL" })
+                          setConfirmAll(false)
+                        }}
+                      >
+                        Switch to All products
+                      </Button>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </section>
 
               {/* Schedule */}
@@ -464,8 +520,12 @@ export function PromotionDrawer({
 
               <div className={aside}>
                 <h2 className="mb-2.5 text-[15px] font-bold">Covered products</h2>
-                {draft.targets.length === 0 && <p className={help}>Add a target to see which products this covers.</p>}
-                {draft.targets.length > 0 && affected.length === 0 && <p className={help}>No active products match these targets yet.</p>}
+                {draft.scope === "SPECIFIC" && draft.targets.length === 0 && (
+                  <p className={help}>Add a target to see which products this covers.</p>
+                )}
+                {(draft.scope === "ALL" || draft.targets.length > 0) && affected.length === 0 && (
+                  <p className={help}>No active products match yet.</p>
+                )}
                 {affected.length > 0 && (
                   <>
                     <p className={cn(help, "mb-2.5")}>

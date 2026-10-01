@@ -86,6 +86,7 @@ const blankPromotion = (): Promotion => ({
   endsAt: null,
   isActive: true,
   priority: 0,
+  scope: "SPECIFIC",
   targets: [],
   campaignIds: [],
 })
