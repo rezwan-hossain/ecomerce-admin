@@ -1,26 +1,23 @@
+import { connection } from "next/server"
+
+import { getProducts } from "@/app/actions/product.actions"
 import { PageHeader } from "@/components/page-header"
 import { ProductsTable } from "@/components/products/products-table"
-import { StatCards } from "@/components/stat-cards"
-import { currency, products } from "@/lib/demo-data"
 
-export default function ProductsPage() {
-  const inventoryValue = products.reduce((sum, p) => sum + p.price * p.stock, 0)
+export default async function ProductsPage() {
+  // Load fresh data on every request instead of once at build time.
+  await connection()
+
+  const res = await getProducts()
 
   return (
     <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
-      <PageHeader
-        title="Products"
-        description="Manage your catalog, pricing and stock levels."
-      />
-      <StatCards
-        stats={[
-          { label: "Total Products", value: String(products.length), hint: "Across all categories" },
-          { label: "Active", value: String(products.filter((p) => p.status === "Active").length), hint: "Visible in the store" },
-          { label: "Low / Out of Stock", value: String(products.filter((p) => p.stock < 10).length), hint: "Need restocking" },
-          { label: "Inventory Value", value: currency.format(inventoryValue), hint: "At retail price" },
-        ]}
-      />
-      <ProductsTable products={products} />
+      <PageHeader title="Products" description="Manage your catalog, pricing and stock levels." />
+      {res.success ? (
+        <ProductsTable initialProducts={res.data} />
+      ) : (
+        <p className="px-4 text-muted-foreground lg:px-6">Couldn’t load products: {res.error}</p>
+      )}
     </div>
   )
 }
