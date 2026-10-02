@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { ChevronRightIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { createTag } from "@/app/actions/tag.actions"
@@ -283,6 +284,15 @@ export function CategoriesPanel({
     )
   }
 
+  // The deepest picks with their parents, e.g. Fashion › Men's Shoes.
+  function trails(nodes: Category[], path: Category[]): Category[][] {
+    return nodes.flatMap((node) => {
+      const below = trails(node.children ?? [], [...path, node])
+      if (below.length > 0) return below
+      return selected.includes(node.id) ? [[...path, node]] : []
+    })
+  }
+
   const visible = filterTree(tree, search.trim().toLowerCase())
 
   return (
@@ -293,6 +303,25 @@ export function CategoriesPanel({
         </h2>
         {selected.length > 0 && <p className="text-[13px] text-muted-foreground">{selected.length} selected</p>}
       </div>
+      {selected.length > 0 && (
+        <ul className="mb-2.5 flex flex-col gap-1">
+          {trails(tree, []).map((trail) => (
+            <li key={trail.at(-1)!.id}>
+              <nav
+                aria-label={`Category path: ${trail.map((c) => c.name).join(", ")}`}
+                className="flex flex-wrap items-center gap-0.5 text-[12px] text-muted-foreground"
+              >
+                {trail.map((category, index) => (
+                  <span key={category.id} className="inline-flex items-center gap-0.5">
+                    {index > 0 && <ChevronRightIcon className="size-3 text-muted-foreground/60" />}
+                    <span className={cn(index === trail.length - 1 && "font-medium text-foreground")}>{category.name}</span>
+                  </span>
+                ))}
+              </nav>
+            </li>
+          ))}
+        </ul>
+      )}
       <Input
         value={search}
         placeholder="Search categories"
