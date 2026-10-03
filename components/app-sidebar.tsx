@@ -25,6 +25,7 @@ import {
   MegaphoneIcon,
   TagIcon,
   WarehouseIcon,
+  WrenchIcon,
   TruckIcon,
   StarIcon,
   Settings2Icon,
@@ -107,7 +108,28 @@ const data = {
     { title: "Search", url: "#", icon: <SearchIcon /> },
   ],
   documents: [
-    { name: "Inventory", url: "#", icon: <WarehouseIcon /> },
+    {
+      name: "Inventory",
+      url: "/inventory",
+      icon: <WarehouseIcon />,
+      items: [
+        { title: "Overview", url: "/inventory" },
+        { title: "Stock levels", url: "/inventory/stock" },
+        { title: "Purchase orders", url: "/inventory/purchase-orders" },
+        { title: "Transfers", url: "/inventory/transfers" },
+        { title: "Alerts", url: "/inventory/alerts" },
+        {
+          title: "Setup",
+          url: "/inventory/setup",
+          icon: <WrenchIcon />,
+          items: [
+            { title: "Warehouses", url: "/inventory/setup/warehouses" },
+            { title: "Racks", url: "/inventory/setup/racks" },
+            { title: "Suppliers", url: "/inventory/setup/suppliers" },
+          ],
+        },
+      ],
+    },
     { name: "Discounts", url: "/marketing/promotions", icon: <TagIcon /> },
     { name: "Shipping", url: "#", icon: <TruckIcon /> },
     { name: "Reviews", url: "#", icon: <StarIcon /> },

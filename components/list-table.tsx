@@ -7,7 +7,6 @@ import {
   SearchIcon,
 } from "lucide-react"
 
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -87,14 +86,21 @@ export function ListTable<T>({
               setPage(0)
             }}
           >
-            <TabsList className="max-w-full overflow-x-auto overflow-y-hidden **:data-[slot=badge]:size-5 **:data-[slot=badge]:rounded-full **:data-[slot=badge]:bg-muted-foreground/30 **:data-[slot=badge]:px-1">
+            <TabsList className="h-8 max-w-full gap-0.5 overflow-x-auto overflow-y-hidden rounded-lg p-0.5">
               {filters.map((f, index) => {
                 const count = rows.filter(f.match).length
                 return (
-                  <TabsTrigger key={f.value} value={f.value}>
+                  <TabsTrigger
+                    key={f.value}
+                    value={f.value}
+                    className="group/tab h-7 flex-none px-2.5 text-[13px] data-active:shadow-xs data-active:ring-1 data-active:ring-foreground/5"
+                  >
                     {f.label}
                     {index > 0 && count > 0 && (
-                      <Badge variant="secondary">{count}</Badge>
+                      // The active filter's count picks up the brand color.
+                      <span className="min-w-5 rounded-full bg-foreground/[.07] px-1.5 text-center text-[11px] leading-5 font-semibold text-muted-foreground tabular-nums group-data-active/tab:bg-primary/10 group-data-active/tab:text-primary">
+                        {count}
+                      </span>
                     )}
                   </TabsTrigger>
                 )

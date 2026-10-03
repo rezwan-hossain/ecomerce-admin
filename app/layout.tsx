@@ -27,7 +27,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col">
         <TooltipProvider>{children}</TooltipProvider>
-        <Toaster />
+        {/* Bottom-center so toasts don't cover the action buttons in side panels. */}
+        <Toaster position="bottom-center" />
       </body>
     </html>
   );

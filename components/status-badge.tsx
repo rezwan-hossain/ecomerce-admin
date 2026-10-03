@@ -6,6 +6,7 @@ import {
   ArchiveIcon,
   LoaderIcon,
   PackageCheckIcon,
+  TriangleAlertIcon,
   TruckIcon,
   Undo2Icon,
 } from "lucide-react"
@@ -29,6 +30,10 @@ const icons: Record<string, React.ReactNode> = {
   Refunded: <Undo2Icon />,
   Draft: <CircleDashedIcon />,
   Archived: <ArchiveIcon />,
+  Inactive: <CircleDashedIcon />,
+  "In stock": <CircleCheckIcon className="fill-green-500 dark:fill-green-400" />,
+  "Low stock": <TriangleAlertIcon className="text-amber-600 dark:text-amber-400" />,
+  "Out of stock": <CircleXIcon className="text-destructive" />,
 }
 
 export function StatusBadge({ status }: { status: string }) {
