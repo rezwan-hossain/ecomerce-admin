@@ -18,6 +18,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { cn } from "@/lib/utils"
 
 export type ListColumn<T> = {
   key: string
@@ -129,12 +130,15 @@ export function ListTable<T>({
           {toolbar}
         </div>
       </div>
-      <div className="overflow-hidden rounded-lg border">
+      <div className="overflow-hidden rounded-2xl border bg-card shadow-xs">
         <Table>
-          <TableHeader className="bg-muted">
-            <TableRow>
+          <TableHeader className="bg-muted/50">
+            <TableRow className="hover:bg-transparent">
               {columns.map((column) => (
-                <TableHead key={column.key} className={column.className}>
+                <TableHead
+                  key={column.key}
+                  className={cn("px-3 text-xs text-muted-foreground first:pl-4 last:pr-4", column.className)}
+                >
                   {column.header}
                 </TableHead>
               ))}
@@ -143,9 +147,12 @@ export function ListTable<T>({
           <TableBody>
             {visible.length ? (
               visible.map((row) => (
-                <TableRow key={getRowId(row)}>
+                <TableRow key={getRowId(row)} className="border-border/60 hover:bg-muted/40">
                   {columns.map((column) => (
-                    <TableCell key={column.key} className={column.className}>
+                    <TableCell
+                      key={column.key}
+                      className={cn("px-3 py-2.5 first:pl-4 last:pr-4", column.className)}
+                    >
                       {column.cell(row)}
                     </TableCell>
                   ))}

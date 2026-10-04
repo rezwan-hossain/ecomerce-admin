@@ -3,6 +3,7 @@
 // Pieces shared by the demo document pages (purchase orders, transfers, adjustments).
 
 import { useState } from "react"
+import { XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -23,6 +24,7 @@ import {
 } from "@/components/ui/select"
 import {
   Sheet,
+  SheetClose,
   SheetContent,
   SheetDescription,
   SheetFooter,
@@ -54,17 +56,24 @@ export function DocSheet({
 }) {
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
-      <SheetContent className="w-full gap-0 bg-muted/50 data-[side=right]:sm:max-w-3xl">
-        <SheetHeader className="border-b bg-card">
-          <SheetDescription>{kind}</SheetDescription>
-          <div className="flex items-center gap-3 pr-8">
-            <SheetTitle className="text-xl">{title}</SheetTitle>
-            {status && <StatusPill status={status} />}
-            {badge}
+      <SheetContent
+        showCloseButton={false}
+        className="w-full gap-0 border-l-0 bg-sidebar shadow-[-20px_0_60px_rgba(10,14,22,0.22)] data-[side=right]:sm:max-w-3xl"
+      >
+        <SheetHeader className="flex-row items-center gap-3 border-b bg-card px-5 py-3">
+          <SheetClose render={<Button variant="ghost" size="icon-sm" className="shrink-0" />}>
+            <XIcon />
+            <span className="sr-only">Close</span>
+          </SheetClose>
+          <div className="min-w-0 flex-1">
+            <SheetDescription className="text-[12.5px] leading-tight">{kind}</SheetDescription>
+            <SheetTitle className="truncate text-[21px] leading-snug font-bold tracking-tight">{title}</SheetTitle>
           </div>
+          {status && <StatusPill status={status} />}
+          {badge}
         </SheetHeader>
-        <div className="flex-1 space-y-4 overflow-y-auto p-4 text-sm">{children}</div>
-        <SheetFooter className="flex-row flex-wrap items-center gap-2 border-t bg-card">{footer}</SheetFooter>
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-5 pt-[18px] pb-7 text-sm *:shrink-0">{children}</div>
+        <SheetFooter className="flex-row flex-wrap items-center gap-2 border-t bg-card px-5 py-3">{footer}</SheetFooter>
       </SheetContent>
     </Sheet>
   )

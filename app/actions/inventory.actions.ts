@@ -64,6 +64,13 @@ export async function adjustStock(dto: AdjustStockDto) {
   return res
 }
 
+// All or nothing: one ledger transaction for every line, e.g. a delivery of many variants.
+export async function bulkAdjustStock(items: AdjustStockDto[]) {
+  const res = await handleRequest(() => api.post("/inventory/adjustments/bulk", { items }))
+  if (res.success) revalidatePath(STOCK_PATH)
+  return res
+}
+
 export async function countStock(variantId: string, dto: StockCountDto) {
   const res = await handleRequest(async () => {
     const res = await api.post<{ message: string }>(`/inventory/variants/${variantId}/count`, dto)
@@ -92,6 +99,20 @@ export async function setDefaultRack(variantId: string, warehouseId: string, loc
   )
   if (res.success) revalidatePath(STOCK_PATH)
   return res
+}
+
+// The ledger filters by variant only, so a product's movements are fetched per variant and merged.
+export async function getProductMovements(variantIds: string[], limit = 25) {
+  return handleRequest(async () => {
+    const pages = await Promise.all(
+      variantIds.map((id) => api.get<Page<LedgerMovement> & { meta: { total: number } }>(`/inventory/movements?variantId=${id}&limit=${limit}`))
+    )
+    const movements = pages
+      .flatMap((p) => p.data)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, limit)
+    return { movements, total: pages.reduce((sum, p) => sum + p.meta.total, 0) }
+  })
 }
 
 export async function getRecentMovements(limit: number) {

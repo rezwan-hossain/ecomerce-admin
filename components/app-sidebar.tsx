@@ -114,6 +114,7 @@ const data = {
       icon: <WarehouseIcon />,
       items: [
         { title: "Overview", url: "/inventory" },
+        { title: "Products", url: "/inventory/products" },
         { title: "Stock levels", url: "/inventory/stock" },
         { title: "Purchase orders", url: "/inventory/purchase-orders" },
         { title: "Transfers", url: "/inventory/transfers" },

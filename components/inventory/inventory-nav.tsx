@@ -11,6 +11,7 @@ import {
   LayoutDashboardIcon,
   ListIcon,
   LockIcon,
+  PackageIcon,
   RepeatIcon,
   ShoppingCartIcon,
   TruckIcon,
@@ -23,6 +24,7 @@ const GROUPS = [
     title: "Stock",
     links: [
       { href: "/inventory", text: "Overview", icon: LayoutDashboardIcon },
+      { href: "/inventory/products", text: "Products", icon: PackageIcon },
       { href: "/inventory/stock", text: "Stock levels", icon: LayersIcon },
       { href: "/inventory/movements", text: "Movements", icon: ListIcon },
       { href: "/inventory/batches", text: "Batches", icon: BarcodeIcon },
@@ -66,7 +68,7 @@ export function InventoryNav() {
                   href={href}
                   aria-current={active ? "page" : undefined}
                   className={cn(
-                    "flex h-7 items-center gap-1.5 rounded-md px-2 text-[13px] font-medium whitespace-nowrap text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+                    "flex h-7 items-center gap-1 rounded-md px-1.5 text-[12.5px] font-medium whitespace-nowrap text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
                     active && "bg-background text-foreground shadow-xs ring-1 ring-foreground/5 dark:bg-input/40"
                   )}
                 >

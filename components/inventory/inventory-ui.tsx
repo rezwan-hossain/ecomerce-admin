@@ -149,10 +149,16 @@ export function MeterKey() {
 }
 
 // The KPI strip: one card split into columns instead of separate cards.
-export function Kpis({ items }: { items: { label: string; value: string; hint: string; warn?: boolean }[] }) {
+export function Kpis({
+  items,
+  className = "mx-4 lg:mx-6",
+}: {
+  items: { label: string; value: string; hint: string; warn?: boolean }[]
+  className?: string
+}) {
   return (
     // The 1px gap over a border-colored background draws the dividers.
-    <section className="mx-4 grid grid-cols-2 gap-px overflow-hidden rounded-xl border bg-border md:grid-cols-3 lg:mx-6 xl:grid-cols-6">
+    <section className={cn("grid grid-cols-2 gap-px overflow-hidden rounded-xl border bg-border md:grid-cols-3 xl:grid-cols-6", className)}>
       {items.map((kpi) => (
         <div key={kpi.label} className="min-w-0 bg-card px-4 py-3.5">
           <span className="block text-[12.5px] text-muted-foreground">{kpi.label}</span>
@@ -191,7 +197,7 @@ export function Card({
   className?: string
 }) {
   return (
-    <section className={cn("overflow-hidden rounded-xl border bg-card", className)}>
+    <section className={cn("overflow-hidden rounded-2xl border bg-card", className)}>
       <div className="flex items-center justify-between gap-3 px-4 pt-3.5 pb-2.5">
         <h2 className="text-[15px] font-semibold">{title}</h2>
         {action}

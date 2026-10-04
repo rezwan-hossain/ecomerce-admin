@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { ArrowRightIcon, XIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { getVariantStock, setDefaultRack } from "@/app/actions/inventory.actions"
@@ -14,8 +15,10 @@ import {
 } from "@/components/ui/select"
 import {
   Sheet,
+  SheetClose,
   SheetContent,
   SheetDescription,
+  SheetFooter,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
@@ -23,7 +26,7 @@ import { cn } from "@/lib/utils"
 import type { StorageLocation, VariantStock, VariantStockDetail } from "@/types/inventory.type"
 
 import { Card, fmtDateTime, MeterKey, n0, RackTag, rel, StockMeter, taka, WarehouseTag } from "./inventory-ui"
-import { MOVEMENT_LABEL, MovementQuantity, movementRacks } from "./movements-table"
+import { MovementQuantity, MovementTag } from "./movements-table"
 import type { StockAction } from "./stock-sheet"
 
 const NO_RACK = "none"
@@ -67,33 +70,47 @@ export function StockHistorySheet({
     onChanged()
   }
 
-  const facts = [
-    ["SKU", <span key="sku" className="font-mono">{variant.sku}</span>],
-    ["Storefront stock", <span key="st" className="text-xl font-bold">{n0(variant.stock)}</span>],
-    ["On hand everywhere", <span key="oh" className="text-xl font-bold">{n0(variant.onHand)}</span>],
-    ["Value", taka(value)],
-    ["Low-stock alert at", n0(variant.lowStockThreshold)],
-  ] as const
+  const stats = [
+    ["Storefront stock", n0(variant.stock)],
+    ["On hand", n0(variant.onHand)],
+    ["Held for orders", n0(variant.reserved)],
+    ["Incoming", n0(variant.incoming)],
+    ["Stock value", taka(value)],
+    ["Alert at", n0(variant.lowStockThreshold)],
+  ]
 
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
-      <SheetContent className="w-full gap-0 bg-muted/50 data-[side=right]:sm:max-w-3xl">
-        <SheetHeader className="border-b bg-card">
-          <SheetDescription>{variant.product.name}</SheetDescription>
-          <SheetTitle className="text-xl">{variant.name}</SheetTitle>
+      <SheetContent
+        showCloseButton={false}
+        className="w-full gap-0 border-l-0 bg-sidebar shadow-[-20px_0_60px_rgba(10,14,22,0.22)] data-[side=right]:sm:max-w-[960px]"
+      >
+        <SheetHeader className="flex-row items-center gap-3 border-b bg-card px-5 py-3">
+          <SheetClose render={<Button variant="ghost" size="icon-sm" className="shrink-0" />}>
+            <XIcon />
+            <span className="sr-only">Close</span>
+          </SheetClose>
+          <div className="min-w-0 flex-1">
+            <SheetDescription className="truncate text-[12.5px] leading-tight">{variant.product.name}</SheetDescription>
+            <SheetTitle className="truncate text-[21px] leading-snug font-bold tracking-tight">
+              {variant.name === variant.sku ? "Default" : variant.name}
+            </SheetTitle>
+          </div>
+          <span className="hidden rounded-md bg-muted px-2 py-0.5 font-mono text-xs font-semibold text-foreground/75 sm:inline">{variant.sku}</span>
         </SheetHeader>
 
-        <div className="flex-1 space-y-4 overflow-y-auto p-4 text-sm">
-          <section className="rounded-xl border bg-card">
-            <div className="flex flex-wrap gap-x-7 gap-y-3 px-4 py-3.5">
-              {facts.map(([name, factValue]) => (
-                <div key={name}>
-                  <span className="block text-xs text-muted-foreground">{name}</span>
-                  <div className="font-semibold">{factValue}</div>
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-5 pt-[18px] pb-7 text-sm *:shrink-0">
+          <section>
+            {/* The 1px gap over a border-colored background draws the dividers. */}
+            <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border bg-border md:grid-cols-3 xl:grid-cols-6">
+              {stats.map(([label, statValue]) => (
+                <div key={label} className="min-w-0 bg-card px-4 py-3">
+                  <span className="block truncate text-[12.5px] text-muted-foreground">{label}</span>
+                  <strong className="mt-0.5 block truncate text-[23px] font-bold tracking-tight tabular-nums">{statValue}</strong>
                 </div>
               ))}
             </div>
-            <p className="px-4 pb-3.5 text-[12.5px] text-muted-foreground">
+            <p className="mt-2 px-1 text-[12.5px] text-muted-foreground">
               Storefront stock is what shoppers see: available units in active warehouses and stores. Holds and virtual
               warehouses don’t count.
             </p>
@@ -106,7 +123,7 @@ export function StockHistorySheet({
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="text-left text-xs text-muted-foreground">
-                    <tr className="border-y [&>th]:px-3 [&>th]:py-2 [&>th]:font-medium">
+                    <tr className="border-y [&>th]:px-3 [&>th]:py-2.5 [&>th]:font-semibold">
                       <th>Warehouse</th>
                       <th>Stock</th>
                       <th className="text-right">On hand</th>
@@ -122,7 +139,7 @@ export function StockHistorySheet({
                     {variant.levels.map((l) => (
                       <tr
                         key={l.warehouseId}
-                        className={cn("border-b last:border-b-0 [&>td]:px-3 [&>td]:py-2", l.warehouseId === highlightWarehouseId && "bg-primary/5")}
+                        className={cn("border-b border-border/60 last:border-b-0 [&>td]:px-3 [&>td]:py-2.5", l.warehouseId === highlightWarehouseId && "bg-primary/5")}
                       >
                         <td>
                           <div className="font-semibold">{l.warehouse.name}</div>
@@ -230,30 +247,57 @@ export function StockHistorySheet({
               {detail.recentMovements.length === 0 ? (
                 <p className="px-4 pb-4 text-muted-foreground">No movements yet.</p>
               ) : (
-                <ul className="divide-y border-t">
-                  {detail.recentMovements.map((m) => (
-                    <li key={m.id} className="flex items-start justify-between gap-3 px-4 py-2.5">
-                      <div className="min-w-0">
-                        <div className="font-medium">{MOVEMENT_LABEL[m.type]}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {fmtDateTime(m.createdAt)} · {m.inventoryLevel.warehouse.code}
-                          {movementRacks(m) && ` · ${movementRacks(m)}`}
-                        </div>
-                        {m.note && <div className="mt-0.5 text-xs text-muted-foreground">{m.note}</div>}
-                      </div>
-                      <div className="flex shrink-0 flex-col items-end">
-                        <MovementQuantity movement={m} />
-                        <span className="text-xs text-muted-foreground tabular-nums">
-                          {m.onHandBefore} → {m.onHandAfter}
-                        </span>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="text-left text-xs text-muted-foreground">
+                      <tr className="border-y [&>th]:px-3 [&>th]:py-2.5 [&>th]:font-semibold">
+                        <th>When</th>
+                        <th>Type</th>
+                        <th>Where</th>
+                        <th className="text-right">Qty</th>
+                        <th className="text-right">On hand</th>
+                      </tr>
+                    </thead>
+                    <tbody className="tabular-nums">
+                      {detail.recentMovements.map((m) => (
+                        <tr key={m.id} className="border-b border-border/60 last:border-b-0 [&>td]:px-3 [&>td]:py-[9px]">
+                          <td className="whitespace-nowrap text-muted-foreground">{fmtDateTime(m.createdAt)}</td>
+                          <td>
+                            <MovementTag movement={m} />
+                            {m.note && <div className="mt-0.5 max-w-56 truncate text-xs text-muted-foreground">{m.note}</div>}
+                          </td>
+                          <td>
+                            <span className="flex items-center gap-1 whitespace-nowrap">
+                              <WarehouseTag code={m.inventoryLevel.warehouse.code} />
+                              {m.fromLocation && <RackTag code={m.fromLocation.code} />}
+                              {m.fromLocation && m.toLocation && <ArrowRightIcon className="size-3 text-muted-foreground" />}
+                              {m.toLocation && <RackTag code={m.toLocation.code} />}
+                            </span>
+                          </td>
+                          <td className="text-right"><MovementQuantity movement={m} /></td>
+                          <td className="text-right whitespace-nowrap">
+                            {m.onHandBefore === m.onHandAfter ? (
+                              <span className="text-muted-foreground">{n0(m.onHandAfter)}</span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1">
+                                <span className="text-muted-foreground">{n0(m.onHandBefore)}</span>
+                                <ArrowRightIcon className="size-3 text-muted-foreground" />
+                                <strong>{n0(m.onHandAfter)}</strong>
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </Card>
           )}
         </div>
+        <SheetFooter className="flex-row justify-end border-t bg-card px-5 py-3">
+          <Button onClick={onClose}>Done</Button>
+        </SheetFooter>
       </SheetContent>
     </Sheet>
   )

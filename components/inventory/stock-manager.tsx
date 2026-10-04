@@ -20,14 +20,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { cn } from "@/lib/utils"
 import type { StockLevel, StorageLocation, VariantStock } from "@/types/inventory.type"
 
 import { n0, Pill, RackTag, StockMeter, taka, WarehouseTag, type Tone } from "./inventory-ui"
+import { HEALTH_DOT, variantHealth } from "./product-shelf"
 import { StockHistorySheet } from "./stock-history-sheet"
 import { StockSheet, type StockAction, type Warehouse } from "./stock-sheet"
 
 const ALL = "all"
 
+// Available everywhere, virtual warehouses included; storefront stock (`v.stock`) counts sellable ones only.
+const available = (v: VariantStock) => v.levels.reduce((sum, l) => sum + l.available, 0)
 const levelValue = (l: StockLevel) => Number(l.unitCost) * l.onHand
 const variantValue = (v: VariantStock) => v.levels.reduce((sum, l) => sum + levelValue(l), 0)
 
@@ -80,16 +84,24 @@ export function StockManager({ initialStock, locations }: { initialStock: Varian
     key: "item",
     header: "Item",
     cell: ({ v }) => (
-      <button type="button" className="flex min-w-48 flex-col text-left" onClick={() => setDetailId(v.variantId)}>
-        <span className="font-semibold hover:underline">{v.product.name}</span>
-        {v.name !== v.sku && <span className="text-xs text-muted-foreground">{v.name}</span>}
-        <span className="font-mono text-xs text-muted-foreground">{v.sku}</span>
+      <button type="button" className="group flex min-w-52 flex-col text-left" onClick={() => setDetailId(v.variantId)}>
+        <span className="font-medium group-hover:text-primary">{v.product.name}</span>
+        <span className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+          {v.name !== v.sku && (
+            <>
+              <span>{v.name}</span>
+              <span aria-hidden className="text-muted-foreground/50">·</span>
+            </>
+          )}
+          <span className="font-mono text-[11.5px]">{v.sku}</span>
+        </span>
       </button>
     ),
   }
   const num = "text-right tabular-nums"
   const dimZero = (n: number, className = "") =>
-    n ? <span className={className}>{n0(n)}</span> : <span className="text-muted-foreground">0</span>
+    n ? <span className={className}>{n0(n)}</span> : <span className="text-muted-foreground/60">0</span>
+  const muted = (n: number) => <span className="text-muted-foreground">{n0(n)}</span>
 
   const actionsColumn: ListColumn<Row> = {
     key: "actions",
@@ -139,13 +151,24 @@ export function StockManager({ initialStock, locations }: { initialStock: Varian
             </div>
           ),
       },
-      { key: "meter", header: "Stock", className: "hidden min-w-32 md:table-cell", cell: ({ v }) => <StockMeter available={v.stock} reserved={v.reserved} incoming={v.incoming} damaged={v.damaged} /> },
-      { key: "onHand", header: "On hand", className: num, cell: ({ v }) => n0(v.onHand) },
+      { key: "meter", header: "Stock", className: "hidden w-36 md:table-cell", cell: ({ v }) => <StockMeter available={available(v)} reserved={v.reserved} incoming={v.incoming} damaged={v.damaged} /> },
+      { key: "onHand", header: "On hand", className: num, cell: ({ v }) => muted(v.onHand) },
       { key: "reserved", header: "Reserved", className: `hidden ${num} md:table-cell`, cell: ({ v }) => dimZero(v.reserved) },
-      { key: "available", header: "Available", className: num, cell: ({ v }) => <span className="text-[15px] font-bold">{n0(v.stock)}</span> },
-      { key: "incoming", header: "Incoming", className: `hidden ${num} xl:table-cell`, cell: ({ v }) => dimZero(v.incoming) },
-      { key: "damaged", header: "Damaged", className: `hidden ${num} xl:table-cell`, cell: ({ v }) => dimZero(v.damaged, "font-semibold text-destructive") },
-      { key: "value", header: "Value", className: `hidden ${num} lg:table-cell`, cell: ({ v }) => taka(variantValue(v)) },
+      { key: "available", header: "Available", className: num, cell: ({ v }) => <span className="font-semibold">{n0(available(v))}</span> },
+      { key: "incoming", header: "Incoming", className: `hidden ${num} 2xl:table-cell`, cell: ({ v }) => dimZero(v.incoming) },
+      { key: "damaged", header: "Damaged", className: `hidden ${num} 2xl:table-cell`, cell: ({ v }) => dimZero(v.damaged, "font-semibold text-destructive") },
+      { key: "value", header: "Value", className: `hidden ${num} lg:table-cell`, cell: ({ v }) => <span className="text-muted-foreground">{taka(variantValue(v))}</span> },
+      {
+        key: "storefront",
+        header: <span title="What shoppers see: available units in active warehouses and stores">Storefront</span>,
+        className: num,
+        cell: ({ v }) => (
+          <span className="inline-flex items-center justify-end gap-1.5">
+            <span className={cn("size-1.5 rounded-full", HEALTH_DOT[variantHealth(v)])} aria-hidden />
+            <span className="text-[15px] font-bold">{n0(v.stock)}</span>
+          </span>
+        ),
+      },
       actionsColumn,
     ]
   } else {
@@ -157,14 +180,14 @@ export function StockManager({ initialStock, locations }: { initialStock: Varian
         className: "hidden md:table-cell",
         cell: ({ level }) => <RackTag code={level!.defaultLocation?.code ?? null} />,
       },
-      { key: "meter", header: "Stock", className: "hidden min-w-32 lg:table-cell", cell: ({ level: l }) => <StockMeter available={l!.available} reserved={l!.reserved} incoming={l!.incoming} damaged={l!.damaged} /> },
-      { key: "onHand", header: "On hand", className: num, cell: ({ level }) => n0(level!.onHand) },
+      { key: "meter", header: "Stock", className: "hidden w-36 lg:table-cell", cell: ({ level: l }) => <StockMeter available={l!.available} reserved={l!.reserved} incoming={l!.incoming} damaged={l!.damaged} /> },
+      { key: "onHand", header: "On hand", className: num, cell: ({ level }) => muted(level!.onHand) },
       { key: "reserved", header: "Reserved", className: `hidden ${num} md:table-cell`, cell: ({ level }) => dimZero(level!.reserved) },
       { key: "available", header: "Available", className: num, cell: ({ level }) => <span className="text-[15px] font-bold">{n0(level!.available)}</span> },
       { key: "damaged", header: "Damaged", className: `hidden ${num} xl:table-cell`, cell: ({ level }) => dimZero(level!.damaged, "font-semibold text-destructive") },
-      { key: "cost", header: "Unit cost", className: `hidden ${num} xl:table-cell`, cell: ({ level }) => taka(Number(level!.unitCost), 2) },
-      { key: "value", header: "Value", className: `hidden ${num} lg:table-cell`, cell: ({ level }) => taka(levelValue(level!)) },
-      { key: "alertAt", header: "Alert at", className: `hidden ${num} xl:table-cell`, cell: ({ v }) => v.lowStockThreshold },
+      { key: "cost", header: "Unit cost", className: `hidden ${num} xl:table-cell`, cell: ({ level }) => <span className="text-muted-foreground">{taka(Number(level!.unitCost), 2)}</span> },
+      { key: "value", header: "Value", className: `hidden ${num} lg:table-cell`, cell: ({ level }) => <span className="text-muted-foreground">{taka(levelValue(level!))}</span> },
+      { key: "alertAt", header: "Alert at", className: `hidden ${num} xl:table-cell`, cell: ({ v }) => muted(v.lowStockThreshold) },
       {
         key: "status",
         header: "Status",
