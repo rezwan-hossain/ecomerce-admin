@@ -43,6 +43,7 @@ export function VariantsPanel({
   bulk,
   hasError,
   showErrors,
+  isNew,
   onBulkChange,
   onApplyBulk,
   onUpdate,
@@ -55,6 +56,7 @@ export function VariantsPanel({
   bulk: Bulk
   hasError: boolean
   showErrors: boolean // false until the first Publish, so a fresh form isn't all red
+  isNew: boolean // stock on a new product is its opening stock
   onBulkChange: (bulk: Bulk) => void
   onApplyBulk: () => void
   onUpdate: (keys: string[], patch: Partial<VariantState>) => void
@@ -209,7 +211,7 @@ export function VariantsPanel({
               <th className="w-[12%]">
                 Price (৳)<span className="ml-0.5 text-destructive">*</span>
               </th>
-              <th className="w-[12%]">Stock</th>
+              <th className="w-[12%]">{isNew ? "Opening stock" : "Stock"}</th>
               <th>Active</th>
               <th className="!text-right">Actions</th>
             </tr>
@@ -419,6 +421,12 @@ export function VariantsPanel({
           </div>
         )}
       </div>
+      {isNew && (
+        <p className="mt-2 text-[12.5px] text-muted-foreground">
+          Opening stock is recorded in the inventory ledger at your default warehouse when you publish. Set each variant’s
+          cost per item in its settings so stock value is right from day one.
+        </p>
+      )}
 
       <Dialog open={configKey !== null} onOpenChange={(open) => !open && setConfigKey(null)}>
         <DialogContent className="sm:max-w-120">

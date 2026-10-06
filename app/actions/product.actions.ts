@@ -5,7 +5,8 @@ import { revalidatePath } from "next/cache"
 import { handleRequest } from "@/lib/action-response"
 import { api } from "@/lib/api"
 import { slugify } from "@/lib/slug"
-import type { Product, ProductDetail, ProductUpdate } from "@/types/product.type"
+import type { Option } from "@/types/option.type"
+import type { Product, ProductCreate, ProductDetail, ProductUpdate } from "@/types/product.type"
 
 const PAGE_PATH = "/products"
 
@@ -44,6 +45,87 @@ export async function deleteProduct(id: string) {
     return true
   })
   if (res.success) revalidatePath(PAGE_PATH)
+  return res
+}
+
+// Creates the product with its variants in one call. Each variant's stock and cost are written to the
+// inventory ledger as opening stock in the default warehouse, so the product shows up in Inventory right away.
+export async function createProduct(input: ProductCreate) {
+  const res = await handleRequest(async () => {
+    let brandId = input.brand.id
+    if (brandId.startsWith("new-")) {
+      const brand = await api.post<{ data: { id: string } }>("/brands", {
+        name: input.brand.name,
+        slug: slugify(input.brand.name),
+      })
+      brandId = brand.data.id
+    }
+
+    // Options are matched to saved ones by name; a new option or value is created first.
+    const saved = (await api.get<{ data: Option[] }>("/options?limit=100")).data
+    async function optionFor(name: string) {
+      const found = saved.find((o) => o.name.toLowerCase() === name.toLowerCase())
+      if (found) return found
+      const created = await api.post<{ data: Option }>("/options", { name })
+      const option = { ...created.data, values: [] }
+      saved.push(option)
+      return option
+    }
+    async function valueId(name: string, value: string) {
+      const option = await optionFor(name)
+      const found = option.values.find((v) => v.value.toLowerCase() === value.toLowerCase())
+      if (found) return found.id
+      const created = await api.post<{ data: Option["values"][number] }>(`/options/${option.id}/values`, { value })
+      option.values.push(created.data)
+      return created.data.id
+    }
+
+    const variants = []
+    for (const v of input.variants) {
+      const optionValueIds = []
+      for (const o of v.options) optionValueIds.push(await valueId(o.name, o.value))
+      variants.push({
+        sku: v.sku,
+        price: v.price,
+        stock: v.stock,
+        ...(v.costPrice !== null && { costPrice: v.costPrice }),
+        isActive: v.isActive,
+        optionValueIds,
+        ...(v.imageUrl && { images: [{ url: v.imageUrl, isPrimary: true, position: 0 }] }),
+      })
+    }
+    const optionNames = [...new Set(input.variants.flatMap((v) => v.options.map((o) => o.name.toLowerCase())))]
+    // The API wants at least 2 characters of description, so an empty editor is left out.
+    const hasDescription = input.description.replace(/<[^>]*>/g, "").trim().length >= 2
+
+    // Unlike brands and options, the products endpoints return the record without a { data } wrapper.
+    const created = await api.post<{ id: string; name: string }>("/products", {
+      name: input.name,
+      slug: input.slug,
+      ...(input.shortDescription && { shortDescription: input.shortDescription }),
+      ...(hasDescription && { description: input.description }),
+      status: input.status,
+      isActive: input.isActive,
+      brandId,
+      categoryIds: input.categoryIds,
+      primaryCategoryId: input.categoryIds[0],
+      tagIds: input.tagIds,
+      images: input.images.map((image, position) => ({
+        url: image.url,
+        ...(image.altText && { altText: image.altText }),
+        isPrimary: position === 0,
+        position,
+      })),
+      optionIds: saved.filter((o) => optionNames.includes(o.name.toLowerCase())).map((o) => o.id),
+      variants,
+    })
+    return created
+  })
+  if (res.success) {
+    revalidatePath(PAGE_PATH)
+    revalidatePath("/inventory/products")
+    revalidatePath("/inventory/stock")
+  }
   return res
 }
 

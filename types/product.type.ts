@@ -50,3 +50,16 @@ export interface ProductUpdate {
     imageUrl: string | null;
   }[];
 }
+
+// Create sends options by name: the form's options only exist in the form until saved.
+export interface ProductCreate extends Omit<ProductUpdate, "variants"> {
+  variants: {
+    sku: string;
+    price: number;
+    stock: number; // recorded as opening stock in the default warehouse
+    costPrice: number | null; // the opening stock's unit cost
+    isActive: boolean;
+    options: { name: string; value: string }[];
+    imageUrl: string | null;
+  }[];
+}

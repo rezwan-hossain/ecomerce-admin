@@ -5,7 +5,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 
-import { updateProduct } from "@/app/actions/product.actions"
+import { createProduct, updateProduct } from "@/app/actions/product.actions"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -277,7 +277,7 @@ export function CreateProductPage({
       found.push({ id: "fMatrix", message: `${totals.badStock} ${plural(totals.badStock, "variant has", "variants have")} a stock count that isn't a whole number.` })
     }
     // The API takes image URLs only.
-    if (product && images.some((image) => image.src.startsWith("data:"))) {
+    if (images.some((image) => image.src.startsWith("data:"))) {
       found.push({ id: "fMedia", message: "Uploaded images can't be saved yet. Remove them and add images from a URL." })
     }
     return found
@@ -324,16 +324,44 @@ export function CreateProductPage({
     router.push("/products")
   }
 
-  function publish() {
+  async function publish() {
     if (!checkForm()) return
-    // UI only for now: nothing is sent to the API yet.
-    setStatus("ACTIVE")
+    setSaving(true)
+    const res = await createProduct({
+      name: name.trim(),
+      slug,
+      shortDescription: shortDesc.trim(),
+      description: descHtml,
+      status: "ACTIVE",
+      isActive,
+      brand: brands.find((b) => b.id === brandId)!,
+      categoryIds,
+      tagIds,
+      images: images.map((image) => ({ url: image.src, altText: image.alt.trim() })),
+      variants: rows.map(({ parts, v }) => ({
+        sku: v.sku.trim(),
+        price: Number(v.price),
+        stock: Number(v.stock),
+        costPrice: v.cost ? Number(v.cost) : null,
+        isActive: v.active,
+        options: parts.map((p) => ({ name: p.option.name.trim(), value: p.value })),
+        imageUrl: images.find((image) => image.id === v.imageId)?.src ?? null,
+      })),
+    })
+    setSaving(false)
+    if (!res.success) {
+      toast.error(res.error)
+      return
+    }
     try {
       localStorage.removeItem(DRAFT_KEY)
     } catch {}
-    setSavedDraft(null)
-    setSaveMeta(`Published at ${timeNow()}`)
-    toast.success("Product published")
+    const units = rows.reduce((sum, { v }) => sum + Number(v.stock), 0)
+    toast.success(`${res.data.name} published`, {
+      description: units > 0 ? `${units} units recorded as opening stock` : "No opening stock recorded",
+      action: { label: "View stock", onClick: () => router.push("/inventory/products") },
+    })
+    router.push("/products")
   }
 
   function goToError(id: string) {
@@ -485,8 +513,8 @@ export function CreateProductPage({
               <Button type="button" variant="outline" onClick={saveDraft}>
                 Save draft
               </Button>
-              <Button type="button" onClick={publish}>
-                Publish product
+              <Button type="button" onClick={publish} disabled={saving}>
+                {saving ? "Publishing..." : "Publish product"}
               </Button>
             </div>
           )}
@@ -605,6 +633,7 @@ export function CreateProductPage({
           bulk={bulk}
           hasError={errorIds.includes("fMatrix")}
           showErrors={triedPublish}
+          isNew={!product}
           onBulkChange={setBulk}
           onApplyBulk={applyBulk}
           onUpdate={updateVariants}
