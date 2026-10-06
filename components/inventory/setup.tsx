@@ -4,7 +4,7 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { PencilIcon, PlusIcon } from "lucide-react"
+import { MapIcon, PencilIcon, PlusIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { createLocation, getLocations, updateLocation } from "@/app/actions/inventory.actions"
@@ -80,12 +80,28 @@ export function Warehouses({ initialWarehouses, initialLocations }: { initialWar
     {
       key: "name",
       header: "Warehouse",
-      cell: (w) => (
-        <button type="button" className="text-left" onClick={() => setEditing(w)}>
-          <span className="font-semibold hover:underline">{w.name}</span>
-          <span className="block text-xs text-muted-foreground">{w.addressLine1}</span>
-        </button>
-      ),
+      cell: (w) => {
+        const mapId = racksOf(w.code)[0]?.warehouse.id
+        const content = (
+          <>
+            <span className="font-medium group-hover:text-primary">{w.name}</span>
+            <span className="block text-xs text-muted-foreground">{w.addressLine1}</span>
+          </>
+        )
+        // A warehouse with a backend counterpart opens its rack map; a demo-only one opens its details.
+        if (mapId) {
+          return (
+            <Link href={`/inventory/setup/warehouses/${mapId}`} className="group block">
+              {content}
+            </Link>
+          )
+        }
+        return (
+          <button type="button" className="group text-left" onClick={() => setEditing(w)}>
+            {content}
+          </button>
+        )
+      },
     },
     { key: "code", header: "Code", cell: (w) => <WarehouseTag code={w.code} /> },
     { key: "type", header: "Type", className: "hidden md:table-cell", cell: (w) => WAREHOUSE_TYPE_LABEL[w.type] },
@@ -106,6 +122,27 @@ export function Warehouses({ initialWarehouses, initialLocations }: { initialWar
           {w.isDefault && <Pill tone="blue">Default</Pill>}
         </span>
       ),
+    },
+    {
+      key: "actions",
+      header: <span className="sr-only">Actions</span>,
+      className: "w-36 text-right",
+      cell: (w) => {
+        const mapId = racksOf(w.code)[0]?.warehouse.id
+        return (
+          <span className="flex justify-end gap-1">
+            {mapId && (
+              <Button size="sm" variant="outline" nativeButton={false} render={<Link href={`/inventory/setup/warehouses/${mapId}`} />}>
+                <MapIcon data-icon="inline-start" />
+                Rack map
+              </Button>
+            )}
+            <Button size="icon-sm" variant="ghost" aria-label={`Edit ${w.name}`} title="Edit details" onClick={() => setEditing(w)}>
+              <PencilIcon />
+            </Button>
+          </span>
+        )
+      },
     },
   ]
 
@@ -209,6 +246,12 @@ function WarehouseSheet({
         onClose={onClose}
         footer={
           <>
+            {realWarehouse && (
+              <Button variant="outline" nativeButton={false} render={<Link href={`/inventory/setup/warehouses/${realWarehouse.id}`} />}>
+                <MapIcon data-icon="inline-start" />
+                Open rack map
+              </Button>
+            )}
             <span className="flex-1" />
             <Button variant="outline" onClick={onClose}>Close</Button>
             <Button onClick={submit}>{warehouse ? "Save warehouse" : "Create warehouse"}</Button>
