@@ -7,6 +7,14 @@ import { XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from "@/components/ui/combobox"
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -31,7 +39,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { DEMO_ITEMS, DEMO_WAREHOUSES } from "@/lib/inventory-demo"
+import { DEMO_ITEMS, DEMO_WAREHOUSES, type DemoItem } from "@/lib/inventory-demo"
 import { cn } from "@/lib/utils"
 
 import { n0, StatusPill } from "./inventory-ui"
@@ -58,7 +66,7 @@ export function DocSheet({
     <Sheet open onOpenChange={(open) => !open && onClose()}>
       <SheetContent
         showCloseButton={false}
-        className="w-full gap-0 border-l-0 bg-sidebar shadow-[-20px_0_60px_rgba(10,14,22,0.22)] data-[side=right]:sm:max-w-3xl"
+        className="w-full gap-0 border-l-0 bg-sidebar shadow-[-20px_0_60px_rgba(10,14,22,0.22)] data-[side=right]:sm:max-w-5xl"
       >
         <SheetHeader className="flex-row items-center gap-3 border-b bg-card px-5 py-3">
           <SheetClose render={<Button variant="ghost" size="icon-sm" className="shrink-0" />}>
@@ -79,22 +87,40 @@ export function DocSheet({
   )
 }
 
-const itemOptions = DEMO_ITEMS.map((i) => ({ value: i.sku, label: `${i.name}, ${i.variant}` }))
+const itemLabel = (i: DemoItem) => `${i.name}, ${i.variant}`
 
+// Type part of a name or SKU to find an item; picking from the list keeps every line tied to a real SKU.
 export function ItemSelect({ value, onChange }: { value: string; onChange: (sku: string) => void }) {
+  const selected = DEMO_ITEMS.find((i) => i.sku === value) ?? null
   return (
-    <Select value={value} items={itemOptions} onValueChange={(v) => onChange(v as string)}>
-      <SelectTrigger aria-label="Item" size="sm" className="w-full min-w-48">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {itemOptions.map((o) => (
-          <SelectItem key={o.value} value={o.value}>
-            {o.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <Combobox
+      items={DEMO_ITEMS}
+      autoHighlight
+      value={selected}
+      onValueChange={(item) => item && onChange((item as DemoItem).sku)}
+      itemToStringLabel={(item) => itemLabel(item as DemoItem)}
+      filter={(item: DemoItem, query) => {
+        const q = query.trim().toLowerCase()
+        // While the box still shows the picked item, list everything.
+        if (!q || (selected && q === itemLabel(selected).toLowerCase())) return true
+        return `${itemLabel(item)} ${item.sku}`.toLowerCase().includes(q)
+      }}
+    >
+      <ComboboxInput aria-label="Item" placeholder="Search name or SKU..." className="h-8 w-full min-w-56" />
+      <ComboboxContent className="min-w-80">
+        <ComboboxEmpty>No item matches.</ComboboxEmpty>
+        <ComboboxList>
+          {(item: DemoItem) => (
+            <ComboboxItem key={item.sku} value={item}>
+              <span className="min-w-0">
+                <span className="block truncate">{itemLabel(item)}</span>
+                <span className="block truncate font-mono text-[11px] text-muted-foreground">{item.sku}</span>
+              </span>
+            </ComboboxItem>
+          )}
+        </ComboboxList>
+      </ComboboxContent>
+    </Combobox>
   )
 }
 

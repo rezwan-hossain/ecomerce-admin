@@ -29,6 +29,12 @@ const total = (po: DemoPurchaseOrder) => subtotal(po) + po.taxAmount + po.shippi
 const isLate = (po: DemoPurchaseOrder) => OPEN.includes(po.status) && po.expectedAt !== null && new Date(po.expectedAt).getTime() < Date.now()
 const now = () => new Date().toISOString()
 
+function lineStatus(i: DemoPoItem) {
+  if (remaining(i) <= 0) return "RECEIVED"
+  if (i.receivedQty + i.damagedQty > 0) return "PARTIAL"
+  return "PENDING"
+}
+
 function nextNumber(pos: DemoPurchaseOrder[]) {
   const last = Math.max(0, ...pos.map((p) => Number(p.poNumber.split("-").at(-1))))
   return `PO-${new Date().getFullYear()}-${String(last + 1).padStart(5, "0")}`
@@ -219,6 +225,10 @@ function PoSheet({
   const supplier = suppliers.find((s) => s.id === po.supplierId)
   const supplierItems = suppliers.filter((s) => s.isActive).map((s) => ({ value: s.id, label: s.name }))
 
+  const ordered = po.items.reduce((sum, i) => sum + i.orderedQty, 0)
+  const received = po.items.reduce((sum, i) => sum + i.receivedQty, 0)
+  const damaged = po.items.reduce((sum, i) => sum + i.damagedQty, 0)
+
   function updateLine(id: string, patch: Partial<DemoPoItem>) {
     setPo({ ...po, items: po.items.map((i) => (i.id === id ? { ...i, ...patch } : i)) })
   }
@@ -263,59 +273,80 @@ function PoSheet({
 
   return (
     <DocSheet kind="Purchase order" title={po.poNumber || "New purchase order"} status={po.status} footer={footer} onClose={onClose}>
-      <section className="flex flex-wrap gap-x-7 gap-y-3 rounded-xl border bg-card px-4 py-3.5">
-        <div className="min-w-60">
-          <span className="block text-xs text-muted-foreground">Supplier</span>
-          {editing ? (
-            <Select value={po.supplierId || null} items={supplierItems} onValueChange={(v) => setPo({ ...po, supplierId: v as string })}>
-              <SelectTrigger aria-label="Supplier" size="sm" className="mt-1 w-full">
-                <SelectValue placeholder="Choose a supplier" />
-              </SelectTrigger>
-              <SelectContent>
-                {supplierItems.map((s) => (
-                  <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
-            <div className="font-semibold">{supplier?.name}</div>
-          )}
-        </div>
-        <div>
-          <span className="block text-xs text-muted-foreground">Expected</span>
-          {editing ? (
-            <Input
-              type="date"
-              aria-label="Expected delivery"
-              className="mt-1 h-8"
-              value={po.expectedAt ? po.expectedAt.slice(0, 10) : ""}
-              onChange={(e) => setPo({ ...po, expectedAt: e.target.value ? new Date(`${e.target.value}T12:00:00`).toISOString() : null })}
-            />
-          ) : (
-            <div className="font-semibold">{fmtDate(po.expectedAt)}</div>
-          )}
-        </div>
-        <div>
-          <span className="block text-xs text-muted-foreground">Terms</span>
-          <div className="font-semibold">
-            {supplier ? `${supplier.paymentTerms}${supplier.leadTimeDays !== null ? `, ${supplier.leadTimeDays} day lead time` : ""}` : "—"}
+      <section className="overflow-hidden rounded-2xl border bg-card">
+        <div className="grid gap-x-6 gap-y-4 px-4 py-4 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+          <div className="min-w-0">
+            <span className="mb-1 block text-xs text-muted-foreground">Supplier</span>
+            {editing ? (
+              <Select value={po.supplierId || null} items={supplierItems} onValueChange={(v) => setPo({ ...po, supplierId: v as string })}>
+                <SelectTrigger aria-label="Supplier" className="w-full">
+                  <SelectValue placeholder="Choose a supplier" />
+                </SelectTrigger>
+                <SelectContent>
+                  {supplierItems.map((s) => (
+                    <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <div className="truncate font-semibold">{supplier?.name}</div>
+            )}
+          </div>
+          <div>
+            <span className="mb-1 block text-xs text-muted-foreground">Expected</span>
+            {editing ? (
+              <Input
+                type="date"
+                aria-label="Expected delivery"
+                value={po.expectedAt ? po.expectedAt.slice(0, 10) : ""}
+                onChange={(e) => setPo({ ...po, expectedAt: e.target.value ? new Date(`${e.target.value}T12:00:00`).toISOString() : null })}
+              />
+            ) : (
+              <div className={cn("font-semibold", isLate(po) && "text-destructive")}>
+                {fmtDate(po.expectedAt)}
+                {isLate(po) && ", late"}
+              </div>
+            )}
+          </div>
+          <div>
+            <span className="mb-1 block text-xs text-muted-foreground">Terms</span>
+            <div className="font-semibold">{supplier?.paymentTerms ?? "—"}</div>
+            {supplier?.leadTimeDays != null && <div className="text-xs text-muted-foreground">{supplier.leadTimeDays} day lead time</div>}
+          </div>
+          <div className="lg:text-right">
+            <span className="mb-1 block text-xs text-muted-foreground">Total</span>
+            <div className="text-2xl leading-tight font-bold tracking-tight tabular-nums">{taka(total(po))}</div>
           </div>
         </div>
-        <p className="basis-full text-[12.5px] text-muted-foreground">
-          Created {fmtDate(po.createdAt)} by {po.createdBy}
-          {po.orderedAt && ` · sent to supplier ${fmtDate(po.orderedAt)}`}
-        </p>
+        <ul className="flex flex-wrap gap-x-8 gap-y-2 border-t bg-muted/30 px-4 py-2.5 text-[13px]">
+          <li>
+            <span className="block text-xs text-muted-foreground">Created</span>
+            {fmtDate(po.createdAt)} by {po.createdBy}
+          </li>
+          {po.orderedAt && (
+            <li>
+              <span className="block text-xs text-muted-foreground">Sent to supplier</span>
+              {fmtDate(po.orderedAt)}
+            </li>
+          )}
+          {!editing && (
+            <li>
+              <span className="block text-xs text-muted-foreground">Received</span>
+              {received} of {ordered} units{damaged > 0 && `, ${damaged} damaged`}
+            </li>
+          )}
+        </ul>
       </section>
 
       {po.fromRule && editing && (
-        <p className="rounded-md bg-primary/10 px-3 py-2.5 text-[13px] text-primary">A reorder rule drafted this order. Check quantities and costs, then submit it.</p>
+        <p className="rounded-lg bg-primary/10 px-3.5 py-2.5 text-[13px] text-primary">A reorder rule drafted this order. Check quantities and costs, then submit it.</p>
       )}
 
-      <Card title="Lines" action={<span className="text-muted-foreground">{po.items.length} lines</span>}>
+      <Card title="Lines" action={<span className="text-muted-foreground">{po.items.length} {po.items.length === 1 ? "line" : "lines"}</span>}>
         <div className="overflow-x-auto">
           <table className="w-full">
-            <thead className="text-left text-xs text-muted-foreground">
-              <tr className="border-y [&>th]:px-3 [&>th]:py-2 [&>th]:font-medium">
+            <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+              <tr className="border-y [&>th]:px-3 [&>th]:py-2.5 [&>th]:font-medium [&>th]:whitespace-nowrap [&>th:first-child]:pl-4 [&>th:last-child]:pr-4">
                 <th>Item</th>
                 <th>Deliver to</th>
                 <th className="text-right">Ordered</th>
@@ -323,46 +354,51 @@ function PoSheet({
                 {!editing && <th className="text-right">Damaged</th>}
                 <th className="text-right">Unit cost</th>
                 <th className="text-right">Line total</th>
-                {editing && <th />}
+                {editing ? <th className="w-10"><span className="sr-only">Remove</span></th> : <th>Status</th>}
               </tr>
             </thead>
             <tbody className="tabular-nums">
               {po.items.map((i) => (
-                <tr key={i.id} className="border-b last:border-b-0 [&>td]:px-3 [&>td]:py-2">
-                  <td>
+                <tr key={i.id} className="border-b border-border/60 last:border-b-0 [&>td]:px-3 [&>td]:py-2.5 [&>td:first-child]:pl-4 [&>td:last-child]:pr-4">
+                  <td className="min-w-56">
                     {editing ? (
-                      <ItemSelect value={i.sku} onChange={(sku) => updateLine(i.id, DEMO_ITEMS.find((d) => d.sku === sku)!)} />
+                      <>
+                        <ItemSelect value={i.sku} onChange={(sku) => updateLine(i.id, DEMO_ITEMS.find((d) => d.sku === sku)!)} />
+                        <div className="mt-1 pl-0.5 font-mono text-[11.5px] text-muted-foreground">{i.sku}</div>
+                      </>
                     ) : (
-                      <div>
-                        <div className="font-semibold">{i.name}</div>
-                        <div className="font-mono text-xs text-muted-foreground">{i.sku}</div>
-                      </div>
+                      <>
+                        <div className="font-medium">{i.name}, {i.variant}</div>
+                        <div className="font-mono text-[11.5px] text-muted-foreground">{i.sku}</div>
+                      </>
                     )}
                   </td>
                   <td>{editing ? <WarehouseSelect sellableOnly value={i.warehouse} label="Deliver to" onChange={(code) => updateLine(i.id, { warehouse: code })} /> : <WarehouseTag code={i.warehouse} />}</td>
                   <td className="text-right">
                     {editing ? (
-                      <Input aria-label="Quantity" inputMode="numeric" className={cn(cellInput, "ml-auto")} value={i.orderedQty} onChange={(e) => wholeNumber(e.target.value || "0") && updateLine(i.id, { orderedQty: Number(e.target.value) })} />
+                      <Input aria-label="Quantity" inputMode="numeric" className={cn(cellInput, "ml-auto w-20")} value={i.orderedQty} onChange={(e) => wholeNumber(e.target.value || "0") && updateLine(i.id, { orderedQty: Number(e.target.value) })} />
                     ) : (
                       i.orderedQty
                     )}
                   </td>
                   {!editing && <td className="text-right">{i.receivedQty}</td>}
-                  {!editing && <td className="text-right">{i.damagedQty ? <span className="font-semibold text-destructive">{i.damagedQty}</span> : <span className="text-muted-foreground">0</span>}</td>}
+                  {!editing && <td className="text-right">{i.damagedQty ? <span className="font-semibold text-destructive">{i.damagedQty}</span> : <span className="text-muted-foreground/60">0</span>}</td>}
                   <td className="text-right">
                     {editing ? (
-                      <Input aria-label="Unit cost" inputMode="decimal" className={cn(cellInput, "ml-auto w-24")} value={i.unitCost} onChange={(e) => !Number.isNaN(Number(e.target.value)) && updateLine(i.id, { unitCost: Number(e.target.value) })} />
+                      <Input aria-label="Unit cost" inputMode="decimal" className={cn(cellInput, "ml-auto w-28")} value={i.unitCost} onChange={(e) => !Number.isNaN(Number(e.target.value)) && updateLine(i.id, { unitCost: Number(e.target.value) })} />
                     ) : (
-                      taka(i.unitCost, 2)
+                      <span className="text-muted-foreground">{taka(i.unitCost, 2)}</span>
                     )}
                   </td>
-                  <td className="text-right">{taka(i.orderedQty * i.unitCost, 2)}</td>
-                  {editing && (
+                  <td className="text-right font-medium whitespace-nowrap">{taka(i.orderedQty * i.unitCost, 2)}</td>
+                  {editing ? (
                     <td>
-                      <Button size="icon-sm" variant="ghost" aria-label="Remove line" onClick={() => setPo({ ...po, items: po.items.filter((x) => x.id !== i.id) })}>
+                      <Button size="icon-sm" variant="ghost" className="text-muted-foreground hover:text-destructive" aria-label="Remove line" onClick={() => setPo({ ...po, items: po.items.filter((x) => x.id !== i.id) })}>
                         <Trash2Icon />
                       </Button>
                     </td>
+                  ) : (
+                    <td><StatusPill status={lineStatus(i)} /></td>
                   )}
                 </tr>
               ))}
@@ -377,20 +413,23 @@ function PoSheet({
             </Button>
           </div>
         )}
-        <dl className="grid grid-cols-[auto_140px] justify-end gap-x-4 gap-y-1.5 border-t px-4 py-3 text-right tabular-nums">
-          <dt className="text-muted-foreground">Subtotal</dt>
-          <dd>{taka(subtotal(po), 2)}</dd>
-          <dt className="text-muted-foreground">Shipping</dt>
-          <dd>
-            {editing ? (
-              <Input aria-label="Shipping" inputMode="decimal" className="h-8 text-right" value={po.shippingAmount} onChange={(e) => !Number.isNaN(Number(e.target.value)) && setPo({ ...po, shippingAmount: Number(e.target.value) })} />
-            ) : (
-              taka(po.shippingAmount, 2)
-            )}
-          </dd>
-          <dt className="text-base font-bold">Total</dt>
-          <dd className="text-base font-bold">{taka(total(po), 2)}</dd>
-        </dl>
+        <div className="border-t">
+          <dl className="ml-auto grid w-full max-w-xs grid-cols-[1fr_auto] items-center gap-x-6 gap-y-2 px-4 py-3.5 text-right tabular-nums">
+            <dt className="text-muted-foreground">Subtotal</dt>
+            <dd>{taka(subtotal(po), 2)}</dd>
+            <dt className="text-muted-foreground">Shipping</dt>
+            <dd>
+              {editing ? (
+                <Input aria-label="Shipping" inputMode="decimal" className="ml-auto h-8 w-32 text-right" value={po.shippingAmount} onChange={(e) => !Number.isNaN(Number(e.target.value)) && setPo({ ...po, shippingAmount: Number(e.target.value) })} />
+              ) : (
+                taka(po.shippingAmount, 2)
+              )}
+            </dd>
+            <div className="col-span-2 my-0.5 border-t" />
+            <dt className="text-base font-semibold">Total</dt>
+            <dd className="text-base font-bold">{taka(total(po), 2)}</dd>
+          </dl>
+        </div>
       </Card>
 
       <Card title="Note">
