@@ -1,6 +1,6 @@
 "use client"
 
-// The Warehouses and Suppliers pages. Racks come from the real racks API; the rest is demo data.
+// The Warehouses and Suppliers pages. Racks and suppliers come from the API; warehouses are still demo data.
 
 import { useState } from "react"
 import Link from "next/link"
@@ -8,9 +8,10 @@ import { PencilIcon, PlusIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { createLocation, getLocations, updateLocation } from "@/app/actions/inventory.actions"
+import { createSupplier, getSuppliers, updateSupplier } from "@/app/actions/supplier.actions"
 import { ListTable, type ListColumn } from "@/components/list-table"
 import { Button } from "@/components/ui/button"
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -19,20 +20,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
 import { Switch } from "@/components/ui/switch"
-import type { DemoPurchaseOrder, DemoSupplier, DemoWarehouse, WarehouseType } from "@/lib/inventory-demo"
+import { Textarea } from "@/components/ui/textarea"
+import type { DemoWarehouse, WarehouseType } from "@/lib/inventory-demo"
 import type { LocationDto, StorageLocation } from "@/types/inventory.type"
+import type { Supplier, SupplierDto } from "@/types/supplier.type"
 
 import { DocSheet } from "./doc-bits"
-import { Card, Pill, RackTag, StatusPill, taka, WarehouseTag } from "./inventory-ui"
+import { Card, fmtDate, Pill, RackTag, StatusPill, WarehouseTag } from "./inventory-ui"
 import { LOCATION_TYPE_LABEL, LocationFormSheet } from "./location-form-sheet"
 
 export const WAREHOUSE_TYPE_LABEL: Record<WarehouseType, string> = {
@@ -49,49 +44,6 @@ function TextField({ id, text, value, onChange, placeholder }: { id: string; tex
       <FieldLabel htmlFor={id}>{text}</FieldLabel>
       <Input id={id} placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} />
     </Field>
-  )
-}
-
-function FormSheet({
-  title,
-  description,
-  submit,
-  onSubmit,
-  onClose,
-  children,
-}: {
-  title: string
-  description: string
-  submit: string
-  onSubmit: () => void
-  onClose: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <Sheet open onOpenChange={(open) => !open && onClose()}>
-      <SheetContent className="w-full gap-0 sm:max-w-lg">
-        <form
-          noValidate
-          className="flex h-full flex-col"
-          onSubmit={(e) => {
-            e.preventDefault()
-            onSubmit()
-          }}
-        >
-          <SheetHeader className="border-b">
-            <SheetTitle>{title}</SheetTitle>
-            <SheetDescription>{description}</SheetDescription>
-          </SheetHeader>
-          <div className="flex-1 overflow-y-auto p-4">
-            <FieldGroup>{children}</FieldGroup>
-          </div>
-          <SheetFooter className="flex-row justify-end border-t">
-            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit">{submit}</Button>
-          </SheetFooter>
-        </form>
-      </SheetContent>
-    </Sheet>
   )
 }
 
@@ -387,33 +339,29 @@ function WarehouseSheet({
 
 /* ---------- Suppliers ---------- */
 
-const OPEN_PO = ["SUBMITTED", "CONFIRMED", "PARTIAL"]
-const poTotal = (po: DemoPurchaseOrder) => po.items.reduce((sum, i) => sum + i.orderedQty * i.unitCost, 0) + po.taxAmount + po.shippingAmount
+const SUPPLIER_FIELDS = [
+  "name", "code", "company", "website", "paymentTerms", "contactName", "contactEmail", "contactPhone",
+  "addressLine1", "addressLine2", "city", "state", "postalCode", "country", "note",
+] as const
+type SupplierForm = Record<(typeof SUPPLIER_FIELDS)[number] | "leadTimeDays", string> & { isActive: boolean }
 
-export function Suppliers({ initialSuppliers, purchaseOrders }: { initialSuppliers: DemoSupplier[]; purchaseOrders: DemoPurchaseOrder[] }) {
+export function Suppliers({ initialSuppliers }: { initialSuppliers: Supplier[] }) {
   const [suppliers, setSuppliers] = useState(initialSuppliers)
-  const [editing, setEditing] = useState<DemoSupplier | null | undefined>(undefined)
+  const [editing, setEditing] = useState<Supplier | null | undefined>(undefined)
 
-  const ordersOf = (s: DemoSupplier) => purchaseOrders.filter((po) => po.supplierId === s.id)
-
-  function save(s: DemoSupplier) {
-    if (!s.name.trim()) return toast.error("Enter a name.")
-    if (!s.code.trim()) return toast.error("Enter a code.")
-    if (suppliers.some((x) => x.id !== s.id && x.code.toLowerCase() === s.code.toLowerCase())) return toast.error("Another supplier already uses that code.")
-    if (s.contactEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s.contactEmail)) return toast.error("Check the email address.")
-    setSuppliers((current) => (current.some((x) => x.id === s.id) ? current.map((x) => (x.id === s.id ? s : x)) : [...current, s]))
-    toast.success(editing ? `${s.name} saved` : `${s.name} added`)
-    setEditing(undefined)
+  async function refresh() {
+    const res = await getSuppliers()
+    if (res.success) setSuppliers(res.data)
   }
 
-  const columns: ListColumn<DemoSupplier>[] = [
+  const columns: ListColumn<Supplier>[] = [
     {
       key: "name",
       header: "Supplier",
       cell: (s) => (
-        <button type="button" className="text-left" onClick={() => setEditing(s)}>
-          <span className="font-semibold hover:underline">{s.name}</span>
-          <span className="block text-xs text-muted-foreground">{s.city}</span>
+        <button type="button" className="group text-left" onClick={() => setEditing(s)}>
+          <span className="font-medium group-hover:text-primary">{s.name}</span>
+          {(s.company || s.city) && <span className="block text-xs text-muted-foreground">{[s.company, s.city].filter(Boolean).join(" · ")}</span>}
         </button>
       ),
     },
@@ -424,20 +372,20 @@ export function Suppliers({ initialSuppliers, purchaseOrders }: { initialSupplie
       className: "hidden md:table-cell",
       cell: (s) => (
         <div>
-          {s.contactName || "—"}
-          <div className="text-xs text-muted-foreground">{s.contactPhone}</div>
+          {s.contactName || <span className="text-muted-foreground">—</span>}
+          <div className="text-xs text-muted-foreground">{s.contactPhone || s.contactEmail}</div>
         </div>
       ),
     },
-    { key: "terms", header: "Terms", className: "hidden lg:table-cell", cell: (s) => s.paymentTerms || "—" },
-    { key: "lead", header: "Lead time", className: "hidden text-right tabular-nums lg:table-cell", cell: (s) => (s.leadTimeDays === null ? "—" : `${s.leadTimeDays} days`) },
-    { key: "open", header: "Open orders", className: "text-right tabular-nums", cell: (s) => ordersOf(s).filter((po) => OPEN_PO.includes(po.status)).length },
+    { key: "terms", header: "Terms", className: "hidden lg:table-cell", cell: (s) => s.paymentTerms || <span className="text-muted-foreground">—</span> },
     {
-      key: "spent",
-      header: "Spent",
-      className: "hidden text-right tabular-nums md:table-cell",
-      cell: (s) => taka(ordersOf(s).filter((po) => po.status !== "DRAFT" && po.status !== "CANCELLED").reduce((sum, po) => sum + poTotal(po), 0)),
+      key: "lead",
+      header: "Lead time",
+      className: "hidden text-right tabular-nums lg:table-cell",
+      cell: (s) => (s.leadTimeDays === null ? <span className="text-muted-foreground">—</span> : `${s.leadTimeDays} days`),
     },
+    { key: "batches", header: "Deliveries", className: "hidden text-right tabular-nums md:table-cell", cell: (s) => <span className="text-muted-foreground">{s._count.batches}</span> },
+    { key: "orders", header: "Orders", className: "hidden text-right tabular-nums md:table-cell", cell: (s) => <span className="text-muted-foreground">{s._count.purchaseOrders}</span> },
     { key: "status", header: "Status", cell: (s) => (s.isActive ? <StatusPill status="ACTIVE" text="Active" /> : <StatusPill status="DISMISSED" text="Inactive" />) },
   ]
 
@@ -447,13 +395,14 @@ export function Suppliers({ initialSuppliers, purchaseOrders }: { initialSupplie
         rows={suppliers}
         columns={columns}
         getRowId={(s) => s.id}
-        searchText={(s) => `${s.name} ${s.code} ${s.contactName} ${s.city}`}
+        searchText={(s) => `${s.name} ${s.code} ${s.company ?? ""} ${s.contactName ?? ""} ${s.city ?? ""}`}
         searchPlaceholder="Search suppliers..."
         filters={[
           { label: "All", value: "all", match: () => true },
           { label: "Active", value: "active", match: (s) => s.isActive },
           { label: "Inactive", value: "inactive", match: (s) => !s.isActive },
         ]}
+        emptyText="No suppliers yet. Add the companies you buy stock from."
         toolbar={
           <Button size="sm" onClick={() => setEditing(null)}>
             <PlusIcon data-icon="inline-start" />
@@ -461,47 +410,160 @@ export function Suppliers({ initialSuppliers, purchaseOrders }: { initialSupplie
           </Button>
         }
       />
-      {editing !== undefined && <SupplierSheet key={editing?.id ?? "new"} supplier={editing} onSave={save} onClose={() => setEditing(undefined)} />}
+      {editing !== undefined && (
+        <SupplierSheet
+          key={editing?.id ?? "new"}
+          supplier={editing}
+          onSaved={async () => {
+            setEditing(undefined)
+            await refresh()
+          }}
+          onClose={() => setEditing(undefined)}
+        />
+      )}
     </>
   )
 }
 
-function SupplierSheet({ supplier, onSave, onClose }: { supplier: DemoSupplier | null; onSave: (s: DemoSupplier) => void; onClose: () => void }) {
-  const [s, setS] = useState<DemoSupplier>(
-    supplier ?? { id: crypto.randomUUID(), name: "", code: "", contactName: "", contactPhone: "", contactEmail: "", city: "", paymentTerms: "", leadTimeDays: null, isActive: true }
+function SupplierSheet({ supplier, onSaved, onClose }: { supplier: Supplier | null; onSaved: () => void; onClose: () => void }) {
+  const [form, setForm] = useState<SupplierForm>(() => ({
+    ...(Object.fromEntries(SUPPLIER_FIELDS.map((f) => [f, supplier?.[f] ?? ""])) as Record<(typeof SUPPLIER_FIELDS)[number], string>),
+    leadTimeDays: supplier?.leadTimeDays == null ? "" : String(supplier.leadTimeDays),
+    isActive: supplier?.isActive ?? true,
+  }))
+  const [saving, setSaving] = useState(false)
+  const field = (key: (typeof SUPPLIER_FIELDS)[number] | "leadTimeDays", text: string, placeholder?: string) => (
+    <TextField id={`sup-${key}`} text={text} placeholder={placeholder} value={form[key]} onChange={(value) => setForm({ ...form, [key]: value })} />
   )
-  const [lead, setLead] = useState(s.leadTimeDays === null ? "" : String(s.leadTimeDays))
-  const set = (patch: Partial<DemoSupplier>) => setS({ ...s, ...patch })
+
+  async function save() {
+    const lead = form.leadTimeDays.trim()
+    if (form.name.trim().length < 2) return toast.error("Enter a name of at least 2 characters.")
+    if (!/^[A-Z0-9-]{2,30}$/.test(form.code.trim())) return toast.error("Use 2 to 30 capital letters, digits or dashes for the code, like SUP-003.")
+    if (lead && !/^\d+$/.test(lead)) return toast.error("Lead time must be a whole number of days.")
+    if (form.website.trim() && !/^https?:\/\/\S+$/.test(form.website.trim())) return toast.error("Enter the website as a full link, like https://example.com.")
+
+    // Blank fields are left out: the API rejects "" for the email and website.
+    const dto: SupplierDto = { isActive: form.isActive, ...(lead && { leadTimeDays: Number(lead) }) }
+    for (const key of SUPPLIER_FIELDS) {
+      const value = form[key].trim()
+      if (value) dto[key] = value
+    }
+
+    setSaving(true)
+    const res = supplier ? await updateSupplier(supplier.id, dto) : await createSupplier(dto)
+    setSaving(false)
+    if (!res.success) return toast.error(res.error)
+    toast.success(supplier ? `${res.data.name} saved` : `${res.data.name} added`)
+    onSaved()
+  }
+
+  let submitText = supplier ? "Save supplier" : "Add supplier"
+  if (saving) submitText = "Saving..."
+
+  const stats = supplier && [
+    ["Deliveries", String(supplier._count.batches)],
+    ["Purchase orders", String(supplier._count.purchaseOrders)],
+    ["Lead time", supplier.leadTimeDays === null ? "—" : `${supplier.leadTimeDays} days`],
+    ["Supplier since", fmtDate(supplier.createdAt)],
+  ]
 
   return (
-    <FormSheet
-      title={supplier ? `Edit ${supplier.name}` : "New supplier"}
-      description="Who you buy from, their terms and typical lead time."
-      submit={supplier ? "Save supplier" : "Add supplier"}
-      onSubmit={() => {
-        if (lead.trim() && !/^\d+$/.test(lead.trim())) return toast.error("Lead time must be a whole number of days.")
-        onSave({ ...s, name: s.name.trim(), code: s.code.trim(), leadTimeDays: lead.trim() ? Number(lead) : null })
-      }}
+    <DocSheet
+      narrow
+      kind="Supplier"
+      title={form.name.trim() || "New supplier"}
+      badge={
+        supplier && (
+          <>
+            <span className="rounded-md bg-muted px-2 py-0.5 font-mono text-xs font-semibold text-foreground/75">{supplier.code}</span>
+            {supplier.isActive ? <StatusPill status="ACTIVE" text="Active" /> : <StatusPill status="DISMISSED" text="Inactive" />}
+          </>
+        )
+      }
       onClose={onClose}
+      footer={
+        <>
+          <Field orientation="horizontal" className="w-auto">
+            <Switch id="sup-active" checked={form.isActive} onCheckedChange={(isActive) => setForm({ ...form, isActive })} />
+            <FieldLabel htmlFor="sup-active" className="font-normal">Active</FieldLabel>
+          </Field>
+          <span className="flex-1" />
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={save} disabled={saving}>{submitText}</Button>
+        </>
+      }
     >
-      <div className="grid grid-cols-2 gap-3">
-        <TextField id="sup-name" text="Name" value={s.name} onChange={(name) => set({ name })} />
-        <TextField id="sup-code" text="Code" placeholder="SUP-005" value={s.code} onChange={(code) => set({ code })} />
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <TextField id="sup-terms" text="Payment terms" placeholder="Net 30, COD" value={s.paymentTerms} onChange={(paymentTerms) => set({ paymentTerms })} />
-        <TextField id="sup-lead" text="Lead time in days" value={lead} onChange={setLead} />
-      </div>
-      <TextField id="sup-contact" text="Contact name" value={s.contactName} onChange={(contactName) => set({ contactName })} />
-      <div className="grid grid-cols-2 gap-3">
-        <TextField id="sup-email" text="Email" value={s.contactEmail} onChange={(contactEmail) => set({ contactEmail })} />
-        <TextField id="sup-phone" text="Phone" value={s.contactPhone} onChange={(contactPhone) => set({ contactPhone })} />
-      </div>
-      <TextField id="sup-city" text="City" value={s.city} onChange={(city) => set({ city })} />
-      <Field orientation="horizontal">
-        <Switch id="sup-active" checked={s.isActive} onCheckedChange={(isActive) => set({ isActive })} />
-        <FieldLabel htmlFor="sup-active" className="font-normal">Active</FieldLabel>
-      </Field>
-    </FormSheet>
+      {stats && (
+        // The 1px gap over a border-colored background draws the dividers.
+        <section className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border bg-border sm:grid-cols-4">
+          {stats.map(([label, value]) => (
+            <div key={label} className="min-w-0 bg-card px-4 py-3">
+              <span className="block truncate text-[12.5px] text-muted-foreground">{label}</span>
+              <strong className="mt-0.5 block truncate text-xl font-bold tracking-tight tabular-nums">{value}</strong>
+            </div>
+          ))}
+        </section>
+      )}
+
+      <Card title="Company">
+        <div className="grid gap-3 px-4 pb-4 sm:grid-cols-2">
+          {field("name", "Name")}
+          <Field>
+            <FieldLabel htmlFor="sup-code">Code</FieldLabel>
+            <Input id="sup-code" placeholder="SUP-003" className="font-mono" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} />
+            <FieldDescription>Capital letters, digits and dashes.</FieldDescription>
+          </Field>
+          {field("company", "Registered company")}
+          {field("website", "Website", "https://")}
+        </div>
+      </Card>
+
+      <Card title="Buying terms">
+        <div className="grid gap-3 px-4 pb-4 sm:grid-cols-2">
+          {field("paymentTerms", "Payment terms", "Net 30, COD")}
+          <Field>
+            <FieldLabel htmlFor="sup-leadTimeDays">Lead time</FieldLabel>
+            <div className="relative">
+              <Input id="sup-leadTimeDays" inputMode="numeric" className="pr-12" value={form.leadTimeDays} onChange={(e) => setForm({ ...form, leadTimeDays: e.target.value })} />
+              <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-xs text-muted-foreground">days</span>
+            </div>
+            <FieldDescription>From order to delivery, usually.</FieldDescription>
+          </Field>
+        </div>
+      </Card>
+
+      <Card title="Contact">
+        <div className="grid gap-3 px-4 pb-4 sm:grid-cols-3">
+          {field("contactName", "Name")}
+          {field("contactEmail", "Email")}
+          {field("contactPhone", "Phone")}
+        </div>
+      </Card>
+
+      <Card title="Address">
+        <div className="grid gap-3 px-4 pb-4 sm:grid-cols-2">
+          {field("addressLine1", "Address")}
+          {field("addressLine2", "Address line 2")}
+        </div>
+        <div className="grid gap-3 px-4 pb-4 sm:grid-cols-4">
+          {field("city", "City")}
+          {field("state", "Division")}
+          {field("postalCode", "Postal code")}
+          {field("country", "Country", "BD")}
+        </div>
+      </Card>
+
+      <Card title="Note">
+        <div className="px-4 pb-4">
+          <Textarea id="sup-note" aria-label="Note" rows={3} placeholder="Anything the team should know when ordering" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} />
+          {supplier && (
+            <p className="mt-2 text-[12.5px] text-muted-foreground">
+              Suppliers can’t be deleted, because deliveries keep pointing at them. Switch Active off to retire one.
+            </p>
+          )}
+        </div>
+      </Card>
+    </DocSheet>
   )
 }

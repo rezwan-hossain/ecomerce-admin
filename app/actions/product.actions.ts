@@ -107,6 +107,7 @@ export async function createProduct(input: ProductCreate) {
       status: input.status,
       isActive: input.isActive,
       brandId,
+      ...(input.supplierId && { supplierId: input.supplierId }),
       categoryIds: input.categoryIds,
       primaryCategoryId: input.categoryIds[0],
       tagIds: input.tagIds,

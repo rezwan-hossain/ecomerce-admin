@@ -45,10 +45,12 @@ import {
 import {
   BrandPanel,
   CategoriesPanel,
+  SupplierPanel,
   TagsPanel,
   TemplatePanel,
   VisibilityPanel,
   type BrandItem,
+  type SupplierItem,
   type TagItem,
   type Status,
 } from "./side-panels"
@@ -77,6 +79,7 @@ export function CreateProductPage({
   savedOptions,
   categoryTree,
   templates,
+  suppliers = [],
   product,
 }: {
   initialBrands: BrandItem[]
@@ -84,6 +87,7 @@ export function CreateProductPage({
   savedOptions: SavedOption[]
   categoryTree: Category[]
   templates: TemplateData[]
+  suppliers?: SupplierItem[] // create mode only: who the opening stock came from
   product?: ProductDetail // edit mode: the form starts from this product and saves to it
 }) {
   const router = useRouter()
@@ -106,6 +110,7 @@ export function CreateProductPage({
   const [allTags, setAllTags] = useState(initialTags)
   const [tagIds, setTagIds] = useState<string[]>(product?.tags.map((t) => t.tag.id) ?? [])
   const [templateId, setTemplateId] = useState("none")
+  const [supplierId, setSupplierId] = useState<string | null>(null)
   const [images, setImages] = useState<ProductImage[]>(initial?.images ?? [])
   const [options, setOptions] = useState<ProductOption[]>(initial?.options ?? [])
   // A new product starts with the default variant, used while it has no options.
@@ -335,6 +340,7 @@ export function CreateProductPage({
       status: "ACTIVE",
       isActive,
       brand: brands.find((b) => b.id === brandId)!,
+      supplierId,
       categoryIds,
       tagIds,
       images: images.map((image) => ({ url: image.src, altText: image.alt.trim() })),
@@ -379,7 +385,7 @@ export function CreateProductPage({
 
   function serialize(withImages: boolean) {
     return {
-      name, slug, slugAuto, shortDesc, descHtml, status, isActive, brands, brandId, categoryIds, allTags, tagIds,
+      name, slug, slugAuto, shortDesc, descHtml, status, isActive, brands, brandId, supplierId, categoryIds, allTags, tagIds,
       templateId, images: withImages ? images : [], options, variants, removed, bulk,
       savedAt: new Date().toISOString(),
     }
@@ -415,6 +421,7 @@ export function CreateProductPage({
     setIsActive(draft.isActive)
     setBrands(draft.brands)
     setBrandId(draft.brandId)
+    setSupplierId(draft.supplierId ?? null) // drafts saved before suppliers existed don't have it
     setCategoryIds(draft.categoryIds)
     setAllTags(draft.allTags)
     setTagIds(draft.tagIds)
@@ -604,6 +611,7 @@ export function CreateProductPage({
                 clearError("fBrand")
               }}
             />
+            {!product && <SupplierPanel suppliers={suppliers} supplierId={supplierId} onChange={setSupplierId} />}
             <CategoriesPanel
               tree={categoryTree}
               selected={categoryIds}

@@ -53,6 +53,7 @@ export interface ProductUpdate {
 
 // Create sends options by name: the form's options only exist in the form until saved.
 export interface ProductCreate extends Omit<ProductUpdate, "variants"> {
+  supplierId: string | null; // where the opening stock came from: booked as "Purchase received" from them
   variants: {
     sku: string;
     price: number;

@@ -3,6 +3,7 @@ import { connection } from "next/server"
 import { getBrands } from "@/app/actions/brand.actions"
 import { getCategoryTree } from "@/app/actions/category.actions"
 import { getOptions } from "@/app/actions/option.actions"
+import { getSuppliers } from "@/app/actions/supplier.actions"
 import { getTags } from "@/app/actions/tag.actions"
 import { getVariantTemplates } from "@/app/actions/variant-template.actions"
 import { CreateProductPage } from "@/components/products/create/create-product-page"
@@ -11,12 +12,13 @@ export default async function NewProductPage() {
   // Load fresh data on every request instead of once at build time.
   await connection()
 
-  const [brands, tags, options, categories, templates] = await Promise.all([
+  const [brands, tags, options, categories, templates, suppliers] = await Promise.all([
     getBrands(),
     getTags(),
     getOptions(),
     getCategoryTree(),
     getVariantTemplates(),
+    getSuppliers({ activeOnly: true }),
   ])
 
   return (
@@ -34,6 +36,7 @@ export default async function NewProductPage() {
           : []
       }
       categoryTree={categories.success ? categories.data : []}
+      suppliers={suppliers.success ? suppliers.data.map((s) => ({ id: s.id, name: s.name, code: s.code })) : []}
       templates={
         templates.success
           ? templates.data.map((t) => ({

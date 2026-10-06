@@ -50,6 +50,7 @@ export function DocSheet({
   title,
   status,
   badge,
+  narrow,
   footer,
   children,
   onClose,
@@ -58,6 +59,7 @@ export function DocSheet({
   title: string
   status?: string
   badge?: React.ReactNode // shown next to the title instead of a status
+  narrow?: boolean // forms need less room than documents with line tables
   footer: React.ReactNode
   children: React.ReactNode
   onClose: () => void
@@ -66,7 +68,10 @@ export function DocSheet({
     <Sheet open onOpenChange={(open) => !open && onClose()}>
       <SheetContent
         showCloseButton={false}
-        className="w-full gap-0 border-l-0 bg-sidebar shadow-[-20px_0_60px_rgba(10,14,22,0.22)] data-[side=right]:sm:max-w-5xl"
+        className={cn(
+          "w-full gap-0 border-l-0 bg-sidebar shadow-[-20px_0_60px_rgba(10,14,22,0.22)]",
+          narrow ? "data-[side=right]:sm:max-w-3xl" : "data-[side=right]:sm:max-w-5xl"
+        )}
       >
         <SheetHeader className="flex-row items-center gap-3 border-b bg-card px-5 py-3">
           <SheetClose render={<Button variant="ghost" size="icon-sm" className="shrink-0" />}>

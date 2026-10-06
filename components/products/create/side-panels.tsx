@@ -25,6 +25,7 @@ export type Status = "ACTIVE" | "DRAFT" | "ARCHIVED"
 export type BrandItem = { id: string; name: string }
 export type TemplateItem = { id: string; name: string }
 export type TagItem = { id: string; name: string }
+export type SupplierItem = { id: string; name: string; code: string }
 
 const statusItems = [
   { value: "ACTIVE", label: "Active" },
@@ -81,6 +82,53 @@ export function VisibilityPanel({
         />
         <span className={cn(status !== "ACTIVE" && "text-muted-foreground")}>Show on public storefront</span>
       </label>
+      <p className="mt-1.5 text-[12.5px] text-muted-foreground">{hint}</p>
+    </section>
+  )
+}
+
+/* ---------- Supplier ---------- */
+
+const NO_SUPPLIER = "none"
+
+// Optional: who the opening stock came from. Only used when the product is created.
+export function SupplierPanel({
+  suppliers,
+  supplierId,
+  onChange,
+}: {
+  suppliers: SupplierItem[]
+  supplierId: string | null
+  onChange: (id: string | null) => void
+}) {
+  const items = [{ value: NO_SUPPLIER, label: "No supplier" }, ...suppliers.map((s) => ({ value: s.id, label: s.name }))]
+  let hint = "Pick who you bought the opening stock from, so it's recorded as a purchase."
+  if (suppliers.length === 0) hint = "No active suppliers yet."
+  else if (supplierId) hint = "Opening stock is recorded as received from this supplier."
+  return (
+    <section className={panel}>
+      <h2 className={heading}>
+        Supplier <span className="text-xs font-normal text-muted-foreground">Optional</span>
+      </h2>
+      <Select
+        value={supplierId ?? NO_SUPPLIER}
+        items={items}
+        disabled={suppliers.length === 0}
+        onValueChange={(value) => onChange(value === NO_SUPPLIER ? null : (value as string))}
+      >
+        <SelectTrigger aria-label="Supplier" className="h-9 w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={NO_SUPPLIER}>No supplier</SelectItem>
+          {suppliers.map((s) => (
+            <SelectItem key={s.id} value={s.id}>
+              {s.name}
+              <span className="ml-auto font-mono text-[11px] text-muted-foreground">{s.code}</span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       <p className="mt-1.5 text-[12.5px] text-muted-foreground">{hint}</p>
     </section>
   )

@@ -1,19 +1,24 @@
 import { connection } from "next/server"
 
-import { DemoNote } from "@/components/inventory/inventory-ui"
+import { getSuppliers } from "@/app/actions/supplier.actions"
 import { Suppliers } from "@/components/inventory/setup"
 import { PageHeader } from "@/components/page-header"
-import { DEMO_PURCHASE_ORDERS, DEMO_SUPPLIERS } from "@/lib/inventory-demo"
 
 export default async function SuppliersPage() {
-  // Demo dates are relative to now, so render per request.
+  // Load fresh data on every request instead of once at build time.
   await connection()
+  const suppliers = await getSuppliers()
 
   return (
     <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
       <PageHeader title="Suppliers" description="Who you buy from, their terms and typical lead times." />
-      <DemoNote what="suppliers" />
-      <Suppliers initialSuppliers={DEMO_SUPPLIERS} purchaseOrders={DEMO_PURCHASE_ORDERS} />
+      {suppliers.success ? (
+        <Suppliers initialSuppliers={suppliers.data} />
+      ) : (
+        <p className="mx-4 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive lg:mx-6">
+          Couldn’t load suppliers: {suppliers.error}
+        </p>
+      )}
     </div>
   )
 }
