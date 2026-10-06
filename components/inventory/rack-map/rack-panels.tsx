@@ -69,9 +69,9 @@ const heading = "text-[15px] font-semibold"
 
 function Stat({ label: text, value, warn }: { label: string; value: React.ReactNode; warn?: boolean }) {
   return (
-    <div>
-      <span className="block text-xs text-muted-foreground">{text}</span>
-      <strong className={cn("text-2xl font-bold tracking-tight tabular-nums", warn && "text-amber-700")}>{value}</strong>
+    <div className="min-w-0 bg-card px-3 py-2.5">
+      <span className="block truncate text-xs text-muted-foreground">{text}</span>
+      <strong className={cn("block text-xl font-bold tracking-tight tabular-nums", warn && "text-amber-700")}>{value}</strong>
     </div>
   )
 }
@@ -135,7 +135,8 @@ export function OverviewPanel({
 
       <section className={box}>
         <h2 className={cn(heading, "mb-3")}>{plan.warehouse.name}</h2>
-        <div className="grid grid-cols-3 gap-2">
+        {/* The 1px gap over a border-colored background draws the dividers. */}
+        <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border bg-border">
           <Stat label="On racks" value={n0(plan.totals.unitsOnRacks)} />
           <Stat
             label="Bins in use"
@@ -176,6 +177,8 @@ export function OverviewPanel({
                 </span>
                 <Button
                   size="sm"
+                  variant="outline"
+                  className="shrink-0"
                   onClick={() =>
                     onMove({ fromId: line.locationId, levelId: line.inventoryLevelId, toId: line.suggestedLocationId ?? undefined, makeDefault: true })
                   }
@@ -285,10 +288,20 @@ export function RackPanel({
           className="grid border-x-8 border-[#1C5AA4] bg-slate-100 pt-2"
           style={{ gridTemplateColumns: `28px repeat(${slots}, minmax(0, 1fr))` }}
         >
+          <div aria-hidden className="contents">
+            <span />
+            {Array.from({ length: slots }, (_, slot) => (
+              <span key={slot} className="pb-1 text-center font-mono text-[11px] font-bold text-slate-500">
+                {"ABCDEFGH"[slot]}
+              </span>
+            ))}
+          </div>
           {levels.map((level) => (
             <div key={level.id} role="row" className="contents">
-              <div role="rowheader" className="flex items-center justify-center border-b-[6px] border-[#EE8524] font-mono text-xs font-bold text-muted-foreground">
-                {(rack.levels?.length ?? 0) > 1 ? `L${level.levelNumber}` : ""}
+              <div role="rowheader" className="flex items-center justify-center border-b-[6px] border-[#EE8524]">
+                {(rack.levels?.length ?? 0) > 1 && (
+                  <span className="rounded bg-white px-1 font-mono text-[11px] font-bold text-slate-600 shadow-xs">L{level.levelNumber}</span>
+                )}
               </div>
               {Array.from({ length: slots }, (_, slot) => {
                 const bin = level.bins.find((b) => b.slotIndex === slot)
@@ -313,12 +326,12 @@ export function RackPanel({
                     }}
                     className={cn(
                       "relative flex min-h-[88px] min-w-0 cursor-pointer flex-col gap-1 border-b-[6px] border-l border-dashed border-b-[#EE8524] border-l-slate-300 px-1.5 pt-1.5 pb-2 outline-none hover:shadow-[inset_0_0_0_2px_rgba(20,32,43,.25)] focus-visible:shadow-[inset_0_0_0_3px_var(--color-primary)]",
-                      binId === bin.id && "shadow-[inset_0_0_0_3px_#14202B]",
+                      binId === bin.id && "shadow-[inset_0_0_0_2px_var(--color-primary)] ring-0",
                       over === bin.id && "bg-orange-100! shadow-[inset_0_0_0_3px_#EE8524]",
                       hit && "shadow-[inset_0_0_0_3px_#F5C518]",
                       !bin.isActive && "bg-[repeating-linear-gradient(45deg,#EEF1F4_0_6px,#E1E6EB_6px_12px)]!"
                     )}
-                    style={{ background: bin.stock.units && bin.isActive ? shade(mode, 0.08 + t * 0.5) : "#fff" }}
+                    style={{ background: binId === bin.id ? "#EEF4FC" : bin.stock.units && bin.isActive ? shade(mode, 0.08 + t * 0.5) : "#fff" }}
                   >
                     <span className="font-mono text-xs font-bold text-slate-600">{short}</span>
                     {bin.stock.units ? (
@@ -412,7 +425,9 @@ export function BinDetail({
   }, [binId, version])
 
   if (error) return <section className={cn(box, "text-sm text-destructive")}>Couldn’t load this location: {error}</section>
-  if (!data || data.location.id !== binId) return <section className={cn(box, "text-sm text-muted-foreground")}>Loading location...</section>
+  if (!data) return <section className={cn(box, "text-sm text-muted-foreground")}>Loading location...</section>
+  // While the next bin loads, keep the last one on screen (dimmed, not clickable) so the panel doesn't jump.
+  const loading = data.location.id !== binId
 
   const loc = data.location
   const isArea = loc.type === "RECEIVING" || loc.type === "STAGING"
@@ -434,7 +449,7 @@ export function BinDetail({
   }
 
   return (
-    <section className={box}>
+    <section className={cn(box, "transition-opacity", loading && "pointer-events-none opacity-50")} aria-busy={loading}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <RackTag code={loc.code} />

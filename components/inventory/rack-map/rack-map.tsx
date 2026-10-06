@@ -347,8 +347,17 @@ export function RackMap({
       return { i, rect: slotRect(item.placement, i, slots), stats, hit }
     })
     return (
-      <g key={item.id} {...itemProps(item, `Rack ${item.code}${item.name ? `, ${item.name}` : ""}, ${item.stock.units} units`)}>
-        <rect x={b.x} y={b.y} width={b.width} height={b.height} rx={0.15} fill={item.isActive ? "#fff" : "url(#hatch)"} stroke={outline(item, "#1C5AA4")} strokeWidth={rackId === item.id || dropTarget === item.id ? 0.28 : 0.14} />
+      <g key={item.id} {...itemProps(item, `Rack ${item.code}${item.name ? `, ${item.name}` : ""}, ${item.stock.units} units`)} className={cn(itemProps(item, "").className, "group/rack")}>
+        {(rackId === item.id || dropTarget === item.id) && (
+          <rect x={b.x - 0.35} y={b.y - 0.35} width={b.width + 0.7} height={b.height + 0.7} rx={0.4} fill="#EE8524" opacity={0.16} pointerEvents="none" />
+        )}
+        <rect
+          x={b.x} y={b.y} width={b.width} height={b.height} rx={0.15}
+          fill={item.isActive ? "#F7FAFD" : "url(#hatch)"}
+          stroke={outline(item, "#1C5AA4")}
+          strokeWidth={rackId === item.id || dropTarget === item.id ? 0.18 : 0.1}
+          className="transition-[stroke-width] group-hover/rack:stroke-[0.16]"
+        />
         {item.isActive &&
           cells.map(({ i, rect, stats, hit }) => {
             const value = metric(stats, colourMode)
@@ -496,32 +505,40 @@ export function RackMap({
 
   return (
     <div className="flex flex-col gap-4 px-4 py-4 md:py-6 lg:px-6">
-      <div className="flex flex-wrap items-center gap-3">
-        <Button variant="ghost" size="sm" className="-ml-2" nativeButton={false} render={<Link href="/inventory/setup/warehouses" />}>
-          <ChevronLeftIcon data-icon="inline-start" />
-          Warehouses
-        </Button>
-        <nav aria-label="Warehouses" className="flex flex-1 gap-1 overflow-x-auto">
-          {warehouses.map((w) => (
-            <Link
-              key={w.id}
-              href={`/inventory/setup/warehouses/${w.id}`}
-              aria-current={w.id === wid ? "page" : undefined}
-              className={cn(
-                "inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[13px] font-semibold whitespace-nowrap text-muted-foreground hover:bg-muted hover:text-foreground",
-                w.id === wid && "bg-[#1C5AA4] text-white hover:bg-[#1C5AA4] hover:text-white"
-              )}
-            >
-              <span className="font-mono">{w.code}</span>
-              <span className="font-normal opacity-75">{w.name}</span>
-            </Link>
-          ))}
-        </nav>
-        <div className="relative w-full sm:w-64">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <Link href="/inventory/setup/warehouses" className="mb-1 inline-flex items-center gap-1 text-[13px] text-muted-foreground hover:text-foreground">
+            <ChevronLeftIcon className="size-3.5" />
+            Warehouses
+          </Link>
+          <h1 className="text-2xl font-semibold tracking-tight">Rack map</h1>
+          <p className="text-sm text-muted-foreground">
+            {plan.warehouse.name}
+            {floor && ` · ${floor.width} × ${floor.depth} m floor`} · {racks.length} {racks.length === 1 ? "rack" : "racks"} · {plan.totals.binsTotal} bins
+          </p>
+        </div>
+        <div className="relative w-full sm:w-72">
           <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a SKU on the map" className="h-8 bg-card pl-8" aria-label="Find a SKU on the map" />
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a SKU on the map" className="h-9 bg-card pl-8" aria-label="Find a SKU on the map" />
         </div>
       </div>
+
+      <nav aria-label="Warehouses" className="flex max-w-full gap-0.5 self-start overflow-x-auto rounded-xl bg-muted p-1">
+        {warehouses.map((w) => (
+          <Link
+            key={w.id}
+            href={`/inventory/setup/warehouses/${w.id}`}
+            aria-current={w.id === wid ? "page" : undefined}
+            className={cn(
+              "inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[13px] whitespace-nowrap text-muted-foreground transition-colors hover:text-foreground",
+              w.id === wid && "bg-card text-foreground shadow-xs ring-1 ring-foreground/5"
+            )}
+          >
+            <span className="font-mono text-xs font-bold">{w.code}</span>
+            <span>{w.name}</span>
+          </Link>
+        ))}
+      </nav>
 
       <div className="grid items-start gap-4 min-[1180px]:grid-cols-[minmax(0,1fr)_430px]">
         <section className="overflow-hidden rounded-2xl border bg-card" aria-label="Floor plan">
@@ -535,7 +552,7 @@ export function RackMap({
                 ))}
               </TabsList>
             </Tabs>
-            <div className="flex flex-1 flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px] whitespace-nowrap text-muted-foreground">
+            <div className="flex flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-xs whitespace-nowrap text-muted-foreground">
               {mode === "route" ? (
                 <>
                   <span className="inline-flex items-center gap-1.5"><i className="inline-block w-5 border-t-2 border-dashed border-slate-800" />Walking route</span>
@@ -546,7 +563,7 @@ export function RackMap({
                 <>
                   <span className="inline-flex items-center gap-1.5">
                     0
-                    <i className="inline-block h-2.5 w-24 rounded-xs border" style={{ background: scaleGradient(mode) }} />
+                    <i className="inline-block h-2 w-16 rounded-xs border" style={{ background: scaleGradient(mode) }} />
                     {formatMetric(maxMetric(plan, mode), mode)}
                   </span>
                   <span className="inline-flex items-center gap-1.5"><i className="inline-block w-5 border-t-[3px] border-dashed border-[#EE8524]" />Pick face</span>
@@ -563,7 +580,22 @@ export function RackMap({
             )}
           </div>
 
-          <div className="bg-slate-50 px-3 pt-2.5 pb-1.5">
+          <div className="relative bg-slate-50/70 px-3 pt-2.5 pb-1.5">
+            {floor && (
+              <>
+                <span aria-hidden className="pointer-events-none absolute top-3 right-4 flex flex-col items-center text-[10px] font-bold text-slate-500">
+                  <span className="text-[13px] leading-none">↑</span>N
+                </span>
+                {/* 5 m at the plan's scale: the viewBox is the floor plus 1.2 m of margin. */}
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute bottom-3 left-3 flex flex-col gap-0.5 text-[10px] font-semibold text-slate-500"
+                  style={{ width: `calc((100% - 1.5rem) * ${5 / (floor.width + 1.2)})` }}
+                >
+                  <span className="h-1.5 w-full border-x-2 border-b-2 border-slate-400" />5 m
+                </span>
+              </>
+            )}
             {floor ? (
               <svg
                 ref={svgRef}
@@ -589,7 +621,7 @@ export function RackMap({
                     <rect width="0.2" height="0.5" fill="#D5DCE3" />
                   </pattern>
                 </defs>
-                <rect x={0} y={0} width={floor.width} height={floor.depth} fill={edit ? "#FFFDF6" : "#FCFDFE"} stroke="#B8C3CE" strokeWidth={0.08} />
+                <rect x={0} y={0} width={floor.width} height={floor.depth} rx={0.3} fill={edit ? "#FFFDF6" : "#fff"} stroke="#B8C3CE" strokeWidth={0.08} />
                 <rect x={0} y={0} width={floor.width} height={floor.depth} fill="url(#grid)" pointerEvents="none" />
                 {zones.map(drawZone)}
                 {docks.map(drawDock)}
