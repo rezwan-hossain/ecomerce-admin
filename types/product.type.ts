@@ -19,11 +19,20 @@ export interface Product {
 export interface ProductDetail extends Omit<Product, "images" | "variants"> {
   description: string | null;
   shortDescription: string | null;
-  options: { option: { id: string; name: string; values: { id: string; value: string }[] } }[];
+  updatedAt: string;
+  options: { option: { id: string; name: string; displayName: string | null; values: { id: string; value: string }[] } }[];
   images: { id: string; url: string; altText: string | null; isPrimary: boolean; position: number }[];
   variants: (Product["variants"][number] & {
+    lowStockThreshold: number;
     optionValues: { optionValue: { optionId: string; value: string } }[];
     images: { url: string }[];
+    // The price shoppers pay today, after the best running promotion.
+    pricing?: {
+      originalPrice: string;
+      effectivePrice: string;
+      hasPromotion: boolean;
+      promotion: { id: string; name: string; type: string; description: string | null } | null;
+    };
   })[];
 }
 

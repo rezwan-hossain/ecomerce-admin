@@ -111,7 +111,7 @@ export function ProductsTable({ initialProducts }: { initialProducts: Product[] 
               )}
             </div>
             <div className="flex min-w-0 flex-col">
-              <Link href={`/products/${p.id}/edit`} className="truncate font-medium hover:underline">
+              <Link href={`/products/${p.id}`} className="truncate font-medium hover:underline">
                 {p.name}
               </Link>
               <span className="truncate text-xs text-muted-foreground">
@@ -164,6 +164,7 @@ export function ProductsTable({ initialProducts }: { initialProducts: Product[] 
             <span className="sr-only">Actions for {p.name}</span>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-36">
+            <DropdownMenuItem render={<Link href={`/products/${p.id}`} />}>View details</DropdownMenuItem>
             <DropdownMenuItem render={<Link href={`/products/${p.id}/edit`} />}>Edit</DropdownMenuItem>
             {p.status !== "ACTIVE" && p.status !== "ARCHIVED" && (
               <DropdownMenuItem onClick={() => changeStatus(p, "publish")}>Publish</DropdownMenuItem>

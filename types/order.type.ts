@@ -37,6 +37,8 @@ export interface Order {
   createdAt: string;
   items: {
     id: string;
+    productId: string | null;
+    variantId: string | null;
     productName: string;
     variantName: string | null;
     sku: string;

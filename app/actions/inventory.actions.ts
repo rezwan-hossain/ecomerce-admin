@@ -42,6 +42,10 @@ export async function getStock() {
   return handleRequest(() => allPages<VariantStock>("/inventory?sortBy=stock&sortOrder=asc", 100))
 }
 
+export async function getProductStock(productId: string) {
+  return handleRequest(() => allPages<VariantStock>(`/inventory?productId=${productId}&sortBy=sku`, 100))
+}
+
 export async function getInventorySummary() {
   return handleRequest(async () => (await api.get<{ data: InventorySummary }>("/inventory/summary")).data)
 }

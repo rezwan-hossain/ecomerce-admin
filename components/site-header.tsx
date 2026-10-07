@@ -65,8 +65,6 @@ export function SiteHeader() {
       segment,
       href: "/" + segments.slice(0, index + 1).join("/"),
       label: labels[segment] ?? formatId(decodeURIComponent(segment)),
-      // "/products/[id]" has no page of its own, only "/products/[id]/edit".
-      linkable: segments[index + 1] !== "edit",
     }))
     // Database UUIDs mean nothing to a reader: "/products/<uuid>/edit" reads "Products › Edit".
     .filter((crumb) => !UUID.test(crumb.segment))
@@ -85,7 +83,7 @@ export function SiteHeader() {
               <Fragment key={crumb.href}>
                 {index > 0 && <BreadcrumbSeparator />}
                 <BreadcrumbItem>
-                  {index === crumbs.length - 1 || !crumb.linkable ? (
+                  {index === crumbs.length - 1 ? (
                     <BreadcrumbPage className="font-medium">
                       {crumb.label}
                     </BreadcrumbPage>

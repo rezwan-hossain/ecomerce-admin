@@ -6,7 +6,7 @@ import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
 import type { Order, OrderStatus, PaymentStatus } from "@/types/order.type"
 
-const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
+export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
   PENDING: "Pending",
   CONFIRMED: "Confirmed",
   PROCESSING: "Processing",
