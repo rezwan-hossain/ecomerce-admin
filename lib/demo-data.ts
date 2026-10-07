@@ -14,10 +14,6 @@ export type OrderStatus =
 
 export const orders: Order[] = orderData
 
-export function getOrder(id: string) {
-  return orders.find((order) => order.order === `#${id}`)
-}
-
 export type ProductStatus = "Active" | "Draft" | "Archived"
 
 export type Product = {

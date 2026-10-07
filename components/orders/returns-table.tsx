@@ -1,7 +1,6 @@
 "use client"
 
 import * as React from "react"
-import Link from "next/link"
 import { toast } from "sonner"
 
 import { ListTable, type ListColumn } from "@/components/list-table"
@@ -24,11 +23,7 @@ export function ReturnsTable({ returns: initial }: { returns: ReturnRequest[] })
     {
       key: "order",
       header: "Order",
-      cell: (r) => (
-        <Link href={`/orders/${r.order.slice(1)}`} className="hover:underline">
-          {r.order}
-        </Link>
-      ),
+      cell: (r) => r.order,
     },
     { key: "customer", header: "Customer", cell: (r) => r.customer },
     { key: "product", header: "Product", cell: (r) => r.product },

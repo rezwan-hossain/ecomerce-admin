@@ -1,5 +1,7 @@
 "use client"
 
+import Link from "next/link"
+
 import { ListTable, type ListColumn, type ListFilter } from "@/components/list-table"
 import { StatCards } from "@/components/stat-cards"
 import { StatusBadge } from "@/components/status-badge"
@@ -19,7 +21,7 @@ export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
   REFUNDED: "Refunded",
 }
 
-const PAYMENT_LABEL: Record<PaymentStatus, string> = {
+export const PAYMENT_LABEL: Record<PaymentStatus, string> = {
   PENDING: "Pending",
   PROCESSING: "Processing",
   PAID: "Paid",
@@ -78,7 +80,15 @@ function Payment({ order }: { order: Order }) {
 
 export function OrdersTable({ orders, mode = "all" }: { orders: Order[]; mode?: "all" | "pending" }) {
   const columns: ListColumn<Order>[] = [
-    { key: "order", header: "Order", cell: (o) => <span className="font-medium">{o.orderNumber}</span> },
+    {
+      key: "order",
+      header: "Order",
+      cell: (o) => (
+        <Link href={`/orders/${o.id}`} className="font-medium hover:underline">
+          {o.orderNumber}
+        </Link>
+      ),
+    },
     { key: "date", header: "Date", cell: (o) => formatDate(o.placedAt ?? o.createdAt) },
     {
       key: "customer",
