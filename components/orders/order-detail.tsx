@@ -13,10 +13,21 @@ import {
   MapPinIcon,
   PackageIcon,
   PhoneIcon,
+  PrinterIcon,
   TruckIcon,
+  Undo2Icon,
 } from "lucide-react"
 
-import { cancelOrder, createShipment, markPaymentPaid, updateOrderStatus } from "@/app/actions/order.actions"
+import {
+  cancelOrder,
+  createRefundRequest,
+  createShipment,
+  markPaymentFailed,
+  markPaymentPaid,
+  reviewRefund,
+  updateOrderStatus,
+  updateShipmentStatus,
+} from "@/app/actions/order.actions"
 import { Card, fmtDate, fmtDateTime, Kpis, label, n0, Pill, RackTag, rel, taka, type Tone, WarehouseTag } from "@/components/inventory/inventory-ui"
 import { MovementQuantity, MovementTag, movementRacks } from "@/components/inventory/movements-table"
 import { ORDER_STATUS_LABEL, PAYMENT_LABEL } from "@/components/orders/orders-table"
@@ -25,10 +36,11 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import type { LedgerMovement, StockLevel, VariantStockDetail } from "@/types/inventory.type"
-import type { Order, OrderAddress, OrderDetail, OrderStatus } from "@/types/order.type"
+import type { CourierCarrier, Order, OrderAddress, OrderDetail, OrderStatus, ShipmentStatus } from "@/types/order.type"
 
 // The next step on the happy path, as the backend allows it (ORDER_STATUS_TRANSITIONS).
 const NEXT: Partial<Record<OrderStatus, { status: OrderStatus; text: string }>> = {
@@ -46,9 +58,15 @@ const STOPPED: OrderStatus[] = ["CANCELLED", "FAILED", "REFUNDED"]
 const OPEN_PAYMENT = ["PENDING", "PROCESSING"]
 // Shipment, payment and refund statuses that finished well or badly; the rest are in progress.
 const TONE: Record<string, Tone> = {
-  DELIVERED: "green", PAID: "green", APPROVED: "green",
+  DELIVERED: "green", PAID: "green", APPROVED: "blue", PROCESSED: "green",
   FAILED: "red", RETURNED: "red", CANCELLED: "red", REJECTED: "red",
 }
+const CARRIER_LABEL: Record<CourierCarrier, string> = { PATHAO: "Pathao", REDX: "RedX", STEADFAST: "Steadfast", CARRYBEE: "CarryBee" }
+const carrierItems = Object.entries(CARRIER_LABEL).map(([value, text]) => ({ value, label: text }))
+const SHIPMENT_STATUSES: ShipmentStatus[] = ["PENDING", "PROCESSING", "SHIPPED", "IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED", "FAILED", "RETURNED", "CANCELLED"]
+const shipmentStatusItems = SHIPMENT_STATUSES.map((value) => ({ value, label: label(value) }))
+// The backend refuses status changes once a shipment ends.
+const SHIPMENT_DONE: ShipmentStatus[] = ["DELIVERED", "CANCELLED", "RETURNED"]
 
 const sumPaid = (o: Pick<Order, "payments">) => o.payments.filter((p) => p.status === "PAID").reduce((s, p) => s + Number(p.amount), 0)
 
@@ -91,6 +109,7 @@ export function OrderDetailPage({
   const [busy, setBusy] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [shipping, setShipping] = useState(false)
+  const [refunding, setRefunding] = useState(false)
 
   const next = NEXT[order.status]
   const stopped = STOPPED.includes(order.status)
@@ -98,6 +117,10 @@ export function OrderDetailPage({
   const total = Number(order.totalAmount)
   const paid = sumPaid(order)
   const due = total - paid
+  const refunded = order.refundRequests.filter((r) => r.status === "PROCESSED").reduce((s, r) => s + Number(r.amount), 0)
+  // Paid money not yet refunded or promised in an open request.
+  const refundable = paid - order.refundRequests.filter((r) => r.status !== "REJECTED").reduce((s, r) => s + Number(r.amount), 0)
+  const codOpen = order.payments.some((p) => p.method === "CASH_ON_DELIVERY" && OPEN_PAYMENT.includes(p.status))
   const logs = [...order.statusLogs].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   const reachedAt = new Map(logs.map((l) => [l.toStatus, l.createdAt]))
   const lastLog = logs.at(-1)
@@ -155,6 +178,30 @@ export function OrderDetailPage({
     toast.success("Payment marked as paid")
   }
 
+  async function markFailed(paymentId: string) {
+    setBusy(true)
+    const res = await markPaymentFailed(order.id, paymentId, "Marked failed by admin")
+    setBusy(false)
+    if (!res.success) return toast.error(res.error)
+    toast.success("Payment marked as failed")
+  }
+
+  async function setShipmentStatus(shipmentId: string, status: ShipmentStatus) {
+    setBusy(true)
+    const res = await updateShipmentStatus(order.id, shipmentId, status)
+    setBusy(false)
+    if (!res.success) return toast.error(res.error)
+    toast.success(`Shipment is now ${label(status).toLowerCase()}`)
+  }
+
+  async function review(refundId: string, action: "approve" | "reject" | "process") {
+    setBusy(true)
+    const res = await reviewRefund(order.id, refundId, action)
+    setBusy(false)
+    if (!res.success) return toast.error(res.error)
+    toast.success(`Refund ${action === "process" ? "processed" : `${action}d`}`)
+  }
+
   async function copyNumber() {
     await navigator.clipboard.writeText(order.orderNumber)
     toast.success("Order number copied")
@@ -181,7 +228,11 @@ export function OrderDetailPage({
             Placed {fmtDateTime(placedAt)} ({rel(placedAt)}){payment && ` · ${label(payment.method)}`} · {order.userId ? "Account" : "Guest checkout"}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 print:hidden">
+          <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => window.print()}>
+            <PrinterIcon />
+            Print
+          </Button>
           {CANCELLABLE.includes(order.status) && (
             <Button variant="outline" size="sm" className="text-destructive" onClick={() => setCancelling(true)} disabled={busy}>
               Cancel order
@@ -277,6 +328,13 @@ export function OrderDetailPage({
                         <span className="font-mono">{i.sku}</span>
                         {i.metadata?.appliedPromotion && <Pill tone="blue">{i.metadata.appliedPromotion.name}</Pill>}
                       </div>
+                      {variant?.activeReservations
+                        .filter((h) => h.order?.orderNumber === order.orderNumber)
+                        .map((h) => (
+                          <div key={h.id} className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                            {n0(h.quantity)} held for this order, released {rel(h.expiresAt)}
+                          </div>
+                        ))}
                       {variant && (
                         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                           {variant.levels.map((l) => (
@@ -325,9 +383,15 @@ export function OrderDetailPage({
                 <dt className="text-muted-foreground">Paid</dt>
                 <dd>{taka(paid, 2)}</dd>
               </div>
+              {refunded > 0 && (
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">Refunded</dt>
+                  <dd className="text-red-700 dark:text-red-400">−{taka(refunded, 2)}</dd>
+                </div>
+              )}
               {due > 0 && !stopped && (
                 <div className="flex justify-between font-medium text-amber-700 dark:text-amber-400">
-                  <dt>Balance due</dt>
+                  <dt>{codOpen ? "To collect on delivery" : "Balance due"}</dt>
                   <dd>{taka(due, 2)}</dd>
                 </div>
               )}
@@ -350,24 +414,56 @@ export function OrderDetailPage({
             ) : (
               <ul className="flex flex-col">
                 {order.shipments.map((s) => (
-                  <li key={s.id} className="flex flex-wrap items-center gap-3 border-t border-border/60 px-4 py-3 text-sm">
-                    <span className="grid size-9 place-items-center rounded-lg bg-muted text-muted-foreground">
-                      <TruckIcon className="size-4" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="font-medium">{[s.carrier, s.service].filter(Boolean).join(" · ") || "Carrier not set"}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {s.trackingNumber ? <span className="font-mono">{s.trackingNumber}</span> : "No tracking number"}
-                        {s.shippedAt && ` · shipped ${fmtDate(s.shippedAt)}`}
-                        {s.deliveredAt && ` · delivered ${fmtDate(s.deliveredAt)}`}
+                  <li key={s.id} className="flex flex-col gap-3 border-t border-border/60 px-4 py-3 text-sm">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="grid size-9 place-items-center rounded-lg bg-muted text-muted-foreground">
+                        <TruckIcon className="size-4" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium">{[CARRIER_LABEL[s.carrier] ?? s.carrier, s.service].filter(Boolean).join(" · ")}</div>
+                        <div className="text-xs text-muted-foreground">
+                          Added {fmtDate(s.createdAt)}
+                          {s.shippedAt && ` · shipped ${fmtDate(s.shippedAt)}`}
+                          {s.deliveredAt && ` · delivered ${fmtDate(s.deliveredAt)}`}
+                        </div>
                       </div>
+                      {SHIPMENT_DONE.includes(s.status) ? (
+                        <Pill tone={TONE[s.status] ?? "grey"}>{label(s.status)}</Pill>
+                      ) : (
+                        <Select value={s.status} items={shipmentStatusItems} onValueChange={(v) => setShipmentStatus(s.id, v as ShipmentStatus)} disabled={busy}>
+                          <SelectTrigger size="sm" aria-label="Shipment status" className="w-40"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {shipmentStatusItems.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      )}
                     </div>
-                    <Pill tone={TONE[s.status] ?? "grey"}>{label(s.status)}</Pill>
-                    {s.trackingUrl && (
-                      <a href={s.trackingUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
-                        Track <ExternalLinkIcon className="size-3" />
-                      </a>
-                    )}
+                    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-muted/40 px-3 py-2 text-xs sm:grid-cols-4">
+                      <div>
+                        <dt className="text-muted-foreground">Tracking</dt>
+                        <dd className="truncate font-mono">
+                          {s.trackingUrl ? (
+                            <a href={s.trackingUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
+                              {s.trackingNumber ?? "Track"} <ExternalLinkIcon className="size-3" />
+                            </a>
+                          ) : (
+                            s.trackingNumber ?? "—"
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-muted-foreground">Consignment</dt>
+                        <dd className="truncate font-mono">{s.consignmentId ?? "—"}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-muted-foreground">Collect on delivery</dt>
+                        <dd className="tabular-nums">{s.codAmount ? taka(Number(s.codAmount), 2) : "—"}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-muted-foreground">Courier charge</dt>
+                        <dd className="tabular-nums">{taka(Number(s.shippingAmount), 2)}</dd>
+                      </div>
+                    </dl>
                   </li>
                 ))}
               </ul>
@@ -535,10 +631,16 @@ export function OrderDetailPage({
                     </div>
                     {p.transactionId && <div className="truncate font-mono text-xs text-muted-foreground">Txn {p.transactionId}</div>}
                     {p.failureMessage && <div className="text-xs text-destructive">{p.failureMessage}</div>}
+                    {p.providerReference && <div className="truncate font-mono text-xs text-muted-foreground">Ref {p.providerReference}</div>}
                     {OPEN_PAYMENT.includes(p.status) && !stopped && (
-                      <Button size="sm" variant="outline" onClick={() => markPaid(p.id)} disabled={busy}>
-                        Mark as paid
-                      </Button>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button size="sm" variant="outline" className="text-destructive" onClick={() => markFailed(p.id)} disabled={busy}>
+                          Mark failed
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => markPaid(p.id)} disabled={busy}>
+                          Mark as paid
+                        </Button>
+                      </div>
                     )}
                   </li>
                 ))}
@@ -546,21 +648,50 @@ export function OrderDetailPage({
             )}
           </Card>
 
-          {order.refundRequests.length > 0 && (
-            <Card title="Refund requests">
-              <ul className="flex flex-col gap-2 px-4 pb-4 text-sm">
-                {order.refundRequests.map((r) => (
-                  <li key={r.id} className="flex flex-col gap-1 rounded-xl border px-3 py-2.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium tabular-nums">{taka(Number(r.amount), 2)}</span>
-                      <Pill tone={TONE[r.status] ?? "amber"}>{label(r.status)}</Pill>
-                    </div>
-                    <p className="text-muted-foreground">{r.reason}</p>
-                    {r.adminNote && <p className="text-xs text-muted-foreground">Note: {r.adminNote}</p>}
-                    <span className="text-xs text-muted-foreground">{fmtDate(r.createdAt)}</span>
-                  </li>
-                ))}
-              </ul>
+          {(paid > 0 || order.refundRequests.length > 0) && (
+            <Card
+              title="Refunds"
+              action={
+                refundable > 0 && (
+                  <Button size="sm" variant="outline" onClick={() => setRefunding(true)}>
+                    <Undo2Icon />
+                    Refund
+                  </Button>
+                )
+              }
+            >
+              {order.refundRequests.length === 0 ? (
+                <p className="px-4 pb-4 text-sm text-muted-foreground">No refunds. Up to {taka(refundable, 2)} can be refunded.</p>
+              ) : (
+                <ul className="flex flex-col gap-2 px-4 pb-4 text-sm">
+                  {order.refundRequests.map((r) => (
+                    <li key={r.id} className="flex flex-col gap-1.5 rounded-xl border px-3 py-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold tabular-nums">{taka(Number(r.amount), 2)}</span>
+                        <Pill tone={TONE[r.status] ?? "amber"}>{label(r.status)}</Pill>
+                      </div>
+                      <p className="text-muted-foreground">{r.reason}</p>
+                      {r.adminNote && <p className="text-xs text-muted-foreground">Note: {r.adminNote}</p>}
+                      <span className="text-xs text-muted-foreground">Requested {fmtDate(r.createdAt)}</span>
+                      {r.status === "PENDING" && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button size="sm" variant="outline" className="text-destructive" onClick={() => review(r.id, "reject")} disabled={busy}>
+                            Reject
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => review(r.id, "approve")} disabled={busy}>
+                            Approve
+                          </Button>
+                        </div>
+                      )}
+                      {r.status === "APPROVED" && (
+                        <Button size="sm" onClick={() => review(r.id, "process")} disabled={busy}>
+                          Mark refunded
+                        </Button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </Card>
           )}
 
@@ -594,7 +725,10 @@ export function OrderDetailPage({
       </div>
 
       {cancelling && <CancelDialog orderId={order.id} orderNumber={order.orderNumber} onClose={() => setCancelling(false)} />}
-      {shipping && <ShipmentDialog orderId={order.id} onClose={() => setShipping(false)} />}
+      {shipping && (
+        <ShipmentDialog orderId={order.id} orderNumber={order.orderNumber} codAmount={codOpen ? due : 0} onClose={() => setShipping(false)} />
+      )}
+      {refunding && <RefundDialog orderId={order.id} max={refundable} onClose={() => setRefunding(false)} />}
     </div>
   )
 }
@@ -635,24 +769,104 @@ function CancelDialog({ orderId, orderNumber, onClose }: { orderId: string; orde
   )
 }
 
-function ShipmentDialog({ orderId, onClose }: { orderId: string; onClose: () => void }) {
-  const [carrier, setCarrier] = useState("")
+function ShipmentDialog({ orderId, orderNumber, codAmount, onClose }: { orderId: string; orderNumber: string; codAmount: number; onClose: () => void }) {
+  const [carrier, setCarrier] = useState<CourierCarrier | null>(null)
+  const [service, setService] = useState("")
+  const [consignmentId, setConsignmentId] = useState("")
   const [trackingNumber, setTrackingNumber] = useState("")
   const [trackingUrl, setTrackingUrl] = useState("")
+  const [cod, setCod] = useState(codAmount > 0 ? String(codAmount) : "")
+  const [charge, setCharge] = useState("")
   const [error, setError] = useState("")
   const [saving, setSaving] = useState(false)
 
   async function save() {
+    if (!carrier) return setError("Pick the courier.")
+    if ((cod && Number.isNaN(Number(cod))) || (charge && Number.isNaN(Number(charge)))) return setError("Amounts must be numbers.")
     setSaving(true)
     // The API rejects empty strings (trackingUrl must be a URL), so blanks are left out.
     const res = await createShipment(orderId, {
-      carrier: carrier.trim() || undefined,
+      carrier,
+      service: service.trim() || undefined,
+      consignmentId: consignmentId.trim() || undefined,
       trackingNumber: trackingNumber.trim() || undefined,
       trackingUrl: trackingUrl.trim() || undefined,
+      codAmount: cod ? Number(cod) : undefined,
+      shippingAmount: charge ? Number(charge) : undefined,
     })
     setSaving(false)
     if (!res.success) return setError(res.error)
-    toast.success("Shipment added")
+    toast.success(`Shipment added to ${orderNumber}`)
+    onClose()
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Add shipment</DialogTitle>
+          <DialogDescription>Record the parcel you booked with the courier. Use “Mark shipped” on the order once it leaves the warehouse.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field>
+            <FieldLabel>Courier</FieldLabel>
+            <Select value={carrier} items={carrierItems} onValueChange={(v) => setCarrier(v as CourierCarrier)}>
+              <SelectTrigger aria-label="Courier" className="w-full"><SelectValue placeholder="Pick a courier" /></SelectTrigger>
+              <SelectContent>
+                {carrierItems.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="ship-service">Service</FieldLabel>
+            <Input id="ship-service" value={service} onChange={(e) => setService(e.target.value)} placeholder="Regular, express..." />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="ship-consignment">Consignment ID</FieldLabel>
+            <Input id="ship-consignment" value={consignmentId} onChange={(e) => setConsignmentId(e.target.value)} className="font-mono" />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="ship-tracking">Tracking number</FieldLabel>
+            <Input id="ship-tracking" value={trackingNumber} onChange={(e) => setTrackingNumber(e.target.value)} className="font-mono" />
+          </Field>
+          <Field className="sm:col-span-2">
+            <FieldLabel htmlFor="ship-url">Tracking link</FieldLabel>
+            <Input id="ship-url" type="url" value={trackingUrl} onChange={(e) => setTrackingUrl(e.target.value)} placeholder="https://" />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="ship-cod">Collect on delivery (৳)</FieldLabel>
+            <Input id="ship-cod" inputMode="decimal" value={cod} onChange={(e) => setCod(e.target.value)} placeholder="0" className="text-right tabular-nums" />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="ship-charge">Courier charge (৳)</FieldLabel>
+            <Input id="ship-charge" inputMode="decimal" value={charge} onChange={(e) => setCharge(e.target.value)} placeholder="0" className="text-right tabular-nums" />
+          </Field>
+        </div>
+        <DialogFooter className="items-center">
+          {error && <p className="mr-auto text-sm text-destructive">{error}</p>}
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={save} disabled={saving}>{saving ? "Saving..." : "Add shipment"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function RefundDialog({ orderId, max, onClose }: { orderId: string; max: number; onClose: () => void }) {
+  const [amount, setAmount] = useState(String(max))
+  const [reason, setReason] = useState("")
+  const [error, setError] = useState("")
+  const [saving, setSaving] = useState(false)
+
+  async function save() {
+    const value = Number(amount)
+    if (!(value > 0) || value > max) return setError(`Enter an amount from ৳0.01 to ${taka(max, 2)}.`)
+    if (!reason.trim()) return setError("Give a reason.")
+    setSaving(true)
+    const res = await createRefundRequest(orderId, Math.round(value * 100) / 100, reason.trim())
+    setSaving(false)
+    if (!res.success) return setError(res.error)
+    toast.success("Refund requested", { description: "Approve it, then mark it refunded once the money is sent." })
     onClose()
   }
 
@@ -660,27 +874,21 @@ function ShipmentDialog({ orderId, onClose }: { orderId: string; onClose: () => 
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Add shipment</DialogTitle>
-          <DialogDescription>Record the parcel. Use “Mark shipped” on the order once it leaves the warehouse.</DialogDescription>
+          <DialogTitle>Refund this order</DialogTitle>
+          <DialogDescription>Creates a refund request. Up to {taka(max, 2)} of what was paid can still be refunded.</DialogDescription>
         </DialogHeader>
-        <div className="flex flex-col gap-3">
-          <Field>
-            <FieldLabel htmlFor="ship-carrier">Carrier</FieldLabel>
-            <Input id="ship-carrier" value={carrier} onChange={(e) => setCarrier(e.target.value)} placeholder="Pathao, Steadfast, RedX..." />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="ship-tracking">Tracking number</FieldLabel>
-            <Input id="ship-tracking" value={trackingNumber} onChange={(e) => setTrackingNumber(e.target.value)} className="font-mono" />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="ship-url">Tracking link</FieldLabel>
-            <Input id="ship-url" type="url" value={trackingUrl} onChange={(e) => setTrackingUrl(e.target.value)} placeholder="https://" />
-          </Field>
-        </div>
+        <Field>
+          <FieldLabel htmlFor="refund-amount">Amount (৳)</FieldLabel>
+          <Input id="refund-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} className="text-right tabular-nums" />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="refund-reason">Reason</FieldLabel>
+          <Textarea id="refund-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Item arrived damaged" />
+        </Field>
         <DialogFooter className="items-center">
           {error && <p className="mr-auto text-sm text-destructive">{error}</p>}
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={save} disabled={saving}>{saving ? "Saving..." : "Add shipment"}</Button>
+          <Button onClick={save} disabled={saving}>{saving ? "Saving..." : "Request refund"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -56,6 +56,29 @@ export interface Order {
   shipments: { id: string; status: string; carrier: string | null; trackingNumber: string | null }[];
 }
 
+export type CourierCarrier = "PATHAO" | "REDX" | "STEADFAST" | "CARRYBEE";
+
+export type ShipmentStatus =
+  | "PENDING"
+  | "PROCESSING"
+  | "SHIPPED"
+  | "IN_TRANSIT"
+  | "OUT_FOR_DELIVERY"
+  | "DELIVERED"
+  | "FAILED"
+  | "RETURNED"
+  | "CANCELLED";
+
+export interface ShipmentDto {
+  carrier: CourierCarrier;
+  service?: string;
+  consignmentId?: string;
+  trackingNumber?: string;
+  trackingUrl?: string;
+  shippingAmount?: number;
+  codAmount?: number;
+}
+
 export interface OrderAddress {
   id: string;
   type: "SHIPPING" | "BILLING";
@@ -88,20 +111,25 @@ export interface OrderDetail extends Omit<Order, "items" | "payments" | "shipmen
   payments: (Order["payments"][number] & {
     method: string;
     transactionId: string | null;
+    providerReference: string | null;
     failureMessage: string | null;
     paidAt: string | null;
   })[];
   shipments: {
     id: string;
-    status: string;
-    carrier: string | null;
+    status: ShipmentStatus;
+    carrier: CourierCarrier;
     service: string | null;
+    merchantOrderId: string | null; // our reference sent to the courier
+    consignmentId: string | null; // the courier's id
     trackingNumber: string | null;
     trackingUrl: string | null;
+    shippingAmount: string;
+    codAmount: string | null; // what the courier collects on delivery
     shippedAt: string | null;
     deliveredAt: string | null;
     createdAt: string;
   }[];
   statusLogs: { id: string; fromStatus: OrderStatus | null; toStatus: OrderStatus; note: string | null; createdAt: string }[];
-  refundRequests: { id: string; status: string; reason: string; amount: string; adminNote: string | null; createdAt: string }[];
+  refundRequests: { id: string; status: "PENDING" | "APPROVED" | "REJECTED" | "PROCESSED"; reason: string; amount: string; adminNote: string | null; createdAt: string }[];
 }
