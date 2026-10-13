@@ -82,6 +82,21 @@ export function WarehouseDetail({
   const capped = movements.length === 100 && recent.length === 100
 
   const shelves = racks.filter((r) => r.code !== "UNASSIGNED").sort((a, b) => b.totalUnits - a.totalUnits)
+  // What each rack holds, most units first: "MacBook Pro 14 · 16GB ×22".
+  const contents = new Map<string, { text: string; quantity: number }[]>()
+  for (const { variant: v, level } of levels) {
+    for (const s of level.locationStocks) {
+      if (s.quantity <= 0) continue
+      const text = v.name !== v.sku ? `${v.product.name} · ${v.name}` : v.product.name
+      contents.set(s.location.id, [...(contents.get(s.location.id) ?? []), { text, quantity: s.quantity }])
+    }
+  }
+  const holds = (rackId: string) => {
+    const items = (contents.get(rackId) ?? []).sort((a, b) => b.quantity - a.quantity)
+    const shown = items.slice(0, 2).map((i) => `${i.text} ×${n0(i.quantity)}`).join(", ")
+    if (items.length > 2) return `${shown} +${items.length - 2} more`
+    return shown
+  }
   const address = [warehouse.addressLine1, warehouse.addressLine2, warehouse.city, warehouse.state, warehouse.postalCode].filter(Boolean)
   const onRacks = totals?.unitsOnRacks ?? 0
   const toPutAway = totals?.unitsToPutAway ?? 0
@@ -441,7 +456,12 @@ export function WarehouseDetail({
                 {shelves.slice(0, 8).map((r) => (
                   <li key={r.id} className="flex items-center gap-3 border-b py-2 text-sm last:border-b-0">
                     <RackTag code={r.code} />
-                    <span className="min-w-0 flex-1 truncate text-muted-foreground">{r.name ?? ""}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-muted-foreground">{r.name ?? ""}</span>
+                      <span className="block truncate text-[11px] text-muted-foreground/80" title={holds(r.id)}>
+                        {holds(r.id) || "Empty"}
+                      </span>
+                    </span>
                     {!r.isActive && <Pill tone="grey">Inactive</Pill>}
                     <span className="font-semibold tabular-nums">{n0(r.totalUnits)}</span>
                   </li>
