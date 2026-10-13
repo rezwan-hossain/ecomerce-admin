@@ -119,6 +119,10 @@ export async function getProductMovements(variantIds: string[], limit = 25) {
   })
 }
 
+export async function getWarehouseMovements(warehouseId: string, limit: number) {
+  return handleRequest(async () => (await api.get<Page<LedgerMovement>>(`/inventory/movements?warehouseId=${warehouseId}&limit=${limit}`)).data)
+}
+
 // Ledger rows written for one document, e.g. an order's sale and reservation rows.
 export async function getReferenceMovements(referenceId: string) {
   return handleRequest(async () => (await api.get<Page<LedgerMovement>>(`/inventory/movements?referenceId=${referenceId}&limit=100`)).data)

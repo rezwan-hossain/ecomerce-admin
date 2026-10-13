@@ -8,7 +8,7 @@ import type { Mode } from "@/components/inventory/rack-map/rack-panels"
 
 const MODES: Mode[] = ["units", "value", "activity", "route"]
 
-export default async function WarehouseMapPage({ params, searchParams }: PageProps<"/inventory/setup/warehouses/[warehouseId]">) {
+export default async function WarehouseMapPage({ params, searchParams }: PageProps<"/inventory/setup/warehouses/[warehouseId]/map">) {
   await connection()
   const { warehouseId } = await params
   const search = await searchParams

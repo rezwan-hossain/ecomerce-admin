@@ -43,6 +43,7 @@ const labels: Record<string, string> = {
   alerts: "Alerts",
   rules: "Reorder rules",
   warehouses: "Warehouses",
+  map: "Rack map",
   suppliers: "Suppliers",
   planner: "Planner",
   campaigns: "Campaigns",

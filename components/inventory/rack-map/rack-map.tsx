@@ -507,9 +507,9 @@ export function RackMap({
     <div className="flex flex-col gap-4 px-4 py-4 md:py-6 lg:px-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
-          <Link href="/inventory/setup/warehouses" className="mb-1 inline-flex items-center gap-1 text-[13px] text-muted-foreground hover:text-foreground">
+          <Link href={`/inventory/setup/warehouses/${wid}`} className="mb-1 inline-flex items-center gap-1 text-[13px] text-muted-foreground hover:text-foreground">
             <ChevronLeftIcon className="size-3.5" />
-            Warehouses
+            {plan.warehouse.name}
           </Link>
           <h1 className="text-2xl font-semibold tracking-tight">Rack map</h1>
           <p className="text-sm text-muted-foreground">
@@ -527,7 +527,7 @@ export function RackMap({
         {warehouses.map((w) => (
           <Link
             key={w.id}
-            href={`/inventory/setup/warehouses/${w.id}`}
+            href={`/inventory/setup/warehouses/${w.id}/map`}
             aria-current={w.id === wid ? "page" : undefined}
             className={cn(
               "inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[13px] whitespace-nowrap text-muted-foreground transition-colors hover:text-foreground",

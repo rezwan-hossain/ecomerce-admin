@@ -129,7 +129,7 @@ export function Warehouses({ initialWarehouses, initialLocations }: { initialWar
       className: "w-36 text-right",
       cell: (w) => (
         <span className="flex justify-end gap-1">
-          <Button size="sm" variant="outline" nativeButton={false} render={<Link href={`/inventory/setup/warehouses/${w.id}`} />}>
+          <Button size="sm" variant="outline" nativeButton={false} render={<Link href={`/inventory/setup/warehouses/${w.id}/map`} />}>
             <MapIcon data-icon="inline-start" />
             Rack map
           </Button>
@@ -229,7 +229,7 @@ function toForm(w: Warehouse | null): WarehouseForm {
 
 const blankToNull = (s: string) => s.trim() || null
 
-function WarehouseSheet({
+export function WarehouseSheet({
   warehouse,
   racks,
   onChanged,
@@ -237,7 +237,7 @@ function WarehouseSheet({
 }: {
   warehouse: Warehouse | null
   racks: StorageLocation[]
-  onChanged: () => Promise<Warehouse[] | null>
+  onChanged: (deleted?: boolean) => Promise<unknown> // after a save or delete, to reload or leave
   onClose: () => void
 }) {
   const [form, setForm] = useState(() => toForm(warehouse))
@@ -307,7 +307,7 @@ function WarehouseSheet({
     setSaving(false)
     if (res.success) {
       toast.success(`${warehouse!.code} deleted`)
-      await onChanged()
+      await onChanged(true)
       return onClose()
     }
     // A warehouse in use can't be deleted; switching it off is the way out.
@@ -348,7 +348,7 @@ function WarehouseSheet({
               </Button>
             )}
             {warehouse && (
-              <Button variant="outline" nativeButton={false} render={<Link href={`/inventory/setup/warehouses/${warehouse.id}`} />}>
+              <Button variant="outline" nativeButton={false} render={<Link href={`/inventory/setup/warehouses/${warehouse.id}/map`} />}>
                 <MapIcon data-icon="inline-start" />
                 Open rack map
               </Button>
@@ -557,7 +557,7 @@ function WarehouseSheet({
 }
 
 // The warehouse's stock, 20 rows a page, searchable by SKU or product name.
-function StockCard({ warehouseId }: { warehouseId: string }) {
+export function StockCard({ warehouseId }: { warehouseId: string }) {
   const [page, setPage] = useState(1)
   const [query, setQuery] = useState("")
   const [search, setSearch] = useState("")
