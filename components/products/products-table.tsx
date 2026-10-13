@@ -2,12 +2,13 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { EllipsisVerticalIcon, PackageIcon, PlusIcon } from "lucide-react"
+import { EllipsisVerticalIcon, PackageIcon, PlusIcon, StarIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { changeProductStatus, deleteProduct, getProducts } from "@/app/actions/product.actions"
+import { Kpis, n0, rel } from "@/components/inventory/inventory-ui"
+import { HEALTH_DOT, type Health, shelfTotals } from "@/components/inventory/product-shelf"
 import { ListTable, type ListColumn } from "@/components/list-table"
-import { StatCards } from "@/components/stat-cards"
 import { StatusBadge } from "@/components/status-badge"
 import {
   AlertDialog,
@@ -26,15 +27,28 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { cn } from "@/lib/utils"
+import type { VariantStock } from "@/types/inventory.type"
 import type { Product } from "@/types/product.type"
 
-const LOW_STOCK = 10
+// What the page adds to each product from inventory, orders and reviews.
+export type ProductInsight = {
+  variants: VariantStock[]
+  sold30: number
+  revenue30: number
+  lastSoldAt: string | null
+  ratingSum: number
+  ratingCount: number
+  pendingReviews: number
+}
+
+const EMPTY: ProductInsight = { variants: [], sold30: 0, revenue30: 0, lastSoldAt: null, ratingSum: 0, ratingCount: 0, pendingReviews: 0 }
 
 const STATUS_LABEL = { ACTIVE: "Active", DRAFT: "Draft", ARCHIVED: "Archived" } as const
 
 const taka = (n: number) => `৳${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
 
-const totalStock = (p: Product) => p.variants.reduce((sum, v) => sum + v.stock, 0)
 
 function priceRange(p: Product) {
   const prices = p.variants.map((v) => Number(v.price))
@@ -43,25 +57,47 @@ function priceRange(p: Product) {
   return low === high ? taka(low) : `${taka(low)} – ${taka(high)}`
 }
 
-function StockLevel({ stock }: { stock: number }) {
-  if (stock === 0) {
-    return <span className="text-destructive">Out of stock</span>
-  }
-  if (stock < LOW_STOCK) {
-    return <span className="text-amber-600 dark:text-amber-400">{stock} left · Low</span>
-  }
-  return <span>{stock} in stock</span>
-}
 
-export function ProductsTable({ initialProducts }: { initialProducts: Product[] }) {
+const SORTS = [
+  { value: "newest", label: "Newest first" },
+  { value: "name", label: "Name A–Z" },
+  { value: "best", label: "Best selling" },
+  { value: "stock", label: "Lowest stock" },
+  { value: "rating", label: "Highest rated" },
+  { value: "price", label: "Highest price" },
+]
+
+export function ProductsTable({ initialProducts, insights }: { initialProducts: Product[]; insights: Record<string, ProductInsight> }) {
   const [products, setProducts] = useState(initialProducts)
+  const [sort, setSort] = useState("newest")
   const [deleting, setDeleting] = useState<Product | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
 
-  const inventoryValue = products.reduce(
-    (sum, p) => sum + p.variants.reduce((s, v) => s + Number(v.price) * v.stock, 0),
-    0
-  )
+  const info = (p: Product) => insights[p.id] ?? EMPTY
+  const totals = (p: Product) => shelfTotals(info(p).variants)
+  const rating = (p: Product) => (info(p).ratingCount ? info(p).ratingSum / info(p).ratingCount : 0)
+  const maxPrice = (p: Product) => Math.max(...p.variants.map((v) => Number(v.price)))
+
+  const all = products.map(totals)
+  const sellable = all.reduce((s, t) => s + t.available, 0)
+  const costValue = all.reduce((s, t) => s + t.value, 0)
+  const retailValue = products.reduce((sum, p) => sum + p.variants.reduce((s, v) => s + Number(v.price) * v.stock, 0), 0)
+  const restock = products.filter((p) => totals(p).low + totals(p).out > 0)
+  const soldOut = products.filter((p) => totals(p).out > 0)
+  const units30 = products.reduce((s, p) => s + info(p).sold30, 0)
+  const revenue30 = products.reduce((s, p) => s + info(p).revenue30, 0)
+  const ratingCount = products.reduce((s, p) => s + info(p).ratingCount, 0)
+  const ratingSum = products.reduce((s, p) => s + info(p).ratingSum, 0)
+  const pending = products.reduce((s, p) => s + info(p).pendingReviews, 0)
+
+  const sorted = [...products].sort((a, b) => {
+    if (sort === "name") return a.name.localeCompare(b.name)
+    if (sort === "best") return info(b).sold30 - info(a).sold30
+    if (sort === "stock") return totals(a).available - totals(b).available
+    if (sort === "rating") return rating(b) - rating(a)
+    if (sort === "price") return maxPrice(b) - maxPrice(a)
+    return b.createdAt.localeCompare(a.createdAt)
+  })
 
   async function refresh() {
     const res = await getProducts()
@@ -102,7 +138,7 @@ export function ProductsTable({ initialProducts }: { initialProducts: Product[] 
         const image = p.images.find((i) => i.isPrimary) ?? p.images[0]
         return (
           <div className="flex items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted text-muted-foreground">
+            <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-muted text-muted-foreground">
               {image ? (
                 // eslint-disable-next-line @next/next/no-img-element -- any image host is allowed
                 <img src={image.url} alt={image.altText ?? ""} className="size-full object-cover" />
@@ -111,10 +147,13 @@ export function ProductsTable({ initialProducts }: { initialProducts: Product[] 
               )}
             </div>
             <div className="flex min-w-0 flex-col">
-              <Link href={`/products/${p.id}`} className="truncate font-medium hover:underline">
+              <Link href={`/products/${p.id}`} className="truncate font-medium hover:text-primary hover:underline">
                 {p.name}
               </Link>
               <span className="truncate text-xs text-muted-foreground">
+                {[p.brand?.name ?? "No brand", (p.categories.find((c) => c.isPrimary) ?? p.categories[0])?.category.name ?? "Uncategorised"].join(" · ")}
+              </span>
+              <span className="truncate font-mono text-[11px] text-muted-foreground/80">
                 {p.variants.length === 1 ? p.variants[0].sku : `${p.variants.length} variants`}
               </span>
             </div>
@@ -122,34 +161,96 @@ export function ProductsTable({ initialProducts }: { initialProducts: Product[] 
         )
       },
     },
-    { key: "status", header: "Status", cell: (p) => <StatusBadge status={STATUS_LABEL[p.status]} /> },
     {
-      key: "category",
-      header: "Category",
-      className: "hidden md:table-cell",
+      key: "status",
+      header: "Status",
+      className: "hidden sm:table-cell",
+      cell: (p) => (
+        <span className="flex flex-col items-start gap-1">
+          <StatusBadge status={STATUS_LABEL[p.status]} />
+          {p.status === "ACTIVE" && !p.isActive && <span className="text-[11px] text-muted-foreground">Hidden</span>}
+        </span>
+      ),
+    },
+    {
+      key: "stock",
+      header: "Stock",
       cell: (p) => {
-        const primary = p.categories.find((c) => c.isPrimary) ?? p.categories[0]
-        if (!primary) return <span className="text-muted-foreground">None</span>
+        const t = totals(p)
+        const variants = info(p).variants
+        if (variants.length === 0) return <span className="text-muted-foreground">Not tracked</span>
+        let health: Health = "ok"
+        if (t.out === variants.length) health = "out"
+        else if (t.low + t.out > 0) health = "low"
         return (
-          <span>
-            {primary.category.name}
-            {p.categories.length > 1 && <span className="text-muted-foreground"> +{p.categories.length - 1}</span>}
+          <span className="flex flex-col">
+            <span className="flex items-center gap-1.5 font-medium tabular-nums">
+              <span className={cn("size-2 rounded-full", HEALTH_DOT[health])} aria-hidden />
+              {n0(t.available)} sellable
+            </span>
+            {t.low + t.out > 0 && (
+              <span className="text-[11px] text-amber-700 dark:text-amber-400">
+                {[t.out && `${t.out} out`, t.low && `${t.low} low`].filter(Boolean).join(" · ")}
+              </span>
+            )}
+            {t.reserved > 0 && <span className="text-[11px] text-muted-foreground">{n0(t.reserved)} held</span>}
           </span>
         )
       },
     },
     {
-      key: "brand",
-      header: "Brand",
-      className: "hidden lg:table-cell",
-      cell: (p) => p.brand?.name ?? <span className="text-muted-foreground">No brand</span>,
+      key: "sold",
+      header: "Sold (30 days)",
+      className: "hidden text-right md:table-cell",
+      cell: (p) => {
+        const i = info(p)
+        if (i.sold30 === 0) {
+          return (
+            <span className="flex flex-col items-end text-[11px] text-muted-foreground">
+              <span className="text-sm">—</span>
+              {i.lastSoldAt ? `last ${rel(i.lastSoldAt)}` : "never sold"}
+            </span>
+          )
+        }
+        return (
+          <span className="flex flex-col items-end tabular-nums">
+            <span className="font-medium">{n0(i.sold30)} {i.sold30 === 1 ? "unit" : "units"}</span>
+            <span className="text-[11px] text-muted-foreground">{taka(i.revenue30)}</span>
+          </span>
+        )
+      },
     },
-    { key: "stock", header: "Inventory", cell: (p) => <StockLevel stock={totalStock(p)} /> },
+    {
+      key: "rating",
+      header: "Rating",
+      className: "hidden lg:table-cell",
+      cell: (p) => {
+        const i = info(p)
+        if (i.ratingCount === 0) return <span className="text-xs text-muted-foreground">No reviews{i.pendingReviews > 0 && ` · ${i.pendingReviews} pending`}</span>
+        return (
+          <span className="flex flex-col">
+            <span className="inline-flex items-center gap-1 font-medium tabular-nums">
+              <StarIcon className="size-3.5 fill-amber-500 text-amber-500" />
+              {rating(p).toFixed(1)}
+            </span>
+            <span className="text-[11px] text-muted-foreground">
+              {n0(i.ratingCount)} {i.ratingCount === 1 ? "review" : "reviews"}
+              {i.pendingReviews > 0 && ` · ${i.pendingReviews} pending`}
+            </span>
+          </span>
+        )
+      },
+    },
     {
       key: "price",
       header: "Price",
       className: "text-right tabular-nums",
-      cell: (p) => priceRange(p),
+      cell: (p) => (
+        <span className="flex flex-col items-end">
+          <span className="font-medium">{priceRange(p)}</span>
+          {p.variants.length > 1 && <span className="text-[11px] text-muted-foreground">{p.variants.length} variants</span>}
+        </span>
+      ),
     },
     {
       key: "actions",
@@ -187,29 +288,31 @@ export function ProductsTable({ initialProducts }: { initialProducts: Product[] 
 
   return (
     <>
-      <StatCards
-        stats={[
-          { label: "Total products", value: String(products.length), hint: "In your catalog" },
+      <Kpis
+        items={[
           {
-            label: "Active",
-            value: String(products.filter((p) => p.status === "ACTIVE").length),
-            hint: "Visible in the store",
+            label: "Products",
+            value: n0(products.length),
+            hint: `${n0(products.filter((p) => p.status === "ACTIVE").length)} active · ${n0(products.filter((p) => p.status === "DRAFT").length)} draft`,
           },
+          { label: "Sellable units", value: n0(sellable), hint: `worth ${taka(retailValue)} at retail` },
+          { label: "Stock value", value: taka(costValue), hint: costValue === 0 && sellable > 0 ? "no unit cost recorded" : "at unit cost", warn: costValue === 0 && sellable > 0 },
+          { label: "Needs restock", value: n0(restock.length), hint: `${n0(soldOut.length)} with a variant out of stock`, warn: restock.length > 0 },
+          { label: "Sold (30 days)", value: n0(units30), hint: `${taka(revenue30)} revenue` },
           {
-            label: "Low / out of stock",
-            value: String(products.filter((p) => totalStock(p) < LOW_STOCK).length),
-            hint: "Need restocking",
+            label: "Rating",
+            value: ratingCount ? `${(ratingSum / ratingCount).toFixed(1)} ★` : "—",
+            hint: `${n0(ratingCount)} reviews${pending ? ` · ${n0(pending)} pending` : ""}`,
           },
-          { label: "Inventory value", value: taka(inventoryValue), hint: "Stock at retail price" },
         ]}
       />
 
       <ListTable
-        rows={products}
+        rows={sorted}
         columns={columns}
         getRowId={(p) => p.id}
         searchText={(p) =>
-          `${p.name} ${p.variants.map((v) => v.sku).join(" ")} ${p.brand?.name ?? ""} ${p.categories.map((c) => c.category.name).join(" ")}`
+          `${p.name} ${p.variants.map((v) => v.sku).join(" ")} ${p.brand?.name ?? ""} ${p.categories.map((c) => c.category.name).join(" ")} ${p.tags.map((t) => t.tag.name).join(" ")}`
         }
         searchPlaceholder="Search products..."
         filters={[
@@ -217,14 +320,23 @@ export function ProductsTable({ initialProducts }: { initialProducts: Product[] 
           { label: "Active", value: "active", match: (p) => p.status === "ACTIVE" },
           { label: "Draft", value: "draft", match: (p) => p.status === "DRAFT" },
           { label: "Archived", value: "archived", match: (p) => p.status === "ARCHIVED" },
-          { label: "Low stock", value: "low-stock", match: (p) => totalStock(p) < LOW_STOCK },
+          { label: "Needs restock", value: "restock", match: (p) => totals(p).low + totals(p).out > 0 },
+          { label: "No sales", value: "no-sales", match: (p) => info(p).sold30 === 0 },
         ]}
         emptyText={products.length === 0 ? "No products yet. Add your first one." : "No products match your search."}
         toolbar={
-          <Button size="sm" nativeButton={false} render={<Link href="/products/new" />}>
-            <PlusIcon data-icon="inline-start" />
-            Add product
-          </Button>
+          <>
+            <Select value={sort} items={SORTS} onValueChange={(v) => setSort(v as string)}>
+              <SelectTrigger size="sm" aria-label="Sort products" className="hidden w-40 sm:flex"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {SORTS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Button size="sm" nativeButton={false} render={<Link href="/products/new" />}>
+              <PlusIcon data-icon="inline-start" />
+              Add product
+            </Button>
+          </>
         }
       />
 
