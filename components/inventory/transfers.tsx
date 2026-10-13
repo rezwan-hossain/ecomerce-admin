@@ -1,28 +1,40 @@
 "use client"
 
 import { useState } from "react"
-import { ArrowRightIcon, PlusIcon, Trash2Icon } from "lucide-react"
+import { ArrowRightIcon, PlusIcon, Trash2Icon, TriangleAlertIcon } from "lucide-react"
 import { toast } from "sonner"
 
+import {
+  createTransfer,
+  deleteTransfer,
+  getTransfer,
+  getTransfers,
+  receiveTransfer,
+  shipTransfer,
+  transferAction,
+  updateTransfer,
+} from "@/app/actions/transfer.actions"
 import { ListTable, type ListColumn } from "@/components/list-table"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { DEMO_ITEMS, type DemoTransfer, type DemoTransferItem } from "@/lib/inventory-demo"
 import { cn } from "@/lib/utils"
+import type { StorageLocation, VariantStock } from "@/types/inventory.type"
+import type { ShortLine, Transfer, TransferDto, TransferLine, TransferListRow } from "@/types/transfer.type"
+import type { Warehouse } from "@/types/warehouse.type"
 
-import { cellInput, DocSheet, ItemSelect, Progress, ReceiveDialog, statusFilters, WarehouseSelect, wholeNumber } from "./doc-bits"
-import { Card, fmtDate, StatusPill, WarehouseTag } from "./inventory-ui"
+import { cellInput, DocSheet, Progress, statusFilters, VariantSelect, wholeNumber } from "./doc-bits"
+import { Card, fmtDate, fmtDateTime, Kpis, n0, RackTag, StatusPill, taka, WarehouseTag } from "./inventory-ui"
 
-const remaining = (i: DemoTransferItem) => i.sentQty - i.receivedQty - i.damagedQty
-const now = () => new Date().toISOString()
+const OPEN = ["DRAFT", "PENDING", "IN_TRANSIT", "PARTIAL"]
+const ON_THE_WAY = ["IN_TRANSIT", "PARTIAL"]
+const DEFAULT_RACK = "default"
+const ALL = "all"
+const DAY = 86_400_000
 
-function nextNumber(transfers: DemoTransfer[]) {
-  const last = Math.max(0, ...transfers.map((t) => Number(t.transferNumber.split("-").at(-1))))
-  return `TRF-${new Date().getFullYear()}-${String(last + 1).padStart(5, "0")}`
-}
-
-const newLine = (): DemoTransferItem => ({ ...DEMO_ITEMS[0], id: crypto.randomUUID(), sentQty: 1, receivedQty: 0, damagedQty: 0 })
+const lineName = (l: TransferLine) => (l.variant.label ? `${l.variant.productName}, ${l.variant.label}` : l.variant.productName)
 
 function Route({ from, to }: { from: string; to: string }) {
   return (
@@ -34,127 +46,179 @@ function Route({ from, to }: { from: string; to: string }) {
   )
 }
 
-export function Transfers({ initialTransfers }: { initialTransfers: DemoTransfer[] }) {
-  const [transfers, setTransfers] = useState(initialTransfers)
-  const [openId, setOpenId] = useState<string | null>(null)
-  const [draft, setDraft] = useState<DemoTransfer | null>(null)
+// The draft form keeps quantities as typed; `toDto` checks and converts them.
+type FormLine = { key: string; variantId: string; quantity: string }
+type Form = { fromWarehouseId: string; toWarehouseId: string; note: string; items: FormLine[] }
+
+const newLine = (): FormLine => ({ key: crypto.randomUUID(), variantId: "", quantity: "1" })
+
+function toForm(t: Transfer | null, warehouses: Warehouse[]): Form {
+  if (t) {
+    return {
+      fromWarehouseId: t.fromWarehouseId,
+      toWarehouseId: t.toWarehouseId,
+      note: t.note ?? "",
+      items: t.items.map((l) => ({ key: l.id, variantId: l.variantId, quantity: String(l.requestedQty) })),
+    }
+  }
+  // Default: from the default warehouse to the first other one.
+  const from = warehouses.find((w) => w.isDefault) ?? warehouses[0]
+  const to = warehouses.find((w) => w.id !== from?.id)
+  return { fromWarehouseId: from?.id ?? "", toWarehouseId: to?.id ?? "", note: "", items: [newLine()] }
+}
+
+// Returns the body, or a message for the first problem.
+function toDto(form: Form): TransferDto | string {
+  if (!form.fromWarehouseId || !form.toWarehouseId) return "Pick both warehouses."
+  if (form.fromWarehouseId === form.toWarehouseId) return "Source and destination must differ."
+  const seen = new Set<string>()
+  for (const [index, l] of form.items.entries()) {
+    if (!l.variantId) return `Line ${index + 1}: pick an item.`
+    if (!wholeNumber(l.quantity) || Number(l.quantity) < 1) return `Line ${index + 1}: send at least 1 unit.`
+    if (seen.has(l.variantId)) return "Each item may appear only once."
+    seen.add(l.variantId)
+  }
+  return {
+    fromWarehouseId: form.fromWarehouseId,
+    toWarehouseId: form.toWarehouseId,
+    note: form.note.trim() || null,
+    items: form.items.map((l) => ({ variantId: l.variantId, quantity: Number(l.quantity) })),
+  }
+}
+
+export function Transfers({
+  initialTransfers,
+  warehouses,
+  stock,
+  locations,
+}: {
+  initialTransfers: TransferListRow[]
+  warehouses: Warehouse[]
+  stock: VariantStock[]
+  locations: StorageLocation[]
+}) {
+  const [rows, setRows] = useState(initialTransfers)
+  // undefined = closed, null = a new transfer, otherwise the open one (loaded with its lines)
+  const [open, setOpen] = useState<Transfer | null | undefined>(undefined)
+  const [loadingId, setLoadingId] = useState<string | null>(null)
+  const [warehouse, setWarehouse] = useState(ALL)
   const [receiving, setReceiving] = useState(false)
 
-  const open = draft ?? transfers.find((t) => t.id === openId) ?? null
-
-  function save(t: DemoTransfer, message: string) {
-    setTransfers((current) => (current.some((x) => x.id === t.id) ? current.map((x) => (x.id === t.id ? t : x)) : [t, ...current]))
-    setDraft(null)
-    setOpenId(t.id)
-    toast.success(message)
+  async function refreshList() {
+    const res = await getTransfers()
+    if (res.success) setRows(res.data)
   }
 
-  function approve(t: DemoTransfer) {
-    if (t.from === t.to) return toast.error("Source and destination must be different warehouses.")
-    if (t.items.length === 0) return toast.error("Add at least one line.")
-    if (new Set(t.items.map((i) => i.sku)).size !== t.items.length) return toast.error("An item is listed twice.")
-    save({ ...t, transferNumber: t.transferNumber || nextNumber(transfers), status: "PENDING" }, "Transfer approved")
+  async function openTransfer(id: string) {
+    setLoadingId(id)
+    const res = await getTransfer(id)
+    setLoadingId(null)
+    if (!res.success) return toast.error(res.error)
+    setOpen(res.data)
   }
 
-  function receive(t: DemoTransfer, counts: Record<string, { good: number; damaged: number }>) {
-    const items = t.items.map((i) => ({
-      ...i,
-      receivedQty: i.receivedQty + (counts[i.id]?.good ?? 0),
-      damagedQty: i.damagedQty + (counts[i.id]?.damaged ?? 0),
-    }))
-    const done = items.every((i) => remaining(i) <= 0)
-    save({ ...t, items, status: done ? "COMPLETED" : "PARTIAL", receivedAt: done ? now() : null }, done ? "Everything received at the destination." : "Received. Some units are still on the way.")
-    setReceiving(false)
+  // Every write answers with the whole transfer, so the sheet shows what the server saved.
+  async function changed(t: Transfer | null) {
+    setOpen(t ?? undefined)
+    await refreshList()
   }
 
-  const columns: ListColumn<DemoTransfer>[] = [
+  const since = Date.now() - 30 * DAY
+  const onTheWay = rows.filter((t) => ON_THE_WAY.includes(t.status))
+  const visible = rows.filter((t) => warehouse === ALL || t.fromWarehouseId === warehouse || t.toWarehouseId === warehouse)
+  const warehouseItems = [{ value: ALL, label: "Any warehouse" }, ...warehouses.map((w) => ({ value: w.id, label: w.code }))]
+
+  const columns: ListColumn<TransferListRow>[] = [
     {
       key: "number",
       header: "Transfer",
       cell: (t) => (
-        <button type="button" className="text-left" onClick={() => setOpenId(t.id)}>
+        <button type="button" className="text-left" onClick={() => openTransfer(t.id)} disabled={loadingId !== null}>
           <span className="font-semibold text-primary hover:underline">{t.transferNumber}</span>
-          {t.note && <span className="block max-w-64 truncate text-xs text-muted-foreground">{t.note}</span>}
+          <span className="block max-w-64 truncate text-xs text-muted-foreground">
+            {loadingId === t.id ? "Opening..." : (t.note ?? `${t.lineCount} ${t.lineCount === 1 ? "line" : "lines"}`)}
+          </span>
         </button>
       ),
     },
-    { key: "route", header: "Route", cell: (t) => <Route from={t.from} to={t.to} /> },
+    { key: "route", header: "Route", cell: (t) => <Route from={t.fromWarehouse.code} to={t.toWarehouse.code} /> },
     { key: "status", header: "Status", cell: (t) => <StatusPill status={t.status} /> },
-    { key: "lines", header: "Lines", className: "hidden text-right md:table-cell", cell: (t) => t.items.length },
     {
       key: "received",
       header: "Received",
       className: "hidden md:table-cell",
-      cell: (t) => (
-        <Progress
-          done={t.items.reduce((s, i) => s + i.receivedQty, 0)}
-          damaged={t.items.reduce((s, i) => s + i.damagedQty, 0)}
-          total={t.items.reduce((s, i) => s + i.sentQty, 0)}
-        />
-      ),
+      cell: (t) => <Progress done={t.receivedUnits} damaged={t.damagedUnits} total={t.requestedUnits} />,
     },
-    { key: "shipped", header: "Shipped", className: "hidden whitespace-nowrap lg:table-cell", cell: (t) => <span className="text-muted-foreground">{(t.shippedAt ? fmtDate(t.shippedAt) : "Not yet")}</span> },
-    { key: "by", header: "Started by", className: "hidden xl:table-cell", cell: (t) => <span className="text-muted-foreground">{t.initiatedBy}</span> },
+    {
+      key: "shipped",
+      header: "Shipped",
+      className: "hidden whitespace-nowrap lg:table-cell",
+      cell: (t) => <span className="text-muted-foreground">{t.shippedAt ? fmtDate(t.shippedAt) : "Not yet"}</span>,
+    },
+    { key: "by", header: "Started", className: "hidden whitespace-nowrap xl:table-cell", cell: (t) => <span className="text-muted-foreground">{fmtDate(t.createdAt)}{t.initiatedBy && ` by ${t.initiatedBy.name}`}</span> },
   ]
 
   return (
     <>
+      <Kpis
+        className="mx-4 xl:grid-cols-4 lg:mx-6"
+        items={[
+          { label: "To ship", value: n0(rows.filter((t) => t.status === "PENDING").length), hint: `${n0(rows.filter((t) => t.status === "DRAFT").length)} drafts not approved` },
+          { label: "On the way", value: n0(onTheWay.length), hint: `${n0(onTheWay.reduce((s, t) => s + t.requestedUnits - t.receivedUnits - t.damagedUnits, 0))} units still to arrive` },
+          { label: "Completed", value: n0(rows.filter((t) => t.receivedAt && new Date(t.receivedAt).getTime() >= since).length), hint: "last 30 days" },
+          { label: "Damaged on arrival", value: n0(rows.reduce((s, t) => s + t.damagedUnits, 0)), hint: "units, all transfers", warn: rows.some((t) => t.damagedUnits > 0) },
+        ]}
+      />
       <ListTable
-        rows={transfers}
+        rows={visible}
         columns={columns}
         getRowId={(t) => t.id}
-        searchText={(t) => `${t.transferNumber} ${t.from} ${t.to} ${t.note} ${t.items.map((i) => i.sku).join(" ")}`}
+        searchText={(t) => `${t.transferNumber} ${t.fromWarehouse.code} ${t.toWarehouse.code} ${t.note ?? ""}`}
         searchPlaceholder="Search transfers..."
-        filters={statusFilters<DemoTransfer>([
-          ["Open", ["DRAFT", "PENDING", "IN_TRANSIT", "PARTIAL"]],
-          ["On the way", ["IN_TRANSIT", "PARTIAL"]],
+        filters={statusFilters<TransferListRow>([
+          ["Open", OPEN],
+          ["To ship", ["PENDING"]],
+          ["On the way", ON_THE_WAY],
+          ["Drafts", ["DRAFT"]],
           ["Done", ["COMPLETED", "CANCELLED"]],
           ["All", null],
         ])}
         emptyText="No transfers here."
         toolbar={
-          <Button
-            size="sm"
-            onClick={() =>
-              setDraft({
-                id: crypto.randomUUID(), transferNumber: "", from: "MAIN", to: "CTG-STORE", status: "DRAFT", items: [newLine()],
-                shippedAt: null, receivedAt: null, note: "", initiatedBy: "You", createdAt: now(),
-              })
-            }
-          >
-            <PlusIcon data-icon="inline-start" />
-            New transfer
-          </Button>
+          <>
+            <Select value={warehouse} items={warehouseItems} onValueChange={(v) => setWarehouse(v as string)}>
+              <SelectTrigger size="sm" aria-label="Warehouse" className="hidden w-36 sm:flex"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {warehouseItems.map((w) => <SelectItem key={w.value} value={w.value}>{w.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Button size="sm" onClick={() => setOpen(null)}>
+              <PlusIcon data-icon="inline-start" />
+              New transfer
+            </Button>
+          </>
         }
       />
 
-      {open && (
+      {open !== undefined && (
         <TransferSheet
-          key={open.id}
+          key={open?.id ?? "new"}
           transfer={open}
-          isNew={draft !== null}
-          onClose={() => {
-            setDraft(null)
-            setOpenId(null)
-          }}
-          onSave={(t) => save({ ...t, transferNumber: open.transferNumber || nextNumber(transfers) }, "Draft saved")}
-          onApprove={(t) => approve({ ...t, transferNumber: open.transferNumber })}
-          onShip={() => save({ ...open, status: "IN_TRANSIT", shippedAt: now() }, "Shipped. Stock left the source warehouse.")}
-          onCancel={() => save({ ...open, status: "CANCELLED" }, "Transfer cancelled")}
+          warehouses={warehouses}
+          stock={stock}
+          onChanged={changed}
           onReceive={() => setReceiving(true)}
-          onDelete={() => {
-            setTransfers((current) => current.filter((t) => t.id !== open.id))
-            setOpenId(null)
-            toast.success("Draft deleted")
-          }}
+          onClose={() => setOpen(undefined)}
         />
       )}
       {receiving && open && (
         <ReceiveDialog
-          title={`Receive ${open.transferNumber}`}
-          description={`Arriving at ${open.to} from ${open.from}.`}
-          lines={open.items.filter((i) => remaining(i) > 0).map((i) => ({ id: i.id, label: `${i.name}, ${i.variant}`, remaining: remaining(i) }))}
-          onReceive={(counts) => receive(open, counts)}
+          transfer={open}
+          locations={locations}
+          onReceived={(t) => {
+            setReceiving(false)
+            changed(t)
+          }}
           onClose={() => setReceiving(false)}
         />
       )}
@@ -163,56 +227,132 @@ export function Transfers({ initialTransfers }: { initialTransfers: DemoTransfer
 }
 
 function TransferSheet({
-  transfer: saved,
-  isNew,
-  onClose,
-  onSave,
-  onApprove,
-  onShip,
-  onCancel,
+  transfer: t,
+  warehouses,
+  stock,
+  onChanged,
   onReceive,
-  onDelete,
+  onClose,
 }: {
-  transfer: DemoTransfer
-  isNew: boolean
-  onClose: () => void
-  onSave: (t: DemoTransfer) => void
-  onApprove: (t: DemoTransfer) => void
-  onShip: () => void
-  onCancel: () => void
+  transfer: Transfer | null
+  warehouses: Warehouse[]
+  stock: VariantStock[]
+  onChanged: (t: Transfer | null) => Promise<void>
   onReceive: () => void
-  onDelete: () => void
+  onClose: () => void
 }) {
-  // Local edits only matter while it's a draft; after that the sheet shows the saved transfer.
-  const [edited, setT] = useState(saved)
-  const editing = saved.status === "DRAFT"
-  const t = editing ? { ...edited, transferNumber: saved.transferNumber } : saved
+  const [form, setForm] = useState(() => toForm(t, warehouses))
+  const [busy, setBusy] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [shipping, setShipping] = useState<{ error: string; shortLines: ShortLine[] } | null | undefined>(undefined)
 
-  function updateLine(id: string, patch: Partial<DemoTransferItem>) {
-    setT({ ...t, items: t.items.map((i) => (i.id === id ? { ...i, ...patch } : i)) })
+  const editing = !t || t.status === "DRAFT"
+  const set = (patch: Partial<Form>) => setForm({ ...form, ...patch })
+  const updateLine = (key: string, patch: Partial<FormLine>) => set({ items: form.items.map((l) => (l.key === key ? { ...l, ...patch } : l)) })
+
+  const variants = stock.map((v) => ({ id: v.variantId, sku: v.sku, label: v.name !== v.sku ? `${v.product.name}, ${v.name}` : v.product.name }))
+  const warehouseItems = warehouses.map((w) => ({ value: w.id, label: `${w.code} · ${w.name}` }))
+  // What the source can send right now, to catch shortfalls before Ship.
+  const availableAt = (variantId: string, warehouseId: string) =>
+    stock.find((v) => v.variantId === variantId)?.levels.find((l) => l.warehouseId === warehouseId)?.available ?? 0
+  const short = editing ? form.items.filter((l) => l.variantId && Number(l.quantity) > availableAt(l.variantId, form.fromWarehouseId)).length : 0
+
+  async function run(work: () => Promise<{ success: true; data: Transfer } | { success: false; error: string }>, message: string) {
+    setBusy(true)
+    const res = await work()
+    setBusy(false)
+    if (!res.success) {
+      toast.error(res.error)
+      // Someone else moved it on; show what's saved now.
+      if (t && res.error.includes("can't be")) {
+        const fresh = await getTransfer(t.id)
+        if (fresh.success) await onChanged(fresh.data)
+      }
+      return null
+    }
+    toast.success(message)
+    await onChanged(res.data)
+    return res.data
   }
 
+  async function save() {
+    const dto = toDto(form)
+    if (typeof dto === "string") {
+      toast.error(dto)
+      return null
+    }
+    if (t) return run(() => updateTransfer(t.id, dto), "Draft saved")
+    return run(() => createTransfer(dto), "Draft created")
+  }
+
+  async function approve() {
+    if (form.items.length === 0) return toast.error("Add at least one line before approving.")
+    const saved = await save()
+    if (saved) await run(() => transferAction(saved.id, "approve"), `${saved.transferNumber} approved. Ship it when the parcel leaves.`)
+  }
+
+  async function ship() {
+    setBusy(true)
+    const res = await shipTransfer(t!.id)
+    setBusy(false)
+    // A shortfall keeps the dialog open with the short lines.
+    if (!res.success) return setShipping({ error: res.error, shortLines: res.shortLines })
+    setShipping(undefined)
+    toast.success(`${t!.transferNumber} shipped`, { description: `Stock left ${t!.fromWarehouse.code} and counts as incoming at ${t!.toWarehouse.code}.` })
+    await onChanged(res.data)
+  }
+
+  async function remove() {
+    setDeleting(false)
+    setBusy(true)
+    const res = await deleteTransfer(t!.id)
+    setBusy(false)
+    if (!res.success) return toast.error(res.error)
+    toast.success(`${t!.transferNumber} deleted`)
+    await onChanged(null)
+  }
+
+  const lines = t?.items ?? []
+  const requested = lines.reduce((s, l) => s + l.requestedQty, 0)
+  const received = lines.reduce((s, l) => s + l.receivedQty, 0)
+  const damaged = lines.reduce((s, l) => s + l.damagedQty, 0)
+  const value = lines.reduce((s, l) => s + l.shippedQty * Number(l.unitCost ?? 0), 0)
+  const from = warehouses.find((w) => w.id === form.fromWarehouseId)
+  const to = warehouses.find((w) => w.id === form.toWarehouseId)
+
   let footer: React.ReactNode
-  if (t.status === "DRAFT") {
+  if (editing) {
     footer = (
       <>
-        {!isNew && <Button variant="ghost" className="text-destructive" onClick={onDelete}>Delete draft</Button>}
+        {t && (
+          <Button variant="ghost" className="text-destructive" onClick={() => setDeleting(true)} disabled={busy}>
+            Delete draft
+          </Button>
+        )}
+        {t && (
+          <Button variant="ghost" onClick={() => run(() => transferAction(t.id, "cancel"), `${t.transferNumber} cancelled`)} disabled={busy}>
+            Cancel transfer
+          </Button>
+        )}
         <span className="flex-1" />
-        <Button variant="outline" onClick={() => onSave(t)}>Save draft</Button>
-        <Button onClick={() => onApprove(t)}>Approve</Button>
+        <Button variant="outline" onClick={save} disabled={busy}>{t ? "Save draft" : "Create draft"}</Button>
+        <Button onClick={approve} disabled={busy}>{t ? "Save and approve" : "Create and approve"}</Button>
       </>
     )
-  } else if (t.status === "PENDING") {
+  } else if (t!.status === "PENDING") {
     footer = (
       <>
-        <Button variant="ghost" className="text-destructive" onClick={onCancel}>Cancel transfer</Button>
+        <Button variant="ghost" className="text-destructive" onClick={() => run(() => transferAction(t!.id, "cancel"), `${t!.transferNumber} cancelled`)} disabled={busy}>
+          Cancel transfer
+        </Button>
         <span className="flex-1" />
-        <Button onClick={onShip}>Ship now</Button>
+        <Button onClick={() => setShipping(null)} disabled={busy}>Ship now</Button>
       </>
     )
-  } else if (t.status === "IN_TRANSIT" || t.status === "PARTIAL") {
+  } else if (ON_THE_WAY.includes(t!.status)) {
     footer = (
       <>
+        <span className="text-[13px] text-muted-foreground">Shipped transfers can’t be cancelled; receive what arrives, good or damaged.</span>
         <span className="flex-1" />
         <Button onClick={onReceive}>Receive at destination</Button>
       </>
@@ -227,79 +367,146 @@ function TransferSheet({
   }
 
   return (
-    <DocSheet kind="Transfer" title={t.transferNumber || "New transfer"} status={t.status} footer={footer} onClose={onClose}>
-      <section className="flex flex-wrap gap-x-7 gap-y-3 rounded-xl border bg-card px-4 py-3.5">
-        {editing ? (
-          <>
-            <div className="min-w-40">
-              <span className="mb-1 block text-xs text-muted-foreground">From</span>
-              <WarehouseSelect value={t.from} label="From warehouse" onChange={(code) => setT({ ...t, from: code })} />
-            </div>
-            <div className="min-w-40">
-              <span className="mb-1 block text-xs text-muted-foreground">To</span>
-              <WarehouseSelect value={t.to} label="To warehouse" onChange={(code) => setT({ ...t, to: code })} />
-            </div>
-          </>
-        ) : (
-          <div>
-            <span className="block text-xs text-muted-foreground">Route</span>
-            <Route from={t.from} to={t.to} />
+    <DocSheet kind="Transfer" title={t?.transferNumber ?? "New transfer"} status={t?.status ?? "DRAFT"} footer={footer} onClose={onClose}>
+      <section className="overflow-hidden rounded-2xl border bg-card">
+        <div className="grid items-end gap-x-4 gap-y-3 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto]">
+          <div className="min-w-0">
+            <span className="mb-1 block text-xs text-muted-foreground">From</span>
+            {editing ? (
+              <Select value={form.fromWarehouseId || null} items={warehouseItems} onValueChange={(v) => set({ fromWarehouseId: v as string })}>
+                <SelectTrigger aria-label="From warehouse" className="w-full"><SelectValue placeholder="Source" /></SelectTrigger>
+                <SelectContent>
+                  {warehouseItems.map((w) => <SelectItem key={w.value} value={w.value}>{w.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            ) : (
+              <div className="truncate font-semibold">{t!.fromWarehouse.name} <span className="font-mono text-xs text-muted-foreground">{t!.fromWarehouse.code}</span></div>
+            )}
           </div>
+          <ArrowRightIcon className="mb-2.5 hidden size-4 text-muted-foreground sm:block" />
+          <div className="min-w-0">
+            <span className="mb-1 block text-xs text-muted-foreground">To</span>
+            {editing ? (
+              <Select value={form.toWarehouseId || null} items={warehouseItems} onValueChange={(v) => set({ toWarehouseId: v as string })}>
+                <SelectTrigger aria-label="To warehouse" className="w-full"><SelectValue placeholder="Destination" /></SelectTrigger>
+                <SelectContent>
+                  {warehouseItems.map((w) => <SelectItem key={w.value} value={w.value}>{w.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            ) : (
+              <div className="truncate font-semibold">{t!.toWarehouse.name} <span className="font-mono text-xs text-muted-foreground">{t!.toWarehouse.code}</span></div>
+            )}
+          </div>
+          <div className="sm:text-right">
+            <span className="mb-1 block text-xs text-muted-foreground">{editing ? "Units" : "Value shipped"}</span>
+            <div className="text-xl font-bold tabular-nums">
+              {editing ? n0(form.items.reduce((s, l) => s + (Number(l.quantity) || 0), 0)) : taka(value)}
+            </div>
+          </div>
+        </div>
+        {t && (
+          <ul className="flex flex-wrap gap-x-8 gap-y-2 border-t bg-muted/30 px-4 py-2.5 text-[13px]">
+            <li>
+              <span className="block text-xs text-muted-foreground">Started</span>
+              {fmtDateTime(t.createdAt)}
+              {t.initiatedBy && ` by ${t.initiatedBy.name}`}
+            </li>
+            {t.shippedAt && (
+              <li>
+                <span className="block text-xs text-muted-foreground">Shipped</span>
+                {fmtDateTime(t.shippedAt)}
+              </li>
+            )}
+            {!editing && t.shippedAt && (
+              <li>
+                <span className="block text-xs text-muted-foreground">Received</span>
+                {n0(received)} of {n0(requested)} units{damaged > 0 && `, ${n0(damaged)} damaged`}
+              </li>
+            )}
+            {t.receivedAt && (
+              <li>
+                <span className="block text-xs text-muted-foreground">Completed</span>
+                {fmtDateTime(t.receivedAt)}
+                {t.receivedBy && ` by ${t.receivedBy.name}`}
+              </li>
+            )}
+            {t.cancelledAt && (
+              <li>
+                <span className="block text-xs text-muted-foreground">Cancelled</span>
+                {fmtDateTime(t.cancelledAt)}
+              </li>
+            )}
+          </ul>
         )}
-        <p className="basis-full text-[12.5px] text-muted-foreground">
-          Started {fmtDate(t.createdAt)} by {t.initiatedBy}
-          {t.shippedAt && ` · shipped ${fmtDate(t.shippedAt)}`}
-          {t.receivedAt && ` · received ${fmtDate(t.receivedAt)}`}
-        </p>
       </section>
 
-      <Card title="Lines">
-        <table className="w-full">
-          <thead className="text-left text-xs text-muted-foreground">
-            <tr className="border-y [&>th]:px-3 [&>th]:py-2 [&>th]:font-medium">
-              <th>Item</th>
-              <th className="text-right">Sending</th>
-              {!editing && <th className="text-right">Received</th>}
-              {!editing && <th className="text-right">Damaged</th>}
-              {editing && <th />}
-            </tr>
-          </thead>
-          <tbody className="tabular-nums">
-            {t.items.map((i) => (
-              <tr key={i.id} className="border-b last:border-b-0 [&>td]:px-3 [&>td]:py-2">
-                <td>
-                  {editing ? (
-                    <ItemSelect value={i.sku} onChange={(sku) => updateLine(i.id, DEMO_ITEMS.find((d) => d.sku === sku)!)} />
-                  ) : (
-                    <div>
-                      <div className="font-semibold">{i.name}, {i.variant}</div>
-                      <div className="font-mono text-xs text-muted-foreground">{i.sku}</div>
-                    </div>
-                  )}
-                </td>
-                <td className="text-right">
-                  {editing ? (
-                    <Input aria-label="Quantity" inputMode="numeric" className={cn(cellInput, "ml-auto")} value={i.sentQty} onChange={(e) => wholeNumber(e.target.value || "0") && updateLine(i.id, { sentQty: Number(e.target.value) })} />
-                  ) : (
-                    i.sentQty
-                  )}
-                </td>
-                {!editing && <td className="text-right">{i.receivedQty}</td>}
-                {!editing && <td className="text-right">{i.damagedQty ? <span className="font-semibold text-destructive">{i.damagedQty}</span> : <span className="text-muted-foreground">0</span>}</td>}
-                {editing && (
-                  <td className="w-10">
-                    <Button size="icon-sm" variant="ghost" aria-label="Remove line" onClick={() => setT({ ...t, items: t.items.filter((x) => x.id !== i.id) })}>
-                      <Trash2Icon />
-                    </Button>
-                  </td>
-                )}
+      {editing && short > 0 && (
+        <p className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[13px] text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" />
+          {short} {short === 1 ? "line asks" : "lines ask"} for more than {from?.code ?? "the source"} has available. It can still be approved, but it won’t ship until the stock is there.
+        </p>
+      )}
+
+      <Card title="Lines" action={<span className="text-muted-foreground">{n0(editing ? form.items.length : lines.length)} {(editing ? form.items.length : lines.length) === 1 ? "line" : "lines"}</span>}>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+              <tr className="border-y [&>th]:px-3 [&>th]:py-2.5 [&>th]:font-medium [&>th]:whitespace-nowrap [&>th:first-child]:pl-4 [&>th:last-child]:pr-4">
+                <th>Item</th>
+                {editing && <th className="text-right">Available at {from?.code ?? "source"}</th>}
+                <th className="text-right">{editing ? "Send" : "Requested"}</th>
+                {!editing && <th className="text-right">Shipped</th>}
+                {!editing && <th className="text-right">Received</th>}
+                {!editing && <th className="text-right">Damaged</th>}
+                {!editing && <th className="text-right">On the road</th>}
+                {!editing && <th className="text-right">Unit cost</th>}
+                {editing && <th className="w-10"><span className="sr-only">Remove</span></th>}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="tabular-nums">
+              {editing &&
+                form.items.map((l) => {
+                  const available = availableAt(l.variantId, form.fromWarehouseId)
+                  const tooMany = Boolean(l.variantId) && Number(l.quantity) > available
+                  return (
+                    <tr key={l.key} className="border-b border-border/60 last:border-b-0 [&>td]:px-3 [&>td]:py-2.5 [&>td:first-child]:pl-4 [&>td:last-child]:pr-4">
+                      <td className="min-w-64">
+                        <VariantSelect options={variants} value={l.variantId} onChange={(variantId) => updateLine(l.key, { variantId })} />
+                        <div className="mt-1 pl-0.5 font-mono text-[11.5px] text-muted-foreground">{variants.find((v) => v.id === l.variantId)?.sku ?? "Pick an item"}</div>
+                      </td>
+                      <td className={cn("text-right", tooMany ? "font-semibold text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>{l.variantId ? n0(available) : "—"}</td>
+                      <td className="text-right">
+                        <Input aria-label="Quantity" inputMode="numeric" className={cn(cellInput, "ml-auto", tooMany && "border-amber-500")} value={l.quantity} onChange={(e) => updateLine(l.key, { quantity: e.target.value })} />
+                      </td>
+                      <td>
+                        <Button size="icon-sm" variant="ghost" className="text-muted-foreground hover:text-destructive" aria-label="Remove line" onClick={() => set({ items: form.items.filter((x) => x.key !== l.key) })}>
+                          <Trash2Icon />
+                        </Button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              {!editing &&
+                lines.map((l) => (
+                  <tr key={l.id} className="border-b border-border/60 last:border-b-0 [&>td]:px-3 [&>td]:py-2.5 [&>td:first-child]:pl-4 [&>td:last-child]:pr-4">
+                    <td className="min-w-56">
+                      <div className="font-medium">{lineName(l)}</div>
+                      <div className="font-mono text-[11.5px] text-muted-foreground">{l.variant.sku}</div>
+                    </td>
+                    <td className="text-right">{n0(l.requestedQty)}</td>
+                    <td className="text-right text-muted-foreground">{n0(l.shippedQty)}</td>
+                    <td className="text-right">{n0(l.receivedQty)}</td>
+                    <td className="text-right">{l.damagedQty ? <span className="font-semibold text-destructive">{n0(l.damagedQty)}</span> : <span className="text-muted-foreground/60">0</span>}</td>
+                    <td className="text-right font-semibold">{n0(l.outstandingQty)}</td>
+                    <td className="text-right text-muted-foreground">{l.unitCost ? taka(Number(l.unitCost), 2) : "—"}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
         {editing && (
           <div className="border-t px-4 py-2.5">
-            <Button size="sm" variant="outline" onClick={() => setT({ ...t, items: [...t.items, newLine()] })}>
+            <Button size="sm" variant="outline" onClick={() => set({ items: [...form.items, newLine()] })}>
               <PlusIcon data-icon="inline-start" />
               Add line
             </Button>
@@ -310,12 +517,176 @@ function TransferSheet({
       <Card title="Note">
         <div className="px-4 pb-4">
           {editing ? (
-            <Textarea rows={2} placeholder="Why this stock is moving" value={t.note} onChange={(e) => setT({ ...t, note: e.target.value })} />
+            <Textarea rows={2} maxLength={1000} placeholder="Why it's moving, how it's sent" value={form.note} onChange={(e) => set({ note: e.target.value })} />
           ) : (
-            <p className="text-muted-foreground">{t.note || "No note."}</p>
+            <p className="text-muted-foreground">{t!.note || "No note."}</p>
           )}
         </div>
       </Card>
+
+      {deleting && t && (
+        <Dialog open onOpenChange={(o) => !o && setDeleting(false)}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Delete {t.transferNumber}?</DialogTitle>
+              <DialogDescription>The draft and its lines are removed. It was never shipped, so no stock changes.</DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleting(false)}>Keep it</Button>
+              <Button variant="destructive" onClick={remove}>Delete draft</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {shipping !== undefined && t && (
+        <Dialog open onOpenChange={(o) => !o && setShipping(undefined)}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>{shipping ? `Not enough stock at ${t.fromWarehouse.code}` : `Ship ${t.transferNumber}?`}</DialogTitle>
+              <DialogDescription>
+                {shipping
+                  ? "Every line ships in full or nothing does, so nothing was shipped."
+                  : `Takes the units out of ${t.fromWarehouse.code} now (and off the storefront if it sells), keeps each line's current average cost, and adds them to ${t.toWarehouse.code}'s incoming until they're received. Once shipped it can't be cancelled.`}
+              </DialogDescription>
+            </DialogHeader>
+            {shipping && (
+              <div className="flex flex-col gap-2 text-sm">
+                <ul className="rounded-lg border bg-muted/40 px-3 py-2">
+                  {shipping.shortLines.map((s) => (
+                    <li key={s.variantId} className="font-mono text-[13px]">
+                      {s.sku}: wanted {n0(s.wanted)}, available {n0(s.available)}
+                    </li>
+                  ))}
+                  {shipping.shortLines.length === 0 && <li>{shipping.error}</li>}
+                </ul>
+                <p className="text-[13px] text-muted-foreground">
+                  Restock {t.fromWarehouse.code} and ship again, or cancel this transfer and create a new one with smaller quantities.
+                </p>
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShipping(undefined)}>{shipping ? "Close" : "Not yet"}</Button>
+              <Button onClick={ship} disabled={busy}>{shipping ? "Try again" : "Ship now"}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </DocSheet>
+  )
+}
+
+type ReceiveRow = { good: string; damaged: string; rack: string }
+
+// Good units go into the destination at the cost they shipped with; damaged ones go to its damaged bucket.
+function ReceiveDialog({
+  transfer: t,
+  locations,
+  onReceived,
+  onClose,
+}: {
+  transfer: Transfer
+  locations: StorageLocation[]
+  onReceived: (t: Transfer) => void
+  onClose: () => void
+}) {
+  const lines = t.items.filter((l) => l.outstandingQty > 0)
+  const [rows, setRows] = useState<Record<string, ReceiveRow>>(() =>
+    Object.fromEntries(lines.map((l) => [l.id, { good: String(l.outstandingQty), damaged: "0", rack: DEFAULT_RACK }]))
+  )
+  const [error, setError] = useState("")
+  const [saving, setSaving] = useState(false)
+  const update = (id: string, patch: Partial<ReceiveRow>) => {
+    setRows({ ...rows, [id]: { ...rows[id], ...patch } })
+    setError("")
+  }
+
+  // Bins at the destination that hold stock directly; "Default rack" falls back to the item's default.
+  const racks = [
+    { value: DEFAULT_RACK, label: "Default rack" },
+    ...locations
+      .filter((l) => l.warehouse.id === t.toWarehouseId && l.isActive && l.type !== "ZONE" && l.type !== "AISLE" && l.code !== "UNASSIGNED" && !locations.some((c) => c.parentId === l.id))
+      .sort((a, b) => a.code.localeCompare(b.code))
+      .map((l) => ({ value: l.id, label: l.code })),
+  ]
+
+  async function submit() {
+    const body: { itemId: string; receivedQty: number; damagedQty?: number; locationId?: string }[] = []
+    for (const l of lines) {
+      const r = rows[l.id]
+      if (!wholeNumber(r.good) || !wholeNumber(r.damaged)) return setError("Enter whole numbers.")
+      const good = Number(r.good)
+      const damaged = Number(r.damaged)
+      if (good + damaged === 0) continue
+      if (good + damaged > l.outstandingQty) return setError(`${l.variant.sku}: only ${l.outstandingQty} on the road.`)
+      body.push({ itemId: l.id, receivedQty: good, damagedQty: damaged || undefined, locationId: r.rack !== DEFAULT_RACK ? r.rack : undefined })
+    }
+    if (body.length === 0) return setError("Enter a quantity for at least one line.")
+    setSaving(true)
+    const res = await receiveTransfer(t.id, { lines: body })
+    setSaving(false)
+    if (!res.success) return setError(res.error)
+    toast.success(res.data.status === "COMPLETED" ? "Everything received" : "Received. Some units are still on the road.")
+    onReceived(res.data)
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Receive {t.transferNumber} at {t.toWarehouse.code}</DialogTitle>
+          <DialogDescription>
+            Good units go into {t.toWarehouse.code} at the cost they shipped with. Damaged units are booked in, then kept in its damaged count (not for sale).
+            Incoming drops by both. You can receive in several steps.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="max-h-[50vh] overflow-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-background text-left text-xs text-muted-foreground">
+              <tr className="border-b [&>th]:py-2 [&>th]:pr-2 [&>th]:font-medium">
+                <th>Item</th>
+                <th className="text-right">On the road</th>
+                <th className="text-right">Good</th>
+                <th className="text-right">Damaged</th>
+                <th>Put on rack</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l) => {
+                const r = rows[l.id]
+                return (
+                  <tr key={l.id} className="border-b last:border-b-0 [&>td]:py-2 [&>td]:pr-2">
+                    <td className="min-w-48">
+                      <div className="font-medium">{lineName(l)}</div>
+                      <div className="font-mono text-[11px] text-muted-foreground">{l.variant.sku}</div>
+                    </td>
+                    <td className="text-right tabular-nums">{n0(l.outstandingQty)}</td>
+                    <td className="text-right">
+                      <Input aria-label={`Good units of ${l.variant.sku}`} inputMode="numeric" className={cn(cellInput, "ml-auto w-16")} value={r.good} onChange={(e) => update(l.id, { good: e.target.value })} />
+                    </td>
+                    <td className="text-right">
+                      <Input aria-label={`Damaged units of ${l.variant.sku}`} inputMode="numeric" className={cn(cellInput, "ml-auto w-16")} value={r.damaged} onChange={(e) => update(l.id, { damaged: e.target.value })} />
+                    </td>
+                    <td>
+                      <Select value={r.rack} items={racks} onValueChange={(v) => update(l.id, { rack: v as string })}>
+                        <SelectTrigger aria-label={`Rack for ${l.variant.sku}`} size="sm" className="w-32"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {racks.map((x) => <SelectItem key={x.value} value={x.value}>{x.value === DEFAULT_RACK ? x.label : <RackTag code={x.label} />}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        <DialogFooter className="items-center">
+          {error && <p className="mr-auto text-[13px] font-medium text-destructive">{error}</p>}
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={submit} disabled={saving}>{saving ? "Receiving..." : "Receive"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

@@ -17,20 +17,24 @@ if (!API_URL) {
  *   error.message      "Category with this slug already exists"
  *   error.status       409
  *   error.fieldErrors  { slug: "…" }   ← from nestjs-zod "Validation failed"
+ *   error.details      the whole error body, for extra fields like a transfer's shortLines
  */
 export class ApiError extends Error {
   status: number;
   fieldErrors?: Record<string, string>;
+  details?: unknown;
 
   constructor(
     message: string,
     status: number,
     fieldErrors?: Record<string, string>,
+    details?: unknown,
   ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.fieldErrors = fieldErrors;
+    this.details = details;
   }
 }
 
@@ -62,6 +66,7 @@ function toApiError(body: NestErrorBody | null, status: number) {
     message,
     status,
     Object.keys(fieldErrors).length ? fieldErrors : undefined,
+    body,
   );
 }
 
