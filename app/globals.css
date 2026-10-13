@@ -128,3 +128,15 @@
     @apply font-sans;
   }
 }
+/* A page that renders a .print-sheet into <body> (e.g. the order invoice) prints only that sheet. */
+@media print {
+  body:has(> .print-sheet) > :not(.print-sheet) {
+    display: none !important;
+  }
+  body:has(> .print-sheet) {
+    background: white;
+  }
+  @page {
+    margin: 14mm;
+  }
+}
