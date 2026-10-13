@@ -34,7 +34,10 @@ export async function changeProductStatus(id: string, action: "publish" | "archi
     const res = await api.patch<{ data: Product }>(`/products/${id}/${action}`, {})
     return res.data
   })
-  if (res.success) revalidatePath(PAGE_PATH)
+  if (res.success) {
+    revalidatePath(PAGE_PATH)
+    revalidatePath(`/products/${id}`)
+  }
   return res
 }
 

@@ -1,5 +1,7 @@
 "use server"
 
+import { revalidatePath } from "next/cache"
+
 import { handleRequest } from "@/lib/action-response"
 import { api } from "@/lib/api"
 import type { Review } from "@/types/review.type"
@@ -23,4 +25,14 @@ export async function getReviews() {
     }
     return reviews
   })
+}
+
+// Approve or reject a review; only approved ones show in the store and count toward the rating.
+export async function moderateReview(id: string, productId: string, status: "APPROVED" | "REJECTED") {
+  const res = await handleRequest(() => api.patch(`/reviews/${id}/status`, { status }))
+  if (res.success) {
+    revalidatePath(`/products/${productId}`)
+    revalidatePath("/products")
+  }
+  return res
 }

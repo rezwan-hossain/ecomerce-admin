@@ -2,9 +2,12 @@
 
 import Link from "next/link"
 import { useState } from "react"
-import { ArrowLeftIcon, BadgeCheckIcon, BoxesIcon, PackageIcon, PencilIcon, StarIcon } from "lucide-react"
+import { toast } from "sonner"
+import { ArchiveIcon, ArrowLeftIcon, BadgeCheckIcon, BoxesIcon, CheckIcon, CircleDashedIcon, PackageIcon, PencilIcon, SendIcon, StarIcon } from "lucide-react"
 
-import { Card, fmtDate, fmtDateTime, Kpis, n0, Pill, RackTag, rel, taka, type Tone } from "@/components/inventory/inventory-ui"
+import { changeProductStatus } from "@/app/actions/product.actions"
+import { moderateReview } from "@/app/actions/review.actions"
+import { Card, fmtDate, fmtDateTime, Kpis, n0, Pill, RackTag, rel, taka, type Tone, WarehouseTag } from "@/components/inventory/inventory-ui"
 import { MovementTag } from "@/components/inventory/movements-table"
 import { HEALTH_DOT, isSellable, shelfTotals, variantHealth } from "@/components/inventory/product-shelf"
 import { ORDER_STATUS_LABEL } from "@/components/orders/orders-table"
@@ -74,6 +77,57 @@ export function ProductDetailPage({
   const pending = reviews.filter((r) => r.status === "PENDING").length
   const rating = approved.length ? approved.reduce((s, r) => s + r.rating, 0) / approved.length : 0
 
+  // Who buys it most, by email.
+  const buyers = new Map<string, { name: string; email: string; units: number; spent: number; orders: number }>()
+  for (const l of sold) {
+    const key = l.order.customerEmail.toLowerCase()
+    const b = buyers.get(key) ?? { name: l.order.customerName ?? l.order.customerEmail, email: l.order.customerEmail, units: 0, spent: 0, orders: 0 }
+    b.units += l.quantity
+    b.spent += l.total
+    b.orders++
+    buyers.set(key, b)
+  }
+  const topBuyers = [...buyers.values()].sort((a, b) => b.spent - a.spent).slice(0, 5)
+
+  const unitCostOf = (variantId: string) => Number(stockById.get(variantId)?.levels.find((l) => Number(l.unitCost) > 0)?.unitCost ?? 0)
+  const costMissing = stock.some((v) => v.onHand > 0 && !v.levels.some((l) => Number(l.unitCost) > 0))
+
+  // What a complete listing has; each miss is something to fix in Edit product.
+  const checks = [
+    { text: "At least 3 images", ok: images.length >= 3, detail: `${images.length} added` },
+    { text: "Every image has alt text", ok: images.length > 0 && images.every((i) => i.altText?.trim()), detail: "helps search and screen readers" },
+    { text: "Short description", ok: Boolean(product.shortDescription?.trim()), detail: "shown in listings" },
+    { text: "Full description", ok: (product.description?.trim().length ?? 0) >= 80, detail: "80 characters or more" },
+    { text: "Brand and category", ok: Boolean(product.brand) && product.categories.length > 0, detail: "for filters and navigation" },
+    { text: "Tags", ok: product.tags.length > 0, detail: "for collections and search" },
+    { text: "In stock", ok: totals.available > 0, detail: `${n0(totals.available)} sellable` },
+    { text: "Unit cost recorded", ok: !costMissing && totals.onHand > 0, detail: "needed for stock value and margin" },
+    { text: "Published and visible", ok: product.status === "ACTIVE" && product.isActive, detail: "shoppers can find it" },
+  ]
+  const passed = checks.filter((c) => c.ok).length
+
+  const lastMovement = movements[0]?.createdAt ?? null
+  const lastSold = sold.map((l) => l.order.placedAt ?? l.order.createdAt).sort().at(-1) ?? null
+  const lastReview = reviews.map((r) => r.createdAt).sort().at(-1) ?? null
+
+  const [busy, setBusy] = useState(false)
+
+  async function setStatus(action: "publish" | "archive" | "unarchive") {
+    setBusy(true)
+    const res = await changeProductStatus(product.id, action)
+    setBusy(false)
+    if (!res.success) return toast.error(res.error)
+    toast.success(`${product.name} is now ${STATUS_LABEL[res.data.status].toLowerCase()}`)
+  }
+
+  async function moderate(review: Review, status: "APPROVED" | "REJECTED") {
+    setBusy(true)
+    const res = await moderateReview(review.id, product.id, status)
+    setBusy(false)
+    if (!res.success) return toast.error(res.error)
+    toast.success(status === "APPROVED" ? "Review approved: it now shows in the store" : "Review rejected")
+  }
+
   // Stock per warehouse, all variants together, with the racks holding it.
   const warehouses = new Map<string, { code: string; name: string; sellable: boolean; onHand: number; reserved: number; available: number; value: number; racks: Map<string, number> }>()
   for (const v of stock) {
@@ -106,6 +160,14 @@ export function ProductDetailPage({
           <ArrowLeftIcon />
           <span className="sr-only">All products</span>
         </Button>
+        <span className="hidden size-14 shrink-0 place-items-center overflow-hidden rounded-xl border bg-muted/60 text-muted-foreground sm:grid">
+          {images[0] ? (
+            // eslint-disable-next-line @next/next/no-img-element -- any image host is allowed
+            <img src={(images.find((i) => i.isPrimary) ?? images[0]).url} alt="" className="size-full object-cover" />
+          ) : (
+            <PackageIcon className="size-5" />
+          )}
+        </span>
         <div className="flex min-w-0 flex-1 basis-64 flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-semibold tracking-tight">{product.name}</h1>
@@ -117,7 +179,24 @@ export function ProductDetailPage({
             {product.variants.length === 1 ? "variant" : "variants"}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {product.status === "DRAFT" && (
+            <Button variant="outline" size="sm" onClick={() => setStatus("publish")} disabled={busy}>
+              <SendIcon />
+              Publish
+            </Button>
+          )}
+          {product.status === "ACTIVE" && (
+            <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setStatus("archive")} disabled={busy}>
+              <ArchiveIcon />
+              Archive
+            </Button>
+          )}
+          {product.status === "ARCHIVED" && (
+            <Button variant="outline" size="sm" onClick={() => setStatus("unarchive")} disabled={busy}>
+              Unarchive
+            </Button>
+          )}
           <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/inventory/products" />}>
             <BoxesIcon />
             Inventory
@@ -167,13 +246,15 @@ export function ProductDetailPage({
                     <th className={cn(th, "text-right")}>Sellable</th>
                     <th className={cn(th, "hidden text-right md:table-cell")}>Alert at</th>
                     <th className={cn(th, "hidden text-right lg:table-cell")}>Unit cost</th>
+                    <th className={cn(th, "hidden text-right lg:table-cell")}>Margin</th>
                   </tr>
                 </thead>
                 <tbody>
                   {product.variants.map((v) => {
                     const s = stockById.get(v.id)
                     const name = v.optionValues.map((o) => o.optionValue.value).join(" / ") || "Default"
-                    const unitCost = s?.levels.find((l) => l.onHand > 0)?.unitCost
+                    const unitCost = unitCostOf(v.id)
+                    const price = Number(v.pricing?.effectivePrice ?? v.price)
                     return (
                       <tr key={v.id} className="border-t border-border/60">
                         <td className={td}>
@@ -183,6 +264,13 @@ export function ProductDetailPage({
                             {!v.isActive && <Pill tone="grey">Hidden</Pill>}
                           </div>
                           <div className="pl-4 font-mono text-[11.5px] text-muted-foreground">{v.sku}</div>
+                          {s && s.levels.length > 0 && (
+                            <div className="mt-1 flex flex-wrap gap-1 pl-4">
+                              {s.levels.map((l) => (
+                                <WarehouseTag key={l.warehouseId} code={l.warehouse.code} count={l.available} tone={l.available <= 0 ? "bad" : undefined} />
+                              ))}
+                            </div>
+                          )}
                         </td>
                         <td className={cn(td, "text-right tabular-nums")}>
                           <div className="font-medium">{taka(Number(v.pricing?.effectivePrice ?? v.price))}</div>
@@ -193,7 +281,14 @@ export function ProductDetailPage({
                         <td className={cn(td, "text-right font-semibold tabular-nums")}>{n0(s?.stock ?? 0)}</td>
                         <td className={cn(td, "hidden text-right text-muted-foreground tabular-nums md:table-cell")}>{n0(v.lowStockThreshold)}</td>
                         <td className={cn(td, "hidden text-right text-muted-foreground tabular-nums lg:table-cell")}>
-                          {unitCost && Number(unitCost) > 0 ? taka(Number(unitCost), 2) : "—"}
+                          {unitCost > 0 ? taka(unitCost, 2) : "—"}
+                        </td>
+                        <td className={cn(td, "hidden text-right tabular-nums lg:table-cell")}>
+                          {unitCost > 0 && price > 0 ? (
+                            <span className={cn("font-medium", price - unitCost < 0 && "text-destructive")}>{Math.round(((price - unitCost) / price) * 100)}%</span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
                         </td>
                       </tr>
                     )
@@ -377,8 +472,9 @@ export function ProductDetailPage({
                 </div>
                 <ul className="flex flex-col divide-y">
                   {[...reviews]
-                    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-                    .slice(0, 5)
+                    // Pending ones first: they need a decision.
+                    .sort((a, b) => Number(b.status === "PENDING") - Number(a.status === "PENDING") || b.createdAt.localeCompare(a.createdAt))
+                    .slice(0, 6)
                     .map((r) => (
                       <li key={r.id} className="flex flex-col gap-1 py-3 first:pt-0 last:pb-0">
                         <div className="flex items-center gap-2">
@@ -392,6 +488,17 @@ export function ProductDetailPage({
                         </div>
                         {r.title && <p className="text-sm font-medium">{r.title}</p>}
                         {r.body && <p className="text-sm text-muted-foreground">{r.body}</p>}
+                        {r.status === "PENDING" && (
+                          <div className="mt-1 flex gap-2">
+                            <Button size="sm" variant="outline" onClick={() => moderate(r, "APPROVED")} disabled={busy}>
+                              <CheckIcon />
+                              Approve
+                            </Button>
+                            <Button size="sm" variant="ghost" className="text-destructive" onClick={() => moderate(r, "REJECTED")} disabled={busy}>
+                              Reject
+                            </Button>
+                          </div>
+                        )}
                         <p className="flex items-center gap-1 text-xs text-muted-foreground">
                           {[r.user?.firstName, r.user?.lastName].filter(Boolean).join(" ") || "Anonymous"}
                           {r.isVerifiedPurchase && (
@@ -409,6 +516,38 @@ export function ProductDetailPage({
         </div>
 
         <div className="flex min-w-0 flex-col gap-4 md:gap-6">
+          <Card title="Listing health" action={<Pill tone={passed === checks.length ? "green" : "amber"}>{passed} of {checks.length}</Pill>}>
+            <div className="px-4 pb-4">
+              <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-muted">
+                <div
+                  className={cn("h-full rounded-full", passed === checks.length ? "bg-emerald-600" : "bg-amber-500")}
+                  style={{ width: `${(passed / checks.length) * 100}%` }}
+                />
+              </div>
+              <ul className="flex flex-col gap-2 text-sm">
+                {checks.map((c) => (
+                  <li key={c.text} className="flex items-start gap-2">
+                    {c.ok ? (
+                      <CheckIcon className="mt-0.5 size-4 shrink-0 text-emerald-600" />
+                    ) : (
+                      <CircleDashedIcon className="mt-0.5 size-4 shrink-0 text-amber-600" />
+                    )}
+                    <span className="min-w-0">
+                      <span className={cn(!c.ok && "font-medium")}>{c.text}</span>
+                      <span className="block text-xs text-muted-foreground">{c.detail}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {passed < checks.length && (
+                <Button variant="outline" size="sm" className="mt-3 w-full" nativeButton={false} render={<Link href={`/products/${product.id}/edit`} />}>
+                  <PencilIcon />
+                  Fix in Edit product
+                </Button>
+              )}
+            </div>
+          </Card>
+
           <Card title="Media" action={<span className="text-xs text-muted-foreground">{images.length} images</span>}>
             <div className="flex flex-col gap-2 px-4 pb-4">
               <div className="grid aspect-square place-items-center overflow-hidden rounded-xl border bg-muted/60 text-muted-foreground">
@@ -517,6 +656,27 @@ export function ProductDetailPage({
             </Card>
           )}
 
+          <Card title="Top customers" action={<span className="text-xs text-muted-foreground">by spend</span>}>
+            {topBuyers.length === 0 ? (
+              <p className="px-4 pb-4 text-sm text-muted-foreground">No sales yet.</p>
+            ) : (
+              <ul className="flex flex-col px-4 pb-2">
+                {topBuyers.map((b) => (
+                  <li key={b.email} className="flex items-center gap-3 border-b py-2 text-sm last:border-b-0">
+                    <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary uppercase">{b.name.slice(0, 2)}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{b.name}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {n0(b.units)} {b.units === 1 ? "unit" : "units"} · {n0(b.orders)} {b.orders === 1 ? "order" : "orders"}
+                      </span>
+                    </span>
+                    <span className="font-semibold tabular-nums">{taka(b.spent)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+
           <Card title="Details">
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 px-4 pb-4 text-sm">
               <dt className="text-muted-foreground">Slug</dt>
@@ -527,6 +687,12 @@ export function ProductDetailPage({
               <dd>{fmtDate(product.createdAt)}</dd>
               <dt className="text-muted-foreground">Updated</dt>
               <dd>{fmtDate(product.updatedAt)}</dd>
+              <dt className="text-muted-foreground">Last sold</dt>
+              <dd>{lastSold ? `${fmtDate(lastSold)} (${rel(lastSold)})` : "Never"}</dd>
+              <dt className="text-muted-foreground">Stock moved</dt>
+              <dd>{lastMovement ? rel(lastMovement) : "Never"}</dd>
+              <dt className="text-muted-foreground">Last review</dt>
+              <dd>{lastReview ? fmtDate(lastReview) : "None"}</dd>
               <dt className="text-muted-foreground">ID</dt>
               <dd className="truncate font-mono text-xs leading-5" title={product.id}>
                 {product.id}
