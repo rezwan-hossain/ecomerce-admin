@@ -1,16 +1,18 @@
 "use client"
 
-// The Warehouses and Suppliers pages. Racks and suppliers come from the API; warehouses are still demo data.
+// The Warehouses and Suppliers pages, both on the live API. Racks come from the locations API.
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
-import { MapIcon, PencilIcon, PlusIcon } from "lucide-react"
+import { ChevronLeftIcon, ChevronRightIcon, MapIcon, PencilIcon, PlusIcon, SearchIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { createLocation, getLocations, updateLocation } from "@/app/actions/inventory.actions"
 import { createSupplier, getSuppliers, updateSupplier } from "@/app/actions/supplier.actions"
+import { createWarehouse, deleteWarehouse, getWarehouse, getWarehouseStock, updateWarehouse } from "@/app/actions/warehouse.actions"
 import { ListTable, type ListColumn } from "@/components/list-table"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
@@ -22,12 +24,13 @@ import {
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
-import type { DemoWarehouse, WarehouseType } from "@/lib/inventory-demo"
+import { cn } from "@/lib/utils"
 import type { LocationDto, StorageLocation } from "@/types/inventory.type"
 import type { Supplier, SupplierDto } from "@/types/supplier.type"
+import type { Warehouse, WarehouseDto, WarehouseStockRow, WarehouseType } from "@/types/warehouse.type"
 
 import { DocSheet } from "./doc-bits"
-import { Card, fmtDate, Pill, RackTag, StatusPill, WarehouseTag } from "./inventory-ui"
+import { Card, fmtDate, Kpis, n0, Pill, RackTag, StatusPill, taka, WarehouseTag } from "./inventory-ui"
 import { LOCATION_TYPE_LABEL, LocationFormSheet } from "./location-form-sheet"
 
 export const WAREHOUSE_TYPE_LABEL: Record<WarehouseType, string> = {
@@ -38,81 +41,78 @@ export const WAREHOUSE_TYPE_LABEL: Record<WarehouseType, string> = {
   VIRTUAL_RETURN: "Returns processing",
 }
 
-function TextField({ id, text, value, onChange, placeholder }: { id: string; text: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+// Only active warehouses and stores count toward what shoppers can buy.
+const sellable = (type: WarehouseType, isActive: boolean) => isActive && (type === "PHYSICAL" || type === "STORE")
+
+function TextField({
+  id,
+  text,
+  value,
+  onChange,
+  placeholder,
+  maxLength,
+}: {
+  id: string
+  text: string
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  maxLength?: number
+}) {
   return (
     <Field>
       <FieldLabel htmlFor={id}>{text}</FieldLabel>
-      <Input id={id} placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} />
+      <Input id={id} placeholder={placeholder} maxLength={maxLength} value={value} onChange={(e) => onChange(e.target.value)} />
     </Field>
   )
 }
 
 /* ---------- Warehouses ---------- */
 
-export function Warehouses({ initialWarehouses, initialLocations }: { initialWarehouses: DemoWarehouse[]; initialLocations: StorageLocation[] }) {
+export function Warehouses({ initialWarehouses, initialLocations }: { initialWarehouses: Warehouse[]; initialLocations: StorageLocation[] }) {
   const [warehouses, setWarehouses] = useState(initialWarehouses)
   const [locations, setLocations] = useState(initialLocations)
-  const [editing, setEditing] = useState<DemoWarehouse | null | undefined>(undefined)
+  const [editing, setEditing] = useState<Warehouse | null | undefined>(undefined)
 
-  // Racks are real; they're matched to the demo warehouses by code.
-  const racksOf = (code: string) => locations.filter((l) => l.warehouse.code === code)
+  const racksOf = (id: string) => locations.filter((l) => l.warehouse.id === id)
 
-  async function refreshLocations() {
-    const res = await getLocations()
-    if (res.success) setLocations(res.data)
+  // Saving a default un-defaults the old one, and a new warehouse gets an UNASSIGNED rack, so reload both.
+  async function refresh() {
+    const [w, l] = await Promise.all([getWarehouse(), getLocations()])
+    if (w.success) setWarehouses(w.data)
+    if (l.success) setLocations(l.data)
+    return w.success ? w.data : null
   }
 
-  function save(w: DemoWarehouse) {
-    if (!w.name.trim()) return toast.error("Enter a name.")
-    if (!/^[A-Z0-9][A-Z0-9-]{1,11}$/.test(w.code)) return toast.error("Use 2 to 12 letters, numbers or dashes for the code.")
-    if (warehouses.some((x) => x.id !== w.id && x.code === w.code)) return toast.error("Another warehouse already uses that code.")
-    if (w.isDefault && !w.isActive) return toast.error("The default warehouse must be active.")
-    setWarehouses((current) => {
-      // Only one warehouse can be the default.
-      const others = current.map((x) => (w.isDefault ? { ...x, isDefault: false } : x))
-      return others.some((x) => x.id === w.id) ? others.map((x) => (x.id === w.id ? w : x)) : [...others, w]
-    })
-    toast.success(editing ? `${w.code} saved` : `${w.code} created`)
-    setEditing(undefined)
-  }
-
-  const columns: ListColumn<DemoWarehouse>[] = [
+  const active = warehouses.filter((w) => w.isActive)
+  const columns: ListColumn<Warehouse>[] = [
     {
       key: "name",
       header: "Warehouse",
-      cell: (w) => {
-        const mapId = racksOf(w.code)[0]?.warehouse.id
-        const content = (
-          <>
-            <span className="font-medium group-hover:text-primary">{w.name}</span>
-            <span className="block text-xs text-muted-foreground">{w.addressLine1}</span>
-          </>
-        )
-        // A warehouse with a backend counterpart opens its rack map; a demo-only one opens its details.
-        if (mapId) {
-          return (
-            <Link href={`/inventory/setup/warehouses/${mapId}`} className="group block">
-              {content}
-            </Link>
-          )
-        }
-        return (
-          <button type="button" className="group text-left" onClick={() => setEditing(w)}>
-            {content}
-          </button>
-        )
-      },
+      cell: (w) => (
+        <Link href={`/inventory/setup/warehouses/${w.id}`} className="group block min-w-44">
+          <span className="font-medium group-hover:text-primary">{w.name}</span>
+          <span className="block text-xs text-muted-foreground">{[w.addressLine1, w.city].filter(Boolean).join(", ") || "No address"}</span>
+        </Link>
+      ),
     },
     { key: "code", header: "Code", cell: (w) => <WarehouseTag code={w.code} /> },
-    { key: "type", header: "Type", className: "hidden md:table-cell", cell: (w) => WAREHOUSE_TYPE_LABEL[w.type] },
-    { key: "city", header: "City", className: "hidden lg:table-cell", cell: (w) => w.city || "—" },
-    { key: "priority", header: "Priority", className: "text-right tabular-nums", cell: (w) => w.priority },
     {
-      key: "racks",
-      header: "Racks",
-      className: "text-right tabular-nums",
-      cell: (w) => racksOf(w.code).filter((l) => l.code !== "UNASSIGNED").length,
+      key: "type",
+      header: "Type",
+      className: "hidden md:table-cell",
+      cell: (w) => (
+        <span className="flex flex-col">
+          {WAREHOUSE_TYPE_LABEL[w.type]}
+          {!sellable(w.type, true) && <span className="text-xs text-muted-foreground">Not for sale</span>}
+        </span>
+      ),
     },
+    { key: "priority", header: "Priority", className: "hidden text-right tabular-nums lg:table-cell", cell: (w) => w.priority },
+    { key: "racks", header: "Racks", className: "hidden text-right tabular-nums lg:table-cell", cell: (w) => n0(w.counts.locations) },
+    { key: "skus", header: "SKUs", className: "hidden text-right tabular-nums xl:table-cell", cell: (w) => n0(w.counts.variantsStocked) },
+    { key: "units", header: "Units", className: "text-right tabular-nums", cell: (w) => <span className="font-semibold">{n0(w.counts.unitsOnHand)}</span> },
+    { key: "value", header: "Value", className: "hidden text-right tabular-nums md:table-cell", cell: (w) => <span className="text-muted-foreground">{taka(Number(w.counts.stockValue))}</span> },
     {
       key: "status",
       header: "Status",
@@ -127,32 +127,36 @@ export function Warehouses({ initialWarehouses, initialLocations }: { initialWar
       key: "actions",
       header: <span className="sr-only">Actions</span>,
       className: "w-36 text-right",
-      cell: (w) => {
-        const mapId = racksOf(w.code)[0]?.warehouse.id
-        return (
-          <span className="flex justify-end gap-1">
-            {mapId && (
-              <Button size="sm" variant="outline" nativeButton={false} render={<Link href={`/inventory/setup/warehouses/${mapId}`} />}>
-                <MapIcon data-icon="inline-start" />
-                Rack map
-              </Button>
-            )}
-            <Button size="icon-sm" variant="ghost" aria-label={`Edit ${w.name}`} title="Edit details" onClick={() => setEditing(w)}>
-              <PencilIcon />
-            </Button>
-          </span>
-        )
-      },
+      cell: (w) => (
+        <span className="flex justify-end gap-1">
+          <Button size="sm" variant="outline" nativeButton={false} render={<Link href={`/inventory/setup/warehouses/${w.id}`} />}>
+            <MapIcon data-icon="inline-start" />
+            Rack map
+          </Button>
+          <Button size="icon-sm" variant="ghost" aria-label={`Edit ${w.name}`} title="Edit details" onClick={() => setEditing(w)}>
+            <PencilIcon />
+          </Button>
+        </span>
+      ),
     },
   ]
 
   return (
     <>
+      <Kpis
+        className="mx-4 xl:grid-cols-4 lg:mx-6"
+        items={[
+          { label: "Warehouses", value: n0(warehouses.length), hint: `${n0(active.length)} active` },
+          { label: "Selling stock", value: n0(warehouses.filter((w) => sellable(w.type, w.isActive)).length), hint: "count toward the storefront" },
+          { label: "Units on hand", value: n0(warehouses.reduce((s, w) => s + w.counts.unitsOnHand, 0)), hint: "in every warehouse" },
+          { label: "Stock value", value: taka(warehouses.reduce((s, w) => s + Number(w.counts.stockValue), 0)), hint: "at unit cost" },
+        ]}
+      />
       <ListTable
-        rows={[...warehouses].sort((a, b) => b.priority - a.priority)}
+        rows={warehouses}
         columns={columns}
         getRowId={(w) => w.id}
-        searchText={(w) => `${w.name} ${w.code} ${w.city}`}
+        searchText={(w) => `${w.name} ${w.code} ${w.city ?? ""}`}
         searchPlaceholder="Search warehouses..."
         toolbar={
           <Button size="sm" onClick={() => setEditing(null)}>
@@ -165,9 +169,8 @@ export function Warehouses({ initialWarehouses, initialLocations }: { initialWar
         <WarehouseSheet
           key={editing?.id ?? "new"}
           warehouse={editing}
-          racks={editing ? racksOf(editing.code) : []}
-          onSave={save}
-          onRacksChanged={refreshLocations}
+          racks={editing ? racksOf(editing.id) : []}
+          onChanged={refresh}
           onClose={() => setEditing(undefined)}
         />
       )}
@@ -193,121 +196,258 @@ function rackTree(racks: StorageLocation[]) {
   return ordered
 }
 
+// The form keeps text as typed; blanks are sent as null.
+type WarehouseForm = {
+  code: string
+  name: string
+  type: WarehouseType
+  addressLine1: string
+  addressLine2: string
+  city: string
+  state: string
+  postalCode: string
+  priority: string
+  isDefault: boolean
+  isActive: boolean
+}
+
+function toForm(w: Warehouse | null): WarehouseForm {
+  return {
+    code: w?.code ?? "",
+    name: w?.name ?? "",
+    type: w?.type ?? "PHYSICAL",
+    addressLine1: w?.addressLine1 ?? "",
+    addressLine2: w?.addressLine2 ?? "",
+    city: w?.city ?? "",
+    state: w?.state ?? "",
+    postalCode: w?.postalCode ?? "",
+    priority: String(w?.priority ?? 0),
+    isDefault: w?.isDefault ?? false,
+    isActive: w?.isActive ?? true,
+  }
+}
+
+const blankToNull = (s: string) => s.trim() || null
+
 function WarehouseSheet({
   warehouse,
   racks,
-  onSave,
-  onRacksChanged,
+  onChanged,
   onClose,
 }: {
-  warehouse: DemoWarehouse | null
+  warehouse: Warehouse | null
   racks: StorageLocation[]
-  onSave: (w: DemoWarehouse) => void
-  onRacksChanged: () => Promise<void>
+  onChanged: () => Promise<Warehouse[] | null>
   onClose: () => void
 }) {
-  const [w, setW] = useState<DemoWarehouse>(
-    warehouse ?? {
-      id: crypto.randomUUID(), name: "", code: "", type: "PHYSICAL", addressLine1: "", addressLine2: "", city: "", state: "",
-      postalCode: "", priority: 0, isDefault: false, isActive: true,
-    }
-  )
-  const [priority, setPriority] = useState(String(w.priority))
+  const [form, setForm] = useState(() => toForm(warehouse))
+  const [saving, setSaving] = useState(false)
+  const [confirming, setConfirming] = useState<"storefront" | "delete" | null>(null)
   // undefined = closed, null = adding
   const [rack, setRack] = useState<StorageLocation | null | undefined>(undefined)
-  const set = (patch: Partial<DemoWarehouse>) => setW({ ...w, ...patch })
+  const set = (patch: Partial<WarehouseForm>) => setForm({ ...form, ...patch })
 
-  // The backend warehouse this one maps to, through any of its racks (each has UNASSIGNED).
-  const realWarehouse = racks[0]?.warehouse
+  // Mirrors the API's rules so most mistakes show before a round trip.
+  function problem() {
+    const name = form.name.trim()
+    if (name.length < 2 || name.length > 100) return "Name must be 2 to 100 characters."
+    if (!warehouse && !/^[A-Z0-9-]{2,20}$/.test(form.code.trim())) return "Code must be 2 to 20 capital letters, digits or hyphens, like DHK-01."
+    if (!/^\d+$/.test(form.priority.trim()) || Number(form.priority) > 1000) return "Priority must be a whole number from 0 to 1000."
+    if (form.isDefault && !form.isActive) return "The default warehouse can't be inactive."
+    if (warehouse?.isDefault && !form.isDefault) return "Make another warehouse the default instead."
+    return null
+  }
+
+  function submit() {
+    const error = problem()
+    if (error) return toast.error(error)
+    // Changing whether this warehouse sells changes what shoppers can buy, so ask first.
+    const before = warehouse ? sellable(warehouse.type, warehouse.isActive) : false
+    if (warehouse && before !== sellable(form.type, form.isActive)) return setConfirming("storefront")
+    save()
+  }
+
+  async function save() {
+    setConfirming(null)
+    const dto: WarehouseDto = {
+      name: form.name.trim(),
+      type: form.type,
+      addressLine1: blankToNull(form.addressLine1),
+      addressLine2: blankToNull(form.addressLine2),
+      city: blankToNull(form.city),
+      state: blankToNull(form.state),
+      postalCode: blankToNull(form.postalCode),
+      priority: Number(form.priority),
+      isDefault: form.isDefault,
+      isActive: form.isActive,
+    }
+    setSaving(true)
+    const res = warehouse ? await updateWarehouse(warehouse.id, dto) : await createWarehouse({ ...dto, code: form.code.trim() })
+    setSaving(false)
+    if (!res.success) return toast.error(res.error)
+    toast.success(warehouse ? `${res.data.code} saved` : `${res.data.code} created`, {
+      description: !warehouse ? "It has an UNASSIGNED rack; add racks from its rack map or below." : undefined,
+    })
+    await onChanged()
+    onClose()
+  }
+
+  async function deactivate() {
+    const res = await updateWarehouse(warehouse!.id, { isActive: false })
+    if (!res.success) return toast.error(res.error)
+    toast.success(`${warehouse!.code} deactivated`, { description: "Its stock no longer counts toward the storefront." })
+    await onChanged()
+    onClose()
+  }
+
+  async function remove() {
+    setConfirming(null)
+    setSaving(true)
+    const res = await deleteWarehouse(warehouse!.id)
+    setSaving(false)
+    if (res.success) {
+      toast.success(`${warehouse!.code} deleted`)
+      await onChanged()
+      return onClose()
+    }
+    // A warehouse in use can't be deleted; switching it off is the way out.
+    if (res.error.includes("Deactivate it instead") && warehouse!.isActive) {
+      return toast.error(res.error, { action: { label: "Deactivate", onClick: deactivate } })
+    }
+    toast.error(res.error)
+  }
 
   async function saveRack(dto: LocationDto) {
-    const res = rack ? await updateLocation(rack.id, dto) : await createLocation({ ...dto, warehouseId: realWarehouse!.id })
+    const res = rack ? await updateLocation(rack.id, dto) : await createLocation({ ...dto, warehouseId: warehouse!.id })
     if (!res.success) {
       toast.error(res.error)
       return res
     }
     toast.success(rack ? `${dto.code} saved` : `${dto.code} added`)
     setRack(undefined)
-    await onRacksChanged()
+    await onChanged()
     return res
   }
 
-  function submit() {
-    if (!/^-?\d+$/.test(priority.trim())) return toast.error("Priority must be a whole number.")
-    onSave({ ...w, name: w.name.trim(), code: w.code.trim().toUpperCase(), priority: Number(priority) })
-  }
+  const nowSellable = sellable(form.type, form.isActive)
+  let saveText = warehouse ? "Save warehouse" : "Create warehouse"
+  if (saving) saveText = "Saving..."
 
   return (
     <>
       <DocSheet
         kind="Warehouse"
-        title={w.name || "New warehouse"}
+        title={form.name || "New warehouse"}
         badge={warehouse && <WarehouseTag code={warehouse.code} />}
         onClose={onClose}
         footer={
           <>
-            {realWarehouse && (
-              <Button variant="outline" nativeButton={false} render={<Link href={`/inventory/setup/warehouses/${realWarehouse.id}`} />}>
+            {warehouse && !warehouse.isDefault && (
+              <Button variant="ghost" className="text-destructive" onClick={() => setConfirming("delete")} disabled={saving}>
+                Delete
+              </Button>
+            )}
+            {warehouse && (
+              <Button variant="outline" nativeButton={false} render={<Link href={`/inventory/setup/warehouses/${warehouse.id}`} />}>
                 <MapIcon data-icon="inline-start" />
                 Open rack map
               </Button>
             )}
             <span className="flex-1" />
             <Button variant="outline" onClick={onClose}>Close</Button>
-            <Button onClick={submit}>{warehouse ? "Save warehouse" : "Create warehouse"}</Button>
+            <Button onClick={submit} disabled={saving}>
+              {saveText}
+            </Button>
           </>
         }
       >
+        {warehouse && (
+          <section className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border bg-border sm:grid-cols-4">
+            {[
+              { label: "Racks and bins", value: n0(warehouse.counts.locations) },
+              { label: "SKUs in stock", value: n0(warehouse.counts.variantsStocked) },
+              { label: "Units on hand", value: n0(warehouse.counts.unitsOnHand) },
+              { label: "Stock value", value: taka(Number(warehouse.counts.stockValue)) },
+            ].map((s) => (
+              <div key={s.label} className="bg-card px-4 py-3">
+                <span className="block text-xs text-muted-foreground">{s.label}</span>
+                <strong className="block truncate text-xl font-bold tabular-nums">{s.value}</strong>
+              </div>
+            ))}
+          </section>
+        )}
+
         <Card title="Details">
           <div className="space-y-4 px-4 pb-4">
             <div className="grid gap-3 sm:grid-cols-3">
-              <TextField id="wh-name" text="Name" value={w.name} onChange={(name) => set({ name })} />
+              <TextField id="wh-name" text="Name" maxLength={100} value={form.name} onChange={(name) => set({ name })} />
               <Field>
                 <FieldLabel htmlFor="wh-code">Code</FieldLabel>
-                <Input id="wh-code" placeholder="DHK-01" value={w.code} onChange={(e) => set({ code: e.target.value.toUpperCase() })} />
-                <FieldDescription>Short and unique, like DHK-01.</FieldDescription>
+                <Input
+                  id="wh-code"
+                  placeholder="DHK-01"
+                  maxLength={20}
+                  className="font-mono uppercase"
+                  value={form.code}
+                  readOnly={!!warehouse}
+                  disabled={!!warehouse}
+                  onChange={(e) => set({ code: e.target.value.toUpperCase() })}
+                />
+                <FieldDescription>{warehouse ? "Fixed: racks and documents show it." : "Capitals, digits and hyphens. Can't change later."}</FieldDescription>
               </Field>
               <Field>
                 <FieldLabel>Type</FieldLabel>
-                <Select value={w.type} items={warehouseTypeItems} onValueChange={(v) => set({ type: v as WarehouseType })}>
+                <Select value={form.type} items={warehouseTypeItems} onValueChange={(v) => set({ type: v as WarehouseType })}>
                   <SelectTrigger aria-label="Type" className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {warehouseTypeItems.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
                   </SelectContent>
                 </Select>
+                <FieldDescription>{sellable(form.type, true) ? "Its stock can be sold." : "Holds stock that isn't for sale."}</FieldDescription>
               </Field>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <TextField id="wh-address" text="Address" value={w.addressLine1} onChange={(addressLine1) => set({ addressLine1 })} />
-              <TextField id="wh-address2" text="Address line 2" value={w.addressLine2} onChange={(addressLine2) => set({ addressLine2 })} />
+              <TextField id="wh-address" text="Address" maxLength={255} value={form.addressLine1} onChange={(addressLine1) => set({ addressLine1 })} />
+              <TextField id="wh-address2" text="Address line 2" maxLength={255} value={form.addressLine2} onChange={(addressLine2) => set({ addressLine2 })} />
             </div>
             <div className="grid gap-3 sm:grid-cols-4">
-              <TextField id="wh-city" text="City" value={w.city} onChange={(city) => set({ city })} />
-              <TextField id="wh-state" text="Division" value={w.state} onChange={(state) => set({ state })} />
-              <TextField id="wh-postal" text="Postal code" value={w.postalCode} onChange={(postalCode) => set({ postalCode })} />
+              <TextField id="wh-city" text="City" maxLength={100} value={form.city} onChange={(city) => set({ city })} />
+              <TextField id="wh-state" text="Division" maxLength={100} value={form.state} onChange={(state) => set({ state })} />
+              <TextField id="wh-postal" text="Postal code" maxLength={20} value={form.postalCode} onChange={(postalCode) => set({ postalCode })} />
               <Field>
                 <FieldLabel htmlFor="wh-priority">Priority</FieldLabel>
-                <Input id="wh-priority" inputMode="numeric" className="text-right" value={priority} onChange={(e) => setPriority(e.target.value)} />
-                <FieldDescription>Higher reserves first.</FieldDescription>
+                <Input id="wh-priority" inputMode="numeric" className="text-right" value={form.priority} onChange={(e) => set({ priority: e.target.value })} />
+                <FieldDescription>0–1000. Higher reserves first.</FieldDescription>
               </Field>
             </div>
             <div className="flex flex-wrap gap-6">
               <Field orientation="horizontal" className="w-auto">
-                <Switch id="wh-active" checked={w.isActive} onCheckedChange={(isActive) => set({ isActive })} />
+                <Switch id="wh-active" checked={form.isActive} onCheckedChange={(isActive) => set({ isActive })} />
                 <FieldLabel htmlFor="wh-active" className="font-normal">Active</FieldLabel>
               </Field>
               <Field orientation="horizontal" className="w-auto">
-                <Switch id="wh-default" checked={w.isDefault} onCheckedChange={(isDefault) => set({ isDefault })} />
+                <Switch
+                  id="wh-default"
+                  checked={form.isDefault}
+                  // The default can only move: tick it on another warehouse instead.
+                  disabled={warehouse?.isDefault}
+                  onCheckedChange={(isDefault) => set({ isDefault })}
+                />
                 <FieldLabel htmlFor="wh-default" className="font-normal">Default fulfillment center</FieldLabel>
               </Field>
             </div>
-            <p className="text-[12.5px] text-muted-foreground">
-              Only active warehouses and stores of type Warehouse or Retail store count toward storefront stock.
+            <p className={cn("rounded-lg px-3 py-2 text-[12.5px]", nowSellable ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200" : "bg-muted text-muted-foreground")}>
+              {nowSellable
+                ? "Its stock counts toward what shoppers can buy."
+                : "Its stock doesn't count toward the storefront: only active warehouses and retail stores do."}
+              {warehouse?.isDefault && " This is the default warehouse; to change it, make another one the default."}
             </p>
           </div>
         </Card>
 
-        {realWarehouse ? (
+        {warehouse && <StockCard warehouseId={warehouse.id} />}
+
+        {warehouse && (
           <Card
             title="Racks and locations"
             action={
@@ -357,26 +497,158 @@ function WarehouseSheet({
               </table>
             </div>
           </Card>
-        ) : (
+        )}
+        {!warehouse && (
           <p className="rounded-md bg-primary/10 px-3 py-2.5 text-[13px] text-primary">
-            {warehouse
-              ? "This warehouse doesn’t exist in the backend yet, so it has no racks to manage."
-              : "Racks can be added once the warehouse exists in the backend."}
+            Saving creates the warehouse with an UNASSIGNED rack. Add racks and lay them out on its rack map afterwards.
           </p>
         )}
       </DocSheet>
 
-      {rack !== undefined && realWarehouse && (
+      {rack !== undefined && warehouse && (
         <LocationFormSheet
           key={rack?.id ?? "new"}
           location={rack}
           locations={racks}
-          warehouses={[realWarehouse]}
+          warehouses={[{ id: warehouse.id, code: warehouse.code }]}
           onClose={() => setRack(undefined)}
           onSave={saveRack}
         />
       )}
+
+      {confirming === "storefront" && (
+        <Dialog open onOpenChange={(open) => !open && setConfirming(null)}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>{nowSellable ? "Put this stock back on sale?" : "Take this stock off sale?"}</DialogTitle>
+              <DialogDescription>
+                {nowSellable
+                  ? `The ${n0(warehouse!.counts.unitsOnHand)} units in ${warehouse!.code} will count toward what shoppers can buy again.`
+                  : `The ${n0(warehouse!.counts.unitsOnHand)} units in ${warehouse!.code} will stop counting toward the storefront. Products only stocked here will show as out of stock.`}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setConfirming(null)}>Go back</Button>
+              <Button variant={nowSellable ? "default" : "destructive"} onClick={save}>Save warehouse</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {confirming === "delete" && (
+        <Dialog open onOpenChange={(open) => !open && setConfirming(null)}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Delete {warehouse!.code}?</DialogTitle>
+              <DialogDescription>
+                Only for a warehouse created by mistake. One that has stock, racks, movements or documents can’t be deleted;
+                deactivate it instead.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setConfirming(null)}>Keep it</Button>
+              <Button variant="destructive" onClick={remove}>Delete warehouse</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </>
+  )
+}
+
+// The warehouse's stock, 20 rows a page, searchable by SKU or product name.
+function StockCard({ warehouseId }: { warehouseId: string }) {
+  const [page, setPage] = useState(1)
+  const [query, setQuery] = useState("")
+  const [search, setSearch] = useState("")
+  const [rows, setRows] = useState<WarehouseStockRow[] | null>(null)
+  const [meta, setMeta] = useState({ total: 0, totalPages: 1 })
+
+  useEffect(() => {
+    let stale = false
+    getWarehouseStock(warehouseId, page, search).then((res) => {
+      if (stale) return
+      if (!res.success) return toast.error(res.error)
+      setRows(res.data.data)
+      setMeta(res.data.meta)
+    })
+    return () => {
+      stale = true
+    }
+  }, [warehouseId, page, search])
+
+  return (
+    <Card
+      title="Stock"
+      action={
+        <form
+          className="relative"
+          onSubmit={(e) => {
+            e.preventDefault()
+            setPage(1)
+            setSearch(query.trim())
+          }}
+        >
+          <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input aria-label="Search stock" placeholder="SKU or product, Enter" className="h-8 w-56 pl-8" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </form>
+      }
+    >
+      {rows === null && <p className="px-4 pb-4 text-sm text-muted-foreground">Loading stock...</p>}
+      {rows?.length === 0 && (
+        <p className="px-4 pb-4 text-sm text-muted-foreground">{search ? `Nothing matches “${search}”.` : "No stock here yet."}</p>
+      )}
+      {rows && rows.length > 0 && (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+                <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:font-medium [&>th:first-child]:pl-4 [&>th:last-child]:pr-4">
+                  <th>Product</th>
+                  <th className="hidden sm:table-cell">Rack</th>
+                  <th className="text-right">On hand</th>
+                  <th className="hidden text-right md:table-cell">Reserved</th>
+                  <th className="text-right">Available</th>
+                  <th className="hidden text-right md:table-cell">Value</th>
+                </tr>
+              </thead>
+              <tbody className="tabular-nums">
+                {rows.map((r) => (
+                  <tr key={r.id} className="border-t border-border/60 [&>td]:px-3 [&>td]:py-2 [&>td:first-child]:pl-4 [&>td:last-child]:pr-4">
+                    <td>
+                      <div className="font-medium">
+                        {r.variant.productName}
+                        {r.variant.label && <span className="font-normal text-muted-foreground"> · {r.variant.label}</span>}
+                      </div>
+                      <div className="font-mono text-[11.5px] text-muted-foreground">{r.variant.sku}</div>
+                    </td>
+                    <td className="hidden sm:table-cell">
+                      <RackTag code={r.defaultLocation?.code ?? null} />
+                    </td>
+                    <td className="text-right text-muted-foreground">{n0(r.onHand)}</td>
+                    <td className="hidden text-right text-muted-foreground md:table-cell">{n0(r.reserved)}</td>
+                    <td className="text-right font-semibold">{n0(r.available)}</td>
+                    <td className="hidden text-right text-muted-foreground md:table-cell">{taka(Number(r.totalCost))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center justify-between border-t px-4 py-2 text-xs text-muted-foreground">
+            <span>{n0(meta.total)} SKUs</span>
+            <span className="flex items-center gap-2">
+              Page {page} of {Math.max(1, meta.totalPages)}
+              <Button size="icon-sm" variant="outline" aria-label="Previous page" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+                <ChevronLeftIcon />
+              </Button>
+              <Button size="icon-sm" variant="outline" aria-label="Next page" disabled={page >= meta.totalPages} onClick={() => setPage(page + 1)}>
+                <ChevronRightIcon />
+              </Button>
+            </span>
+          </div>
+        </>
+      )}
+    </Card>
   )
 }
 
