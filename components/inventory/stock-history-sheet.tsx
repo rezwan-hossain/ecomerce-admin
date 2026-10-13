@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { ArrowRightIcon, XIcon } from "lucide-react"
+import Link from "next/link"
+import { ArrowRightIcon, HistoryIcon, XIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { getVariantStock, setDefaultRack } from "@/app/actions/inventory.actions"
@@ -97,6 +98,10 @@ export function StockHistorySheet({
             </SheetTitle>
           </div>
           <span className="hidden rounded-md bg-muted px-2 py-0.5 font-mono text-xs font-semibold text-foreground/75 sm:inline">{variant.sku}</span>
+          <Button size="sm" variant="outline" nativeButton={false} render={<Link href={`/inventory/reports/history?variantId=${variant.variantId}`} />}>
+            <HistoryIcon />
+            Stock history
+          </Button>
         </SheetHeader>
 
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-5 pt-[18px] pb-7 text-sm *:shrink-0">

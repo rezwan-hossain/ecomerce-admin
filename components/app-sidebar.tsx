@@ -26,6 +26,7 @@ import {
   TagIcon,
   WarehouseIcon,
   WrenchIcon,
+  ChartColumnIcon,
   TruckIcon,
   StarIcon,
   Settings2Icon,
@@ -119,6 +120,17 @@ const data = {
         { title: "Purchase orders", url: "/inventory/purchase-orders" },
         { title: "Transfers", url: "/inventory/transfers" },
         { title: "Alerts", url: "/inventory/alerts" },
+        {
+          title: "Reports",
+          url: "/inventory/reports",
+          icon: <ChartColumnIcon />,
+          items: [
+            { title: "Stock value", url: "/inventory/reports/stock-value" },
+            { title: "Slow-moving & dead", url: "/inventory/reports/slow-moving" },
+            { title: "Turnover", url: "/inventory/reports/turnover" },
+            { title: "SKU stock history", url: "/inventory/reports/history" },
+          ],
+        },
         {
           title: "Setup",
           url: "/inventory/setup",

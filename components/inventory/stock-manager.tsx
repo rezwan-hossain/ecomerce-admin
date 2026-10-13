@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useState } from "react"
 import { BuildingIcon, EllipsisVerticalIcon } from "lucide-react"
 
@@ -117,6 +118,7 @@ export function StockManager({ initialStock, locations }: { initialStock: Varian
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-48">
           <DropdownMenuItem onClick={() => setDetailId(v.variantId)}>View details</DropdownMenuItem>
+          <DropdownMenuItem render={<Link href={`/inventory/reports/history?variantId=${v.variantId}`} />}>Stock history</DropdownMenuItem>
           <DropdownMenuSeparator />
           {(["adjust", "count", "move", "threshold"] as const).map((action) => (
             <DropdownMenuItem key={action} onClick={() => setActive({ action, variant: v, warehouseId: level?.warehouseId })}>

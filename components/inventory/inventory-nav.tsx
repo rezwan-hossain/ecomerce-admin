@@ -6,6 +6,7 @@ import {
   ArrowLeftRightIcon,
   BarcodeIcon,
   BellIcon,
+  ChartColumnIcon,
   ClipboardListIcon,
   LayersIcon,
   LayoutDashboardIcon,
@@ -44,6 +45,7 @@ const GROUPS = [
     links: [
       { href: "/inventory/alerts", text: "Alerts", icon: BellIcon },
       { href: "/inventory/rules", text: "Reorder rules", icon: RepeatIcon },
+      { href: "/inventory/reports/stock-value", text: "Reports", icon: ChartColumnIcon },
     ],
   },
 ]
@@ -61,7 +63,8 @@ export function InventoryNav({ openAlerts }: { openAlerts: number }) {
         {GROUPS.map((group) => (
           <div key={group.title} role="group" aria-label={group.title} title={group.title} className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
             {group.links.map(({ href, text, icon: Icon }) => {
-              const active = pathname === href
+              // Every report page lights up the one Reports tab.
+              const active = pathname === href || (href.startsWith("/inventory/reports") && pathname.startsWith("/inventory/reports"))
               return (
                 <Link
                   key={href}
