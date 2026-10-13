@@ -30,7 +30,7 @@ import {
 } from "@/app/actions/order.actions"
 import { Card, fmtDate, fmtDateTime, Kpis, label, n0, Pill, RackTag, rel, taka, type Tone, WarehouseTag } from "@/components/inventory/inventory-ui"
 import { MovementQuantity, MovementTag, movementRacks } from "@/components/inventory/movements-table"
-import { ORDER_STATUS_LABEL, PAYMENT_LABEL } from "@/components/orders/orders-table"
+import { CARRIER_LABEL, ORDER_STATUS_LABEL, PAYMENT_LABEL } from "@/components/orders/orders-table"
 import { PrintInvoice } from "@/components/orders/print-invoice"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
@@ -62,7 +62,6 @@ export const TONE: Record<string, Tone> = {
   DELIVERED: "green", PAID: "green", APPROVED: "blue", PROCESSED: "green",
   FAILED: "red", RETURNED: "red", CANCELLED: "red", REJECTED: "red",
 }
-export const CARRIER_LABEL: Record<CourierCarrier, string> = { PATHAO: "Pathao", REDX: "RedX", STEADFAST: "Steadfast", CARRYBEE: "CarryBee" }
 const carrierItems = Object.entries(CARRIER_LABEL).map(([value, text]) => ({ value, label: text }))
 const SHIPMENT_STATUSES: ShipmentStatus[] = ["PENDING", "PROCESSING", "SHIPPED", "IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED", "FAILED", "RETURNED", "CANCELLED"]
 export const shipmentStatusItems = SHIPMENT_STATUSES.map((value) => ({ value, label: label(value) }))

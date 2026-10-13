@@ -24,6 +24,7 @@ export type PaymentStatus =
 export interface Order {
   id: string;
   orderNumber: string;
+  userId: string | null; // null = guest checkout
   customerEmail: string;
   customerName: string | null;
   customerPhone: string | null;
