@@ -15,14 +15,6 @@ import {
 } from "@/app/actions/purchase-order.actions"
 import { ListTable, type ListColumn } from "@/components/list-table"
 import { Button } from "@/components/ui/button"
-import {
-  Combobox,
-  ComboboxContent,
-  ComboboxEmpty,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxList,
-} from "@/components/ui/combobox"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -40,10 +32,9 @@ import type { PurchaseOrder, PurchaseOrderDto, PurchaseOrderLine, PurchaseOrderL
 import type { Supplier } from "@/types/supplier.type"
 import type { Warehouse } from "@/types/warehouse.type"
 
-import { cellInput, DocSheet, Progress, statusFilters, wholeNumber } from "./doc-bits"
+import { cellInput, DocSheet, Progress, statusFilters, VariantSelect, type VariantOption, wholeNumber } from "./doc-bits"
 import { Card, fmtDate, Kpis, n0, RackTag, rel, StatusPill, taka, WarehouseTag } from "./inventory-ui"
 
-type VariantOption = { id: string; sku: string; label: string }
 
 const OPEN = ["SUBMITTED", "CONFIRMED", "PARTIAL"]
 // The happy path, in order; a cancelled order shows a banner instead.
@@ -101,40 +92,6 @@ function toDto(form: Form): PurchaseOrderDto | string {
   }
 }
 
-// Type part of a name or SKU; picking ties the line to a real variant.
-function VariantSelect({ options, value, onChange }: { options: VariantOption[]; value: string; onChange: (id: string) => void }) {
-  const selected = options.find((o) => o.id === value) ?? null
-  return (
-    <Combobox
-      items={options}
-      autoHighlight
-      value={selected}
-      onValueChange={(item) => item && onChange((item as VariantOption).id)}
-      itemToStringLabel={(item) => (item as VariantOption).label}
-      filter={(item: VariantOption, query) => {
-        const q = query.trim().toLowerCase()
-        // While the box still shows the picked item, list everything.
-        if (!q || (selected && q === selected.label.toLowerCase())) return true
-        return `${item.label} ${item.sku}`.toLowerCase().includes(q)
-      }}
-    >
-      <ComboboxInput aria-label="Item" placeholder="Search name or SKU..." className="h-8 w-full min-w-56" />
-      <ComboboxContent className="min-w-80">
-        <ComboboxEmpty>No item matches.</ComboboxEmpty>
-        <ComboboxList>
-          {(item: VariantOption) => (
-            <ComboboxItem key={item.id} value={item}>
-              <span className="min-w-0">
-                <span className="block truncate">{item.label}</span>
-                <span className="block truncate font-mono text-[11px] text-muted-foreground">{item.sku}</span>
-              </span>
-            </ComboboxItem>
-          )}
-        </ComboboxList>
-      </ComboboxContent>
-    </Combobox>
-  )
-}
 
 export function PurchaseOrders({
   initialOrders,

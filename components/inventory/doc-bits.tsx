@@ -1,6 +1,6 @@
 "use client"
 
-// Pieces shared by the demo document pages (purchase orders, transfers, adjustments).
+// Pieces shared by the document pages (purchase orders, transfers, adjustments).
 
 import { useState } from "react"
 import { XIcon } from "lucide-react"
@@ -119,6 +119,44 @@ export function ItemSelect({ value, onChange }: { value: string; onChange: (sku:
             <ComboboxItem key={item.sku} value={item}>
               <span className="min-w-0">
                 <span className="block truncate">{itemLabel(item)}</span>
+                <span className="block truncate font-mono text-[11px] text-muted-foreground">{item.sku}</span>
+              </span>
+            </ComboboxItem>
+          )}
+        </ComboboxList>
+      </ComboboxContent>
+    </Combobox>
+  )
+}
+
+// A real variant for live document lines: "Product, Red / XL" and its SKU.
+export type VariantOption = { id: string; sku: string; label: string }
+
+// Type part of a name or SKU; picking ties the line to a real variant.
+export function VariantSelect({ options, value, onChange }: { options: VariantOption[]; value: string; onChange: (id: string) => void }) {
+  const selected = options.find((o) => o.id === value) ?? null
+  return (
+    <Combobox
+      items={options}
+      autoHighlight
+      value={selected}
+      onValueChange={(item) => item && onChange((item as VariantOption).id)}
+      itemToStringLabel={(item) => (item as VariantOption).label}
+      filter={(item: VariantOption, query) => {
+        const q = query.trim().toLowerCase()
+        // While the box still shows the picked item, list everything.
+        if (!q || (selected && q === selected.label.toLowerCase())) return true
+        return `${item.label} ${item.sku}`.toLowerCase().includes(q)
+      }}
+    >
+      <ComboboxInput aria-label="Item" placeholder="Search name or SKU..." className="h-8 w-full min-w-56" />
+      <ComboboxContent className="min-w-80">
+        <ComboboxEmpty>No item matches.</ComboboxEmpty>
+        <ComboboxList>
+          {(item: VariantOption) => (
+            <ComboboxItem key={item.id} value={item}>
+              <span className="min-w-0">
+                <span className="block truncate">{item.label}</span>
                 <span className="block truncate font-mono text-[11px] text-muted-foreground">{item.sku}</span>
               </span>
             </ComboboxItem>
