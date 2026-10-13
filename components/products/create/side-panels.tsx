@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { ChevronRightIcon } from "lucide-react"
+import { ChevronRightIcon, CircleCheckIcon, CircleIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { createTag } from "@/app/actions/tag.actions"
@@ -35,6 +35,58 @@ const statusItems = [
 
 const panel = "mb-5 rounded-[10px] border bg-card px-4.5 py-4"
 const heading = "mb-3.5 text-[15px] font-semibold"
+
+/* ---------- Ready to publish ---------- */
+
+// What's still missing before Publish; optional items only improve the listing. Each opens its field.
+export function ReadinessPanel({
+  items,
+  editing,
+  onGo,
+}: {
+  items: { id: string; text: string; done: boolean; optional?: boolean }[]
+  editing: boolean // a saved product is already published or drafted, so it's about completeness
+  onGo: (id: string) => void
+}) {
+  const required = items.filter((i) => !i.optional)
+  const missing = required.filter((i) => !i.done).length
+  const done = items.filter((i) => i.done).length
+  let heading = missing === 0 ? "Ready to publish" : "Before you publish"
+  if (editing) heading = missing === 0 ? "Listing complete" : "Listing checklist"
+  return (
+    <section className={panel}>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="text-[15px] font-semibold">{heading}</h2>
+        <span className={cn("rounded-full px-2 py-0.5 text-xs font-semibold", missing === 0 ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : "bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300")}>
+          {done} of {items.length}
+        </span>
+      </div>
+      <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-muted">
+        <div className={cn("h-full rounded-full transition-all", missing === 0 ? "bg-emerald-600" : "bg-amber-500")} style={{ width: `${(done / items.length) * 100}%` }} />
+      </div>
+      <ul className="flex flex-col gap-1">
+        {items.map((item) => (
+          <li key={item.text}>
+            <button
+              type="button"
+              disabled={item.done}
+              onClick={() => onGo(item.id)}
+              className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-[13px] enabled:hover:bg-muted"
+            >
+              {item.done ? (
+                <CircleCheckIcon className="size-4 shrink-0 text-emerald-600" />
+              ) : (
+                <CircleIcon className={cn("size-4 shrink-0", item.optional ? "text-muted-foreground/50" : "text-amber-600")} />
+              )}
+              <span className={cn("flex-1", item.done && "text-muted-foreground")}>{item.text}</span>
+              {!item.done && item.optional && <span className="text-[11px] text-muted-foreground">Recommended</span>}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
 
 /* ---------- Visibility ---------- */
 

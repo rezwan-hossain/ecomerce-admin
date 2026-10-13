@@ -45,6 +45,7 @@ import {
 import {
   BrandPanel,
   CategoriesPanel,
+  ReadinessPanel,
   SupplierPanel,
   TagsPanel,
   TemplatePanel,
@@ -115,10 +116,10 @@ export function CreateProductPage({
   const [options, setOptions] = useState<ProductOption[]>(initial?.options ?? [])
   // A new product starts with the default variant, used while it has no options.
   const [variants, setVariants] = useState<Record<string, VariantState>>(
-    () => initial?.variants ?? withNewVariants([], {}, { price: "", stock: "", prefix: "" })
+    () => initial?.variants ?? withNewVariants([], {}, { price: "", stock: "", cost: "", prefix: "" })
   )
   const [removed, setRemoved] = useState<string[]>(initial?.removed ?? [])
-  const [bulk, setBulk] = useState<Bulk>({ price: "", stock: "", prefix: "" })
+  const [bulk, setBulk] = useState<Bulk>({ price: "", stock: "", cost: "", prefix: "" })
 
   const [errors, setErrors] = useState<ErrorItem[]>([])
   const [triedPublish, setTriedPublish] = useState(false)
@@ -238,6 +239,10 @@ export function CreateProductPage({
       toast.error("Enter bulk stock as a whole number.")
       return
     }
+    if (bulk.cost.trim() && !isPrice(bulk.cost)) {
+      toast.error("Enter a bulk cost above 0, like 80 or 79.50.")
+      return
+    }
     // Ticked rows only, or every row when none are ticked.
     let selected = rows.filter((row) => row.v.selected)
     if (selected.length === 0) selected = rows
@@ -249,6 +254,7 @@ export function CreateProductPage({
           sku: buildSku(bulk.prefix || namePrefix(name), parts),
           ...(bulk.price.trim() && { price: Number(bulk.price).toFixed(2) }),
           ...(bulk.stock.trim() && { stock: String(Number(bulk.stock)) }),
+          ...(bulk.cost.trim() && { cost: Number(bulk.cost).toFixed(2) }),
         }
       }
       return next
@@ -281,6 +287,8 @@ export function CreateProductPage({
     if (totals.badStock) {
       found.push({ id: "fMatrix", message: `${totals.badStock} ${plural(totals.badStock, "variant has", "variants have")} a stock count that isn't a whole number.` })
     }
+    const badCost = rows.filter((row) => row.v.cost.trim() && !isPrice(row.v.cost)).length
+    if (badCost) found.push({ id: "fMatrix", message: `${badCost} ${plural(badCost, "variant has", "variants have")} a cost that isn't an amount above 0.` })
     // The API takes image URLs only.
     if (images.some((image) => image.src.startsWith("data:"))) {
       found.push({ id: "fMedia", message: "Uploaded images can't be saved yet. Remove them and add images from a URL." })
@@ -492,6 +500,10 @@ export function CreateProductPage({
 
   const pill = statusPill[status]
 
+  const ready = checkRows(rows).totals
+  // Opening stock without a cost would be valued at ৳0.
+  const costed = rows.filter((r) => r.v.active && Number(r.v.stock) > 0).every((r) => isPrice(r.v.cost))
+
   return (
     <div className="min-h-full flex-1 bg-muted/70 text-sm">
       <header className="sticky top-0 z-20 border-b bg-card">
@@ -592,9 +604,33 @@ export function CreateProductPage({
               }}
               onRemove={removeImage}
             />
+            {!product && <TemplatePanel templates={templates} templateId={templateId} onChange={changeTemplate} />}
+            <OptionsPanel
+              options={options}
+              savedOptions={savedOptions}
+              locked={Boolean(product)}
+              hasError={errorIds.includes("fOptions")}
+              onChange={updateOptions}
+              onRemove={removeOption}
+            />
           </div>
 
           <aside>
+            <ReadinessPanel
+              items={[
+                { id: "fName", text: "Product name", done: Boolean(name.trim()) },
+                { id: "fMedia", text: "At least one image", done: images.length > 0 },
+                { id: "fBrand", text: "Brand", done: Boolean(brandId) },
+                { id: "fCats", text: "Category", done: categoryIds.length > 0 },
+                { id: "fMatrix", text: "SKU and price on every active variant", done: rows.some((r) => r.v.active) && ready.empty + ready.dup + ready.badPrice === 0 },
+                ...(product
+                  ? []
+                  : [{ id: "fMatrix", text: "Cost per item on stocked variants", done: costed, optional: true }]),
+                { id: "shortDesc", text: "Short description", done: Boolean(shortDesc.trim()), optional: true },
+              ]}
+              editing={Boolean(product)}
+              onGo={goToError}
+            />
             <VisibilityPanel
               status={status}
               isActive={isActive}
@@ -622,18 +658,9 @@ export function CreateProductPage({
               }}
             />
             <TagsPanel allTags={allTags} selectedIds={tagIds} onAllTagsChange={setAllTags} onChange={setTagIds} />
-            {!product && <TemplatePanel templates={templates} templateId={templateId} onChange={changeTemplate} />}
           </aside>
         </div>
 
-        <OptionsPanel
-          options={options}
-          savedOptions={savedOptions}
-          locked={Boolean(product)}
-          hasError={errorIds.includes("fOptions")}
-          onChange={updateOptions}
-          onRemove={removeOption}
-        />
         <VariantsPanel
           rows={rows}
           totalCombos={allCombos.length}

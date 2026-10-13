@@ -173,6 +173,20 @@ export function VariantsPanel({
             onChange={(event) => onBulkChange({ ...bulk, stock: event.target.value })}
           />
         </div>
+        {isNew && (
+          <div>
+            <label htmlFor="bulkCost" className="mb-1 block text-xs text-muted-foreground">
+              Cost per item (৳)
+            </label>
+            <Input
+              id="bulkCost"
+              inputMode="decimal"
+              value={bulk.cost}
+              className="h-8 w-32.5 bg-card"
+              onChange={(event) => onBulkChange({ ...bulk, cost: event.target.value })}
+            />
+          </div>
+        )}
         <div>
           <label htmlFor="bulkPrefix" className="mb-1 block text-xs text-muted-foreground">
             SKU prefix
@@ -212,6 +226,7 @@ export function VariantsPanel({
                 Price (৳)<span className="ml-0.5 text-destructive">*</span>
               </th>
               <th className="w-[12%]">{isNew ? "Opening stock" : "Stock"}</th>
+              {isNew && <th className="w-[13%]" title="What one unit cost you; sets the stock value and margin">Cost per item (৳)</th>}
               <th>Active</th>
               <th className="!text-right">Actions</th>
             </tr>
@@ -219,7 +234,7 @@ export function VariantsPanel({
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-3 py-9 text-center text-muted-foreground">
+                <td colSpan={isNew ? 9 : 8} className="px-3 py-9 text-center text-muted-foreground">
                   {totalCombos > 0
                     ? "Every combination was removed. Restore them below."
                     : "Add option values above to generate variants."}
@@ -368,6 +383,20 @@ export function VariantsPanel({
                       onChange={(event) => onUpdate([key], { stock: event.target.value })}
                     />
                   </td>
+                  {isNew && (
+                    <td className={dim}>
+                      <input
+                        value={v.cost}
+                        inputMode="decimal"
+                        aria-label="Cost per item"
+                        placeholder="0.00"
+                        aria-invalid={showErrors && v.cost.trim() !== "" && !isPrice(v.cost)}
+                        className={cn(cellInput, "text-right tabular-nums")}
+                        onChange={(event) => onUpdate([key], { cost: event.target.value })}
+                      />
+                      <Margin price={v.price} cost={v.cost} />
+                    </td>
+                  )}
                   <td>
                     <Switch
                       aria-label="Active"
@@ -423,8 +452,8 @@ export function VariantsPanel({
       </div>
       {isNew && (
         <p className="mt-2 text-[12.5px] text-muted-foreground">
-          Opening stock is recorded in the inventory ledger at your default warehouse when you publish. Set each variant’s
-          cost per item in its settings so stock value is right from day one.
+          Opening stock is recorded in the inventory ledger at your default warehouse when you publish, at its cost per item, so
+          stock value and margins are right from day one. Leave cost empty only if you’ll receive stock through a purchase order.
         </p>
       )}
 
@@ -472,5 +501,16 @@ export function VariantsPanel({
         </DialogContent>
       </Dialog>
     </section>
+  )
+}
+
+// "32% margin" under the cost, once both numbers are valid; red when it sells below cost.
+function Margin({ price, cost }: { price: string; cost: string }) {
+  if (!isPrice(price) || !isPrice(cost)) return null
+  const margin = Math.round(((Number(price) - Number(cost)) / Number(price)) * 100)
+  return (
+    <div className={cn("mt-0.5 text-right text-[11px] tabular-nums", margin < 0 ? "text-destructive" : "text-muted-foreground")}>
+      {margin}% margin
+    </div>
   )
 }

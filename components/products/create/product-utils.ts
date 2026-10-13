@@ -27,7 +27,7 @@ export type VariantPart = { option: ProductOption; value: string }
 
 export type VariantRow = { key: string; parts: VariantPart[]; v: VariantState }
 
-export type Bulk = { price: string; stock: string; prefix: string }
+export type Bulk = { price: string; stock: string; cost: string; prefix: string }
 
 export const MAX_OPTIONS = 3
 
@@ -104,7 +104,7 @@ export function withNewVariants(
         selected: false,
         imageId: null,
         compareAt: "",
-        cost: "",
+        cost: bulk.cost,
         barcode: "",
         weight: "",
       }
