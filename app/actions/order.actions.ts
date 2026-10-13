@@ -33,6 +33,7 @@ function refresh(id: string) {
   revalidatePath(`/orders/${id}`)
   revalidatePath("/orders")
   revalidatePath("/orders/pending")
+  revalidatePath("/shipping")
 }
 
 export async function updateOrderStatus(id: string, status: OrderStatus, note?: string) {

@@ -132,7 +132,7 @@ const data = {
       ],
     },
     { name: "Discounts", url: "/marketing/promotions", icon: <TagIcon /> },
-    { name: "Shipping", url: "#", icon: <TruckIcon /> },
+    { name: "Shipping", url: "/shipping", icon: <TruckIcon /> },
     { name: "Reviews", url: "#", icon: <StarIcon /> },
   ],
 }

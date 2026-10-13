@@ -44,6 +44,7 @@ const labels: Record<string, string> = {
   rules: "Reorder rules",
   warehouses: "Warehouses",
   map: "Rack map",
+  shipping: "Shipping",
   suppliers: "Suppliers",
   planner: "Planner",
   campaigns: "Campaigns",

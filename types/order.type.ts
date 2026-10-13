@@ -53,7 +53,7 @@ export interface Order {
     amount: string;
     createdAt: string;
   }[];
-  shipments: { id: string; status: string; carrier: string | null; trackingNumber: string | null }[];
+  shipments: Shipment[];
 }
 
 export type CourierCarrier = "PATHAO" | "REDX" | "STEADFAST" | "CARRYBEE";
@@ -68,6 +68,23 @@ export type ShipmentStatus =
   | "FAILED"
   | "RETURNED"
   | "CANCELLED";
+
+// One parcel booked with a courier; an order can have several.
+export interface Shipment {
+  id: string;
+  status: ShipmentStatus;
+  carrier: CourierCarrier;
+  service: string | null;
+  merchantOrderId: string | null; // our reference sent to the courier
+  consignmentId: string | null; // the courier's id
+  trackingNumber: string | null;
+  trackingUrl: string | null;
+  shippingAmount: string;
+  codAmount: string | null; // what the courier collects on delivery
+  shippedAt: string | null;
+  deliveredAt: string | null;
+  createdAt: string;
+}
 
 export interface ShipmentDto {
   carrier: CourierCarrier;
@@ -95,7 +112,7 @@ export interface OrderAddress {
 }
 
 // GET /orders/:id: the list row plus addresses, discounts, history and refunds.
-export interface OrderDetail extends Omit<Order, "items" | "payments" | "shipments"> {
+export interface OrderDetail extends Omit<Order, "items" | "payments"> {
   userId: string | null;
   customerNote: string | null;
   cancelledAt: string | null;
@@ -115,21 +132,6 @@ export interface OrderDetail extends Omit<Order, "items" | "payments" | "shipmen
     failureMessage: string | null;
     paidAt: string | null;
   })[];
-  shipments: {
-    id: string;
-    status: ShipmentStatus;
-    carrier: CourierCarrier;
-    service: string | null;
-    merchantOrderId: string | null; // our reference sent to the courier
-    consignmentId: string | null; // the courier's id
-    trackingNumber: string | null;
-    trackingUrl: string | null;
-    shippingAmount: string;
-    codAmount: string | null; // what the courier collects on delivery
-    shippedAt: string | null;
-    deliveredAt: string | null;
-    createdAt: string;
-  }[];
   statusLogs: { id: string; fromStatus: OrderStatus | null; toStatus: OrderStatus; note: string | null; createdAt: string }[];
   refundRequests: { id: string; status: "PENDING" | "APPROVED" | "REJECTED" | "PROCESSED"; reason: string; amount: string; adminNote: string | null; createdAt: string }[];
 }

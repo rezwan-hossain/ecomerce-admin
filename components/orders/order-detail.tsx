@@ -57,16 +57,16 @@ const CANCELLABLE: OrderStatus[] = ["PENDING", "CONFIRMED", "PROCESSING", "READY
 const STOPPED: OrderStatus[] = ["CANCELLED", "FAILED", "REFUNDED"]
 const OPEN_PAYMENT = ["PENDING", "PROCESSING"]
 // Shipment, payment and refund statuses that finished well or badly; the rest are in progress.
-const TONE: Record<string, Tone> = {
+export const TONE: Record<string, Tone> = {
   DELIVERED: "green", PAID: "green", APPROVED: "blue", PROCESSED: "green",
   FAILED: "red", RETURNED: "red", CANCELLED: "red", REJECTED: "red",
 }
-const CARRIER_LABEL: Record<CourierCarrier, string> = { PATHAO: "Pathao", REDX: "RedX", STEADFAST: "Steadfast", CARRYBEE: "CarryBee" }
+export const CARRIER_LABEL: Record<CourierCarrier, string> = { PATHAO: "Pathao", REDX: "RedX", STEADFAST: "Steadfast", CARRYBEE: "CarryBee" }
 const carrierItems = Object.entries(CARRIER_LABEL).map(([value, text]) => ({ value, label: text }))
 const SHIPMENT_STATUSES: ShipmentStatus[] = ["PENDING", "PROCESSING", "SHIPPED", "IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED", "FAILED", "RETURNED", "CANCELLED"]
-const shipmentStatusItems = SHIPMENT_STATUSES.map((value) => ({ value, label: label(value) }))
+export const shipmentStatusItems = SHIPMENT_STATUSES.map((value) => ({ value, label: label(value) }))
 // The backend refuses status changes once a shipment ends.
-const SHIPMENT_DONE: ShipmentStatus[] = ["DELIVERED", "CANCELLED", "RETURNED"]
+export const SHIPMENT_DONE: ShipmentStatus[] = ["DELIVERED", "CANCELLED", "RETURNED"]
 
 const sumPaid = (o: Pick<Order, "payments">) => o.payments.filter((p) => p.status === "PAID").reduce((s, p) => s + Number(p.amount), 0)
 
