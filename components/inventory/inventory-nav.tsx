@@ -49,7 +49,7 @@ const GROUPS = [
 ]
 
 // The inventory section's own tabs: one segmented rail per group, the current page raised.
-export function InventoryNav() {
+export function InventoryNav({ openAlerts }: { openAlerts: number }) {
   const pathname = usePathname()
 
   return (
@@ -74,6 +74,9 @@ export function InventoryNav() {
                 >
                   <Icon className={cn("size-3.5 shrink-0", active ? "text-primary" : "opacity-70")} />
                   {text}
+                  {href === "/inventory/alerts" && openAlerts > 0 && (
+                    <span className="ml-0.5 rounded-full bg-amber-500 px-1.5 text-[10.5px] leading-4 font-bold text-white tabular-nums">{openAlerts}</span>
+                  )}
                 </Link>
               )
             })}

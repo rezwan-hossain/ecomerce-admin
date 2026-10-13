@@ -1,9 +1,8 @@
 "use client"
 
-// The Alerts and Reorder rules pages.
+// The Reorder rules page (demo data; alerts are live in alerts.tsx).
 
 import { useState } from "react"
-import Link from "next/link"
 import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
 import { toast } from "sonner"
 
@@ -27,111 +26,10 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { DEMO_ITEMS, type AlertType, type DemoAlert, type DemoRule, type DemoSupplier } from "@/lib/inventory-demo"
+import { DEMO_ITEMS, type DemoRule, type DemoSupplier } from "@/lib/inventory-demo"
 
-import { ItemSelect, statusFilters, WarehouseSelect, wholeNumber } from "./doc-bits"
-import { label, n0, Pill, rel, StatusPill, WarehouseTag, type Tone } from "./inventory-ui"
-
-const ALERT_TONE: Record<AlertType, Tone> = {
-  LOW_STOCK: "amber",
-  OUT_OF_STOCK: "red",
-  OVERSTOCK: "blue",
-  EXPIRING_SOON: "amber",
-  NEGATIVE_STOCK: "red",
-  REORDER_TRIGGERED: "blue",
-}
-const ALL = "all"
-
-export function Alerts({ initialAlerts }: { initialAlerts: DemoAlert[] }) {
-  const [alerts, setAlerts] = useState(initialAlerts)
-  const [type, setType] = useState(ALL)
-
-  function setStatus(alert: DemoAlert, status: DemoAlert["status"], message: string) {
-    setAlerts((current) => current.map((a) => (a.id === alert.id ? { ...a, status, acknowledgedBy: status === "ACKNOWLEDGED" ? "You" : a.acknowledgedBy } : a)))
-    toast.success(message)
-  }
-
-  const open = (a: DemoAlert) => a.status === "ACTIVE" || a.status === "ACKNOWLEDGED"
-  const columns: ListColumn<DemoAlert>[] = [
-    { key: "type", header: "Type", cell: (a) => <Pill tone={ALERT_TONE[a.type]}>{label(a.type)}</Pill> },
-    {
-      key: "alert",
-      header: "Alert",
-      cell: (a) => (
-        <div className="max-w-xl">
-          <div className="font-semibold">{a.title}</div>
-          <div className="text-[12.5px] text-muted-foreground">{a.message}</div>
-        </div>
-      ),
-    },
-    { key: "where", header: "Where", className: "hidden md:table-cell", cell: (a) => (a.warehouse ? <WarehouseTag code={a.warehouse} /> : "All") },
-    { key: "now", header: "Now", className: "hidden text-right tabular-nums lg:table-cell", cell: (a) => n0(a.currentStock) },
-    { key: "threshold", header: "Threshold", className: "hidden text-right tabular-nums lg:table-cell", cell: (a) => (a.threshold === null ? "—" : n0(a.threshold)) },
-    { key: "raised", header: "Raised", className: "hidden whitespace-nowrap xl:table-cell", cell: (a) => <span className="text-muted-foreground">{rel(a.createdAt)}</span> },
-    {
-      key: "status",
-      header: "Status",
-      cell: (a) => (
-        <div>
-          <StatusPill status={a.status} />
-          {a.acknowledgedBy && <div className="text-xs text-muted-foreground">by {a.acknowledgedBy}</div>}
-        </div>
-      ),
-    },
-    {
-      key: "actions",
-      header: <span className="sr-only">Actions</span>,
-      className: "text-right whitespace-nowrap",
-      cell: (a) => (
-        <div className="flex justify-end gap-1">
-          {a.status === "ACTIVE" && (
-            <Button size="xs" variant="outline" onClick={() => setStatus(a, "ACKNOWLEDGED", "Alert acknowledged")}>
-              Acknowledge
-            </Button>
-          )}
-          {open(a) && (
-            <Button size="xs" variant="ghost" onClick={() => setStatus(a, "DISMISSED", "Alert dismissed until the condition clears")}>
-              Dismiss
-            </Button>
-          )}
-          {open(a) && a.type === "REORDER_TRIGGERED" && (
-            <Button size="xs" variant="ghost" nativeButton={false} render={<Link href="/inventory/purchase-orders" />}>
-              Order
-            </Button>
-          )}
-        </div>
-      ),
-    },
-  ]
-
-  const typeItems = [{ value: ALL, label: "All alert types" }, ...Object.keys(ALERT_TONE).map((t) => ({ value: t, label: label(t) }))]
-
-  return (
-    <ListTable
-      rows={alerts.filter((a) => type === ALL || a.type === type)}
-      columns={columns}
-      getRowId={(a) => a.id}
-      searchText={(a) => `${a.title} ${a.message}`}
-      searchPlaceholder="Search alerts..."
-      filters={statusFilters<DemoAlert>([
-        ["Active", ["ACTIVE"]],
-        ["Acknowledged", ["ACKNOWLEDGED"]],
-        ["Resolved", ["RESOLVED"]],
-        ["Dismissed", ["DISMISSED"]],
-        ["All", null],
-      ])}
-      emptyText="No alerts match this filter."
-      toolbar={
-        <Select value={type} items={typeItems} onValueChange={(v) => setType(v as string)}>
-          <SelectTrigger aria-label="Alert type" size="sm" className="min-w-40"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            {typeItems.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-          </SelectContent>
-        </Select>
-      }
-    />
-  )
-}
+import { ItemSelect, WarehouseSelect, wholeNumber } from "./doc-bits"
+import { Pill, rel, WarehouseTag } from "./inventory-ui"
 
 export function ReorderRules({ initialRules, suppliers }: { initialRules: DemoRule[]; suppliers: DemoSupplier[] }) {
   const [rules, setRules] = useState(initialRules)
