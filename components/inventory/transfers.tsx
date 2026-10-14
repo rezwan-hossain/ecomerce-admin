@@ -125,6 +125,7 @@ export function Transfers({
 
   const since = Date.now() - 30 * DAY
   const onTheWay = rows.filter((t) => ON_THE_WAY.includes(t.status))
+  const drafts = rows.filter((t) => t.status === "DRAFT").length
   const visible = rows.filter((t) => warehouse === ALL || t.fromWarehouseId === warehouse || t.toWarehouseId === warehouse)
   const warehouseItems = [{ value: ALL, label: "Any warehouse" }, ...warehouses.map((w) => ({ value: w.id, label: w.code }))]
 
@@ -163,7 +164,7 @@ export function Transfers({
       <Kpis
         className="mx-4 xl:grid-cols-4 lg:mx-6"
         items={[
-          { label: "To ship", value: n0(rows.filter((t) => t.status === "PENDING").length), hint: `${n0(rows.filter((t) => t.status === "DRAFT").length)} drafts not approved` },
+          { label: "To ship", value: n0(rows.filter((t) => t.status === "PENDING").length), hint: `${n0(drafts)} ${drafts === 1 ? "draft" : "drafts"} not approved` },
           { label: "On the way", value: n0(onTheWay.length), hint: `${n0(onTheWay.reduce((s, t) => s + t.requestedUnits - t.receivedUnits - t.damagedUnits, 0))} units still to arrive` },
           { label: "Completed", value: n0(rows.filter((t) => t.receivedAt && new Date(t.receivedAt).getTime() >= since).length), hint: "last 30 days" },
           { label: "Damaged on arrival", value: n0(rows.reduce((s, t) => s + t.damagedUnits, 0)), hint: "units, all transfers", warn: rows.some((t) => t.damagedUnits > 0) },
@@ -492,6 +493,18 @@ function TransferSheet({
                     <td className="min-w-56">
                       <div className="font-medium">{lineName(l)}</div>
                       <div className="font-mono text-[11.5px] text-muted-foreground">{l.variant.sku}</div>
+                      {l.batches && l.batches.length > 0 && (
+                        <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+                          Batches:{" "}
+                          {l.batches.map((b, i) => (
+                            <span key={b.batchId}>
+                              {i > 0 && ", "}
+                              <span className="font-mono text-foreground">{b.batchNumber}</span>
+                              {b.expiresAt && ` (exp ${fmtDate(b.expiresAt)})`} × {n0(b.quantity)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="text-right">{n0(l.requestedQty)}</td>
                     <td className="text-right text-muted-foreground">{n0(l.shippedQty)}</td>

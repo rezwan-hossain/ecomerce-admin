@@ -2,7 +2,6 @@
 
 // Pieces shared by the document pages (purchase orders, transfers, adjustments).
 
-import { useState } from "react"
 import { XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -14,15 +13,6 @@ import {
   ComboboxItem,
   ComboboxList,
 } from "@/components/ui/combobox"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -217,92 +207,6 @@ export function Progress({ done, damaged = 0, total }: { done: number; damaged?:
 export const cellInput = "h-8 w-20 text-right tabular-nums"
 
 export const wholeNumber = (s: string) => /^\d+$/.test(s.trim())
-
-export type ReceiveLine = { id: string; label: string; remaining: number }
-
-// "Receive items": good and damaged units per line, each up to what's left.
-export function ReceiveDialog({
-  title,
-  description,
-  lines,
-  onReceive,
-  onClose,
-}: {
-  title: string
-  description: string
-  lines: ReceiveLine[]
-  onReceive: (counts: Record<string, { good: number; damaged: number }>) => void
-  onClose: () => void
-}) {
-  const [values, setValues] = useState<Record<string, { good: string; damaged: string }>>(
-    Object.fromEntries(lines.map((l) => [l.id, { good: String(l.remaining), damaged: "0" }]))
-  )
-  const [error, setError] = useState("")
-
-  function submit() {
-    const counts: Record<string, { good: number; damaged: number }> = {}
-    for (const line of lines) {
-      const v = values[line.id]
-      if (!wholeNumber(v.good) || !wholeNumber(v.damaged)) return setError("Enter whole numbers.")
-      const good = Number(v.good)
-      const damaged = Number(v.damaged)
-      if (good + damaged > line.remaining) return setError(`${line.label}: only ${line.remaining} left to receive.`)
-      counts[line.id] = { good, damaged }
-    }
-    if (Object.values(counts).every((c) => c.good + c.damaged === 0)) return setError("Enter a quantity for at least one line.")
-    onReceive(counts)
-  }
-
-  return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
-        </DialogHeader>
-        <table className="w-full text-sm">
-          <thead className="text-left text-xs text-muted-foreground">
-            <tr className="border-b [&>th]:py-2 [&>th]:font-medium">
-              <th>Item</th>
-              <th className="text-right">Left</th>
-              <th className="text-right">Good</th>
-              <th className="text-right">Damaged</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lines.map((line) => (
-              <tr key={line.id} className="border-b last:border-b-0 [&>td]:py-2">
-                <td className="pr-3">{line.label}</td>
-                <td className="text-right tabular-nums">{line.remaining}</td>
-                {(["good", "damaged"] as const).map((field) => (
-                  <td key={field} className="pl-2 text-right">
-                    <Input
-                      aria-label={`${field === "good" ? "Good" : "Damaged"} units of ${line.label}`}
-                      inputMode="numeric"
-                      className={cn(cellInput, "ml-auto")}
-                      value={values[line.id][field]}
-                      onChange={(e) => {
-                        setValues({ ...values, [line.id]: { ...values[line.id], [field]: e.target.value } })
-                        setError("")
-                      }}
-                    />
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <DialogFooter className="items-center">
-          {error && <p className="mr-auto text-[13px] font-medium text-destructive">{error}</p>}
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button onClick={submit}>Receive</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
 
 // Filter tabs built from groups of statuses: { label, statuses }.
 export function statusFilters<T extends { status: string }>(groups: [string, string[] | null][]) {

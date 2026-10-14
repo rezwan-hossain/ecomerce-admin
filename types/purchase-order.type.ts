@@ -71,6 +71,7 @@ export interface ReceivePurchaseOrderDto {
     quantity: number; // good units into stock
     damagedQty?: number; // refused at the dock
     batchNumber?: string;
+    manufacturedAt?: string;
     expiresAt?: string;
     locationId?: string; // put-away rack; omitted = the default rack
   }[];

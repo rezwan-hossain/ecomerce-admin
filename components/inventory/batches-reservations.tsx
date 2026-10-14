@@ -1,6 +1,6 @@
 "use client"
 
-// The Batches and Reservations pages: simple lists with row actions, no documents to edit.
+// The Reservations page (demo data; batches are live in batches.tsx).
 
 import { useState } from "react"
 import { LockIcon } from "lucide-react"
@@ -25,112 +25,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { DEMO_ITEMS, type BatchStatus, type DemoBatch, type DemoReservation, type DemoSupplier } from "@/lib/inventory-demo"
+import { DEMO_ITEMS, type DemoReservation } from "@/lib/inventory-demo"
 
-import { ItemSelect, Progress, statusFilters, WarehouseSelect, wholeNumber } from "./doc-bits"
-import { fmtDate, fmtDateTime, n0, rel, StatusPill, WarehouseTag } from "./inventory-ui"
-
-const EXPIRY_WINDOW = 30 * 86_400_000
-
-const expiringSoon = (b: DemoBatch) =>
-  b.expiresAt !== null && b.quantity > 0 && new Date(b.expiresAt).getTime() - Date.now() <= EXPIRY_WINDOW && new Date(b.expiresAt).getTime() > Date.now()
-
-export function Batches({ initialBatches, suppliers }: { initialBatches: DemoBatch[]; suppliers: DemoSupplier[] }) {
-  const [batches, setBatches] = useState(initialBatches)
-
-  function setStatus(batch: DemoBatch, status: BatchStatus, message: string) {
-    setBatches((current) => current.map((b) => (b.id === batch.id ? { ...b, status } : b)))
-    toast.success(message)
-  }
-
-  const columns: ListColumn<DemoBatch>[] = [
-    { key: "batch", header: "Batch", cell: (b) => <span className="font-mono text-xs font-semibold">{b.batchNumber}</span> },
-    {
-      key: "item",
-      header: "Item",
-      cell: (b) => (
-        <div>
-          <div className="font-semibold">{b.name}, {b.variant}</div>
-          <div className="font-mono text-xs text-muted-foreground">{b.sku}</div>
-        </div>
-      ),
-    },
-    { key: "warehouse", header: "Warehouse", className: "hidden md:table-cell", cell: (b) => <WarehouseTag code={b.warehouse} /> },
-    {
-      key: "remaining",
-      header: "Remaining",
-      className: "text-right tabular-nums",
-      cell: (b) => (
-        <span>
-          {n0(b.quantity)} <span className="text-muted-foreground">of {n0(b.initialQty)}</span>
-        </span>
-      ),
-    },
-    { key: "used", header: "Used", className: "hidden lg:table-cell", cell: (b) => <Progress done={b.initialQty - b.quantity} total={b.initialQty} /> },
-    {
-      key: "expires",
-      header: "Expires",
-      className: "whitespace-nowrap",
-      cell: (b) =>
-        b.expiresAt ? (
-          <div>
-            {fmtDate(b.expiresAt)}
-            <div className={expiringSoon(b) || b.status === "EXPIRED" ? "text-xs font-semibold text-destructive" : "text-xs text-muted-foreground"}>{rel(b.expiresAt)}</div>
-          </div>
-        ) : (
-          <span className="text-muted-foreground">No expiry</span>
-        ),
-    },
-    { key: "supplier", header: "Supplier", className: "hidden xl:table-cell", cell: (b) => <span className="text-muted-foreground">{suppliers.find((s) => s.id === b.supplierId)?.name ?? "—"}</span> },
-    { key: "status", header: "Status", cell: (b) => <StatusPill status={b.status} /> },
-    {
-      key: "actions",
-      header: <span className="sr-only">Actions</span>,
-      className: "text-right whitespace-nowrap",
-      cell: (b) => (
-        <div className="flex justify-end gap-1">
-          {b.status === "AVAILABLE" && (
-            <Button size="xs" variant="outline" onClick={() => setStatus(b, "QUARANTINED", "Batch quarantined. It won’t be drawn for sales or transfers.")}>
-              Quarantine
-            </Button>
-          )}
-          {b.status === "QUARANTINED" && (
-            <Button size="xs" variant="outline" onClick={() => setStatus(b, "AVAILABLE", "Batch released back to available")}>
-              Release
-            </Button>
-          )}
-          {(b.status === "AVAILABLE" || b.status === "QUARANTINED") && (
-            <Button size="xs" variant="ghost" className="text-destructive" onClick={() => setStatus(b, "RECALLED", "Batch recalled")}>
-              Recall
-            </Button>
-          )}
-        </div>
-      ),
-    },
-  ]
-
-  return (
-    <ListTable
-      rows={[...batches].sort((a, b) => String(a.expiresAt ?? "9999").localeCompare(String(b.expiresAt ?? "9999")))}
-      columns={columns}
-      getRowId={(b) => b.id}
-      searchText={(b) => `${b.batchNumber} ${b.sku} ${b.name}`}
-      searchPlaceholder="Search batches..."
-      filters={[
-        { label: "All", value: "all", match: () => true },
-        { label: "Available", value: "available", match: (b) => b.status === "AVAILABLE" },
-        { label: "Expiring soon", value: "soon", match: expiringSoon },
-        ...statusFilters<DemoBatch>([
-          ["Expired", ["EXPIRED"]],
-          ["Quarantined", ["QUARANTINED"]],
-          ["Recalled", ["RECALLED"]],
-          ["Depleted", ["DEPLETED"]],
-        ]),
-      ]}
-      emptyText="No batches here. Batches are created when batch-tracked items are received."
-    />
-  )
-}
+import { ItemSelect, statusFilters, WarehouseSelect, wholeNumber } from "./doc-bits"
+import { fmtDateTime, rel, StatusPill, WarehouseTag } from "./inventory-ui"
 
 const HOLD_OPTIONS = [
   { value: "15", label: "15 minutes" },

@@ -90,6 +90,7 @@ export interface Movement {
   createdAt: string;
   fromLocation: { code: string } | null;
   toLocation: { code: string } | null;
+  batchId?: string | null; // the batch it took from or added to
 }
 
 // GET /inventory/movements adds the warehouse, variant and who did it.

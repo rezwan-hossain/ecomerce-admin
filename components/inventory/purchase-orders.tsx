@@ -667,7 +667,7 @@ function PoSheet({
 
 const DEFAULT_RACK = "default"
 
-type ReceiveRow = { good: string; damaged: string; rack: string; batch: string; expires: string }
+type ReceiveRow = { good: string; damaged: string; rack: string; batch: string; made: string; expires: string }
 
 // Good units go into stock at the line's cost; damaged ones are refused and recorded.
 function ReceiveDialog({
@@ -683,7 +683,7 @@ function ReceiveDialog({
 }) {
   const lines = po.items.filter((l) => l.outstandingQty > 0)
   const [rows, setRows] = useState<Record<string, ReceiveRow>>(() =>
-    Object.fromEntries(lines.map((l) => [l.id, { good: String(l.outstandingQty), damaged: "0", rack: DEFAULT_RACK, batch: "", expires: "" }]))
+    Object.fromEntries(lines.map((l) => [l.id, { good: String(l.outstandingQty), damaged: "0", rack: DEFAULT_RACK, batch: "", made: "", expires: "" }]))
   )
   const [reference, setReference] = useState("")
   const [note, setNote] = useState("")
@@ -712,11 +712,13 @@ function ReceiveDialog({
       const damaged = Number(r.damaged)
       if (good + damaged === 0) continue
       if (good + damaged > l.outstandingQty) return setError(`${l.variant.sku}: only ${l.outstandingQty} still due.`)
+      if (r.made && r.expires && r.expires <= r.made) return setError(`${l.variant.sku}: the expiry date must be after the manufacture date.`)
       body.push({
         itemId: l.id,
         quantity: good,
         damagedQty: damaged || undefined,
         batchNumber: r.batch.trim() || undefined,
+        manufacturedAt: r.made ? new Date(`${r.made}T12:00:00`).toISOString() : undefined,
         expiresAt: r.expires ? new Date(`${r.expires}T12:00:00`).toISOString() : undefined,
         locationId: r.rack !== DEFAULT_RACK ? r.rack : undefined,
       })
@@ -763,6 +765,7 @@ function ReceiveDialog({
                 <th className="text-right">Damaged</th>
                 <th>Put on rack</th>
                 <th>Batch</th>
+                <th>Made</th>
                 <th>Expires</th>
               </tr>
             </thead>
@@ -795,6 +798,9 @@ function ReceiveDialog({
                     </td>
                     <td>
                       <Input aria-label={`Batch for ${l.variant.sku}`} maxLength={100} placeholder="Auto" className="h-8 w-28 font-mono" value={r.batch} onChange={(e) => update(l.id, { batch: e.target.value })} />
+                    </td>
+                    <td>
+                      <Input aria-label={`Manufacture date for ${l.variant.sku}`} type="date" className="h-8 w-36" value={r.made} onChange={(e) => update(l.id, { made: e.target.value })} />
                     </td>
                     <td>
                       <Input aria-label={`Expiry for ${l.variant.sku}`} type="date" className="h-8 w-36" value={r.expires} onChange={(e) => update(l.id, { expires: e.target.value })} />

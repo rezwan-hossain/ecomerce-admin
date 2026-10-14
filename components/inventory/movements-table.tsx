@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { ArrowRightIcon, BuildingIcon } from "lucide-react"
+import { ArrowRightIcon, BarcodeIcon, BuildingIcon } from "lucide-react"
 
 import { ListTable, type ListColumn } from "@/components/list-table"
 import {
@@ -14,6 +14,7 @@ import {
 import { cn } from "@/lib/utils"
 import type { LedgerMovement, Movement, MovementType } from "@/types/inventory.type"
 
+import { BatchSheet } from "./batches"
 import { fmtDateTime, n0, RackTag, taka, WarehouseTag } from "./inventory-ui"
 
 export const MOVEMENT_LABEL: Record<MovementType, string> = {
@@ -77,6 +78,7 @@ const userName = (m: LedgerMovement) =>
 export function MovementsTable({ movements, limited }: { movements: LedgerMovement[]; limited: boolean }) {
   const [warehouseId, setWarehouseId] = useState(ALL)
   const [type, setType] = useState(ALL)
+  const [batchId, setBatchId] = useState<string | null>(null)
 
   const warehouses = [...new Map(movements.map((m) => [m.inventoryLevel.warehouse.id, m.inventoryLevel.warehouse])).values()]
   const rows = movements.filter(
@@ -93,6 +95,16 @@ export function MovementsTable({ movements, limited }: { movements: LedgerMoveme
         <div className="flex min-w-0 flex-col">
           <span className="truncate font-mono text-xs font-semibold">{m.inventoryLevel.variant.sku}</span>
           <span className="truncate text-xs text-muted-foreground">{m.inventoryLevel.variant.product.name}</span>
+          {m.batchId && (
+            <button
+              type="button"
+              onClick={() => setBatchId(m.batchId!)}
+              className="mt-0.5 inline-flex w-fit items-center gap-1 rounded bg-muted px-1.5 text-[11px] font-medium text-muted-foreground hover:text-primary"
+            >
+              <BarcodeIcon className="size-3" />
+              Batch
+            </button>
+          )}
         </div>
       ),
     },
@@ -149,51 +161,54 @@ export function MovementsTable({ movements, limited }: { movements: LedgerMoveme
   const typeItems = [{ value: ALL, label: "All types" }, ...Object.entries(MOVEMENT_LABEL).map(([value, text]) => ({ value, label: text }))]
 
   return (
-    <ListTable
-      rows={rows}
-      columns={columns}
-      getRowId={(m) => m.id}
-      searchText={(m) =>
-        `${m.inventoryLevel.variant.product.name} ${m.inventoryLevel.variant.sku} ${MOVEMENT_LABEL[m.type]} ${movementRacks(m)} ${m.note ?? ""}`
-      }
-      searchPlaceholder="SKU, item, rack or note..."
-      filters={[
-        { label: "All", value: "all", match: () => true },
-        { label: "In", value: "in", match: (m) => m.direction === "IN" },
-        { label: "Out", value: "out", match: (m) => m.direction === "OUT" },
-        { label: "Internal", value: "internal", match: (m) => m.direction === "INTERNAL" },
-      ]}
-      pageSize={20}
-      emptyText={limited ? "No movements match. Only the latest 500 are loaded." : "No movements match."}
-      toolbar={
-        <div className="flex gap-2">
-          <Select value={type} items={typeItems} onValueChange={(value) => setType(value as string)}>
-            <SelectTrigger aria-label="Movement type" size="sm" className="min-w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {typeItems.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={warehouseId} items={warehouseItems} onValueChange={(value) => setWarehouseId(value as string)}>
-            <SelectTrigger aria-label="Warehouse" size="sm" className="min-w-40">
-              <BuildingIcon className="text-muted-foreground" />
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {warehouseItems.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      }
-    />
+    <>
+      <ListTable
+        rows={rows}
+        columns={columns}
+        getRowId={(m) => m.id}
+        searchText={(m) =>
+          `${m.inventoryLevel.variant.product.name} ${m.inventoryLevel.variant.sku} ${MOVEMENT_LABEL[m.type]} ${movementRacks(m)} ${m.note ?? ""}`
+        }
+        searchPlaceholder="SKU, item, rack or note..."
+        filters={[
+          { label: "All", value: "all", match: () => true },
+          { label: "In", value: "in", match: (m) => m.direction === "IN" },
+          { label: "Out", value: "out", match: (m) => m.direction === "OUT" },
+          { label: "Internal", value: "internal", match: (m) => m.direction === "INTERNAL" },
+        ]}
+        pageSize={20}
+        emptyText={limited ? "No movements match. Only the latest 500 are loaded." : "No movements match."}
+        toolbar={
+          <div className="flex gap-2">
+            <Select value={type} items={typeItems} onValueChange={(value) => setType(value as string)}>
+              <SelectTrigger aria-label="Movement type" size="sm" className="min-w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {typeItems.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={warehouseId} items={warehouseItems} onValueChange={(value) => setWarehouseId(value as string)}>
+              <SelectTrigger aria-label="Warehouse" size="sm" className="min-w-40">
+                <BuildingIcon className="text-muted-foreground" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {warehouseItems.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        }
+      />
+      {batchId && <BatchSheet key={batchId} batchId={batchId} onOpen={setBatchId} onClose={() => setBatchId(null)} />}
+    </>
   )
 }

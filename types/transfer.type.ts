@@ -37,6 +37,8 @@ export interface TransferLine {
   outstandingQty: number; // still on the road; 0 before shipping
   unitCost: string | null; // the source's average cost, frozen at ship time
   note: string | null;
+  // Once shipped: which batches left the source (the destination gets the same lot and expiry).
+  batches?: { batchId: string; batchNumber: string; expiresAt: string | null; quantity: number; received: number }[];
 }
 
 // GET /inventory/transfers/:id

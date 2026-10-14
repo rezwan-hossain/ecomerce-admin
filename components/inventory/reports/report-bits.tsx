@@ -44,7 +44,7 @@ export function ReportTabs() {
 }
 
 // The URL with `patch` applied: empty values clear a param, and any filter change goes back to page 1.
-function withParams(pathname: string, params: URLSearchParams, patch: Record<string, string | null>) {
+export function withParams(pathname: string, params: URLSearchParams, patch: Record<string, string | null>) {
   const next = new URLSearchParams(params.toString())
   for (const [key, value] of Object.entries(patch)) {
     if (value === null || value === "") next.delete(key)
