@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useState } from "react"
 import { EllipsisVerticalIcon, PlusIcon } from "lucide-react"
 import { toast } from "sonner"
@@ -31,8 +32,15 @@ import { RackTag, WarehouseTag } from "./inventory-ui"
 import { LOCATION_TYPE_LABEL, LocationFormSheet } from "./location-form-sheet"
 import type { Warehouse } from "./stock-sheet"
 
-// Every warehouse has one; it catches stock whose rack isn't known and can't be edited.
-const isSystem = (l: StorageLocation) => l.code === "UNASSIGNED"
+// Every warehouse has both, made by the system: UNASSIGNED catches stock whose rack isn't known,
+// DAMAGE holds damaged units. Neither can be edited or deleted here.
+const isSystem = (l: StorageLocation) => l.code === "UNASSIGNED" || l.type === "DAMAGE"
+
+function systemNote(l: StorageLocation) {
+  if (l.type === "DAMAGE") return "Damaged units, not for sale"
+  if (l.code === "UNASSIGNED") return "Stock without a rack"
+  return null
+}
 
 export function LocationsManager({ initialLocations }: { initialLocations: StorageLocation[] }) {
   const [locations, setLocations] = useState(initialLocations)
@@ -94,10 +102,9 @@ export function LocationsManager({ initialLocations }: { initialLocations: Stora
           <span className="flex items-center gap-1">
             {l.parent && <span className="font-mono text-xs text-muted-foreground">{l.parent.code} /</span>}
             <RackTag code={l.code} />
+            {isSystem(l) && <span className="rounded bg-muted px-1.5 text-[10.5px] font-semibold text-muted-foreground">System</span>}
           </span>
-          <span className="truncate text-xs text-muted-foreground">
-            {isSystem(l) ? "Stock without a rack" : (l.name ?? LOCATION_TYPE_LABEL[l.type])}
-          </span>
+          <span className="truncate text-xs text-muted-foreground">{systemNote(l) ?? l.name ?? LOCATION_TYPE_LABEL[l.type]}</span>
         </div>
       ),
     },
@@ -107,20 +114,31 @@ export function LocationsManager({ initialLocations }: { initialLocations: Stora
       key: "stock",
       header: "Stock",
       className: "text-right tabular-nums",
-      cell: (l) => (
+      cell: (l) => {
+        // This endpoint reports the damage section as empty; its units are on the damaged-stock page.
+        if (l.type === "DAMAGE") {
+          return (
+            <Link href={`/inventory/damaged?warehouseId=${l.warehouseId}`} className="text-xs font-medium text-primary hover:underline">
+              See damaged stock
+            </Link>
+          )
+        }
+        return (
         <div className="flex flex-col items-end">
           <span>{l.totalUnits.toLocaleString("en-IN")} units</span>
           <span className="text-xs text-muted-foreground">
             {l.variantCount} {l.variantCount === 1 ? "variant" : "variants"}
           </span>
         </div>
-      ),
+        )
+      },
     },
     {
       key: "picking",
       header: "Picking",
       className: "hidden text-muted-foreground lg:table-cell",
       cell: (l) => {
+        if (l.type === "DAMAGE") return "Never picked"
         if (isSystem(l)) return "Last resort"
         return l.isPickable ? `Order ${l.pickSequence}` : "Not picked from"
       },

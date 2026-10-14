@@ -591,7 +591,7 @@ function TransferSheet({
 
 type ReceiveRow = { good: string; damaged: string; rack: string }
 
-// Good units go into the destination at the cost they shipped with; damaged ones go to its damaged bucket.
+// Good units go into the destination at the cost they shipped with; damaged ones go to its damage section.
 function ReceiveDialog({
   transfer: t,
   locations,
@@ -618,7 +618,7 @@ function ReceiveDialog({
   const racks = [
     { value: DEFAULT_RACK, label: "Default rack" },
     ...locations
-      .filter((l) => l.warehouse.id === t.toWarehouseId && l.isActive && l.type !== "ZONE" && l.type !== "AISLE" && l.code !== "UNASSIGNED" && !locations.some((c) => c.parentId === l.id))
+      .filter((l) => l.warehouse.id === t.toWarehouseId && l.isActive && l.type !== "ZONE" && l.type !== "AISLE" && l.code !== "UNASSIGNED" && l.type !== "DAMAGE" && !locations.some((c) => c.parentId === l.id))
       .sort((a, b) => a.code.localeCompare(b.code))
       .map((l) => ({ value: l.id, label: l.code })),
   ]
@@ -649,7 +649,7 @@ function ReceiveDialog({
         <DialogHeader>
           <DialogTitle>Receive {t.transferNumber} at {t.toWarehouse.code}</DialogTitle>
           <DialogDescription>
-            Good units go into {t.toWarehouse.code} at the cost they shipped with. Damaged units are booked in, then kept in its damaged count (not for sale).
+            Good units go into {t.toWarehouse.code} at the cost they shipped with. Damaged units are booked in, then moved to its damage section (not for sale).
             Incoming drops by both. You can receive in several steps.
           </DialogDescription>
         </DialogHeader>

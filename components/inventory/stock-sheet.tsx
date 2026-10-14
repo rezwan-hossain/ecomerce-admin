@@ -101,8 +101,10 @@ export function StockSheet({
 
   const level = variant.levels.find((l) => l.warehouseId === warehouseId)
   const onHand = level?.onHand ?? 0
-  const racks = locations.filter((l) => l.warehouseId === warehouseId && l.isActive)
-  const stockedRacks = level?.locationStocks ?? []
+  // The damage section only fills through a "Damaged" change, so it's never offered as a rack.
+  const damageIds = locations.filter((l) => l.type === "DAMAGE").map((l) => l.id)
+  const racks = locations.filter((l) => l.warehouseId === warehouseId && l.isActive && l.type !== "DAMAGE")
+  const stockedRacks = (level?.locationStocks ?? []).filter((s) => !damageIds.includes(s.location.id))
   const fromRack = stockedRacks.find((s) => s.location.id === rackId)
   const inbound = ADJUST_TYPES.find((t) => t.value === type)!.inbound
   const qty = Number(quantity)
@@ -269,6 +271,7 @@ export function StockSheet({
                       ))}
                     </SelectContent>
                   </Select>
+                  {type === "DAMAGED" && <FieldDescription>Moves the units to the warehouse's damage section.</FieldDescription>}
                 </Field>
               )}
 

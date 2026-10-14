@@ -31,7 +31,8 @@ export type ManualMovementType =
   | "SAMPLE"
   | "WRITE_OFF";
 
-export type LocationType = "ZONE" | "AISLE" | "RACK" | "SHELF" | "BIN" | "RECEIVING" | "STAGING" | "PACKING";
+// DAMAGE is the warehouse's system-made damage section: unplaced at first, never pickable, can't be renamed or deleted.
+export type LocationType = "ZONE" | "AISLE" | "RACK" | "SHELF" | "BIN" | "RECEIVING" | "STAGING" | "PACKING" | "DAMAGE";
 
 // One warehouse's stock of a variant. Costs come back as strings.
 export interface StockLevel {

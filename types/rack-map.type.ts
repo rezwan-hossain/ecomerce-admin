@@ -2,7 +2,7 @@
 
 export type Rotation = 0 | 90 | 180 | 270;
 export type Face = "north" | "east" | "south" | "west";
-export type MapLocationType = "ZONE" | "AISLE" | "RACK" | "SHELF" | "BIN" | "RECEIVING" | "STAGING" | "PACKING";
+export type MapLocationType = "ZONE" | "AISLE" | "RACK" | "SHELF" | "BIN" | "RECEIVING" | "STAGING" | "PACKING" | "DAMAGE";
 
 export interface Point {
   x: number;
@@ -70,7 +70,7 @@ export interface FloorPlan {
   warehouse: { id: string; name: string; code: string; type: string; floorWidth: number | null; floorDepth: number | null };
   items: FloorItem[];
   unplaced: { id: string; code: string; name: string | null; type: MapLocationType }[];
-  totals: { unitsOnRacks: number; binsTotal: number; binsUsed: number; unitsToPutAway: number };
+  totals: { unitsOnRacks: number; binsTotal: number; binsUsed: number; unitsToPutAway: number; damagedUnits: number }; // damaged units are never on racks
   maxCell: { units: number; value: string; movements: number };
   activityDays: number;
   generatedAt: string;

@@ -36,9 +36,13 @@ export const LOCATION_TYPE_LABEL: Record<LocationType, string> = {
   RECEIVING: "Receiving dock",
   STAGING: "Staging",
   PACKING: "Packing",
+  DAMAGE: "Damage section",
 }
 
-const typeItems = Object.entries(LOCATION_TYPE_LABEL).map(([value, label]) => ({ value, label }))
+// The damage section is made by the system, one per warehouse, so it's never a choice here.
+const typeItems = Object.entries(LOCATION_TYPE_LABEL)
+  .filter(([value]) => value !== "DAMAGE")
+  .map(([value, label]) => ({ value, label }))
 
 const NO_PARENT = "none"
 
@@ -68,7 +72,9 @@ export function LocationFormSheet({
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
 
-  const parents = locations.filter((l) => l.warehouseId === warehouseId && l.id !== location?.id && l.code !== "UNASSIGNED")
+  const parents = locations.filter(
+    (l) => l.warehouseId === warehouseId && l.id !== location?.id && l.code !== "UNASSIGNED" && l.type !== "DAMAGE"
+  )
   const parentItems = [
     { value: NO_PARENT, label: "None" },
     ...parents.map((p) => ({ value: p.id, label: p.name ? `${p.code} · ${p.name}` : p.code })),
@@ -78,6 +84,7 @@ export function LocationFormSheet({
   async function save() {
     const found: Record<string, string> = {}
     if (!/^[A-Za-z0-9._-]{1,50}$/.test(code.trim())) found.code = "Use 1–50 letters, digits, “.”, “_” or “-”."
+    else if (code.trim().toUpperCase() === "DAMAGE") found.code = "DAMAGE is reserved for the damage section."
     if (!/^\d+$/.test(pickSequence.trim())) found.pickSequence = "Enter a whole number."
     setErrors(found)
     if (Object.keys(found).length > 0) return

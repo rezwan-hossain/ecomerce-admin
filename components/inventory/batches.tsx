@@ -26,7 +26,7 @@ import { Pager, ParamSearch, ParamSelect, SortHeader, withParams } from "./repor
 const HOLDING = ["VIRTUAL_QC", "VIRTUAL_DAMAGE"]
 const REASONS: { value: WriteOffReason; label: string; help: string }[] = [
   { value: "EXPIRED", label: "Expired", help: "Takes every unit left; the batch becomes Expired." },
-  { value: "DAMAGED", label: "Damaged", help: "Moves the units to the warehouse's damaged count." },
+  { value: "DAMAGED", label: "Damaged", help: "Moves the units to the warehouse's damage section." },
   { value: "RECALLED", label: "Recalled", help: "Takes every unit left; the batch becomes Recalled." },
   { value: "OTHER", label: "Other", help: "Removes the units from stock." },
 ]

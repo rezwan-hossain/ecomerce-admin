@@ -267,7 +267,7 @@ function AdjustmentSheet({
   const binsOf = (warehouseId: string) => [
     { value: WHOLE, label: "Whole warehouse" },
     ...locations
-      .filter((l) => l.warehouse.id === warehouseId && l.isActive && l.type !== "ZONE" && l.type !== "AISLE" && !locations.some((c) => c.parentId === l.id))
+      .filter((l) => l.warehouse.id === warehouseId && l.isActive && l.type !== "ZONE" && l.type !== "AISLE" && l.type !== "DAMAGE" && !locations.some((c) => c.parentId === l.id))
       .sort((x, y) => x.code.localeCompare(y.code))
       .map((l) => ({ value: l.id, label: l.code })),
   ]
@@ -399,6 +399,9 @@ function AdjustmentSheet({
               </Select>
             ) : (
               <div className="font-semibold">{label(a!.reason)}</div>
+            )}
+            {form.type === "DECREASE" && form.reason === "DAMAGE" && (
+              <p className="mt-1 text-xs text-muted-foreground">On apply, the removed units move to the warehouse's damage section.</p>
             )}
           </div>
           <div className="lg:text-right">

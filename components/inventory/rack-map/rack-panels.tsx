@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { ArrowRightIcon, ChevronLeftIcon, ClipboardListIcon, PlusIcon, RotateCcwIcon, RotateCwIcon } from "lucide-react"
 import { toast } from "sonner"
 
@@ -575,6 +576,86 @@ export function BinDetail({
   )
 }
 
+// The damage section is view only: damaged units are never moved, counted or picked from here.
+export function DamagePanel({ locationId, warehouseId, version }: { locationId: string; warehouseId: string; version: number }) {
+  const [data, setData] = useState<LocationContents | null>(null)
+  const [error, setError] = useState("")
+
+  useEffect(() => {
+    getLocationContents(locationId).then((res) => {
+      if (res.success) {
+        setData(res.data)
+        setError("")
+      } else setError(res.error)
+    })
+  }, [locationId, version])
+
+  if (error) return <section className={cn(box, "text-sm text-destructive")}>Couldn’t load the damage section: {error}</section>
+  if (!data) return <section className={cn(box, "text-sm text-muted-foreground")}>Loading damage section...</section>
+
+  const units = data.rows.reduce((s, r) => s + r.quantity, 0)
+  const value = data.rows.reduce((s, r) => s + Number(r.value), 0)
+
+  return (
+    <section className={cn(box, "border-red-200")}>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <RackTag code={data.location.code} />
+          <span className="text-[13px] text-muted-foreground">Damage section</span>
+        </div>
+        <Pill tone="red">Not for sale</Pill>
+      </div>
+      <p className="mb-3 text-[13px] text-muted-foreground">
+        Units written off as damaged land here. They never count as sellable stock and are never picked.
+      </p>
+      <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-muted-foreground">
+        <span><b className="text-destructive tabular-nums">{n0(units)}</b> units</span>
+        <span><b className="text-foreground tabular-nums">{taka(value)}</b> value</span>
+        <span><b className="text-foreground tabular-nums">{data.rows.length}</b> {data.rows.length === 1 ? "SKU" : "SKUs"}</span>
+      </div>
+
+      {data.rows.length === 0 ? (
+        <p className="text-[13px] text-muted-foreground">No damaged stock here.</p>
+      ) : (
+        <ul className="divide-y rounded-lg border text-sm">
+          {data.rows.slice(0, 10).map((r) => (
+            <li key={r.inventoryLevelId} className="flex items-start gap-2 px-2.5 py-2">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-mono text-xs font-semibold">{r.sku}</span>
+                <small className="block truncate text-xs text-muted-foreground">
+                  {r.productName}, {r.variantLabel} · {taka(Number(r.value))}
+                </small>
+              </span>
+              <span className="font-semibold text-destructive tabular-nums">{n0(r.quantity)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <Button size="sm" variant="outline" className="mt-3" nativeButton={false} render={<Link href={`/inventory/damaged?warehouseId=${warehouseId}`} />}>
+        View all damaged stock
+        <ArrowRightIcon data-icon="inline-end" />
+      </Button>
+
+      {data.recentMovements.length > 0 && (
+        <>
+          <h3 className="mt-4 mb-1.5 text-[13px] font-semibold">Latest damage</h3>
+          <ul className="flex flex-col gap-1.5 text-[13px]">
+            {data.recentMovements.slice(0, 6).map((m) => (
+              <li key={m.id} className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-red-700 tabular-nums">{n0(m.quantity)}</span>
+                <span className="font-mono text-xs font-semibold">{m.sku}</span>
+                {m.fromLocationCode && <span className="text-muted-foreground">from {m.fromLocationCode}</span>}
+                <span className="ml-auto text-xs text-muted-foreground">{rel(m.createdAt)}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  )
+}
+
 /* ---------- Pick route ---------- */
 
 export function RoutePanel({
@@ -727,6 +808,7 @@ export function EditPanel({
             )}
           </div>
           {selected.type === "RACK" && <p className="mb-3 text-[13px]">{facingText(selected.placement.rotation)}. R turns it clockwise, Shift+R the other way.</p>}
+          {selected.type === "DAMAGE" && <p className="mb-3 text-[13px] text-muted-foreground">The damage section is made by the system. You can move, resize and turn it, but not rename or delete it.</p>}
           <SizeEditor key={`${selected.id}-${selected.placement.length}-${selected.placement.depth}`} item={selected} onResize={onResize} />
           <div className="flex flex-wrap items-center gap-2">
             {selected.type !== "ZONE" && selected.type !== "AISLE" && <RotateButtons onRotate={onRotate} />}

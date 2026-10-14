@@ -180,6 +180,13 @@ export function Warehouses({ initialWarehouses, initialLocations }: { initialWar
 
 const warehouseTypeItems = Object.entries(WAREHOUSE_TYPE_LABEL).map(([value, text]) => ({ value, label: text }))
 
+// The two system locations explain themselves; other racks show their name.
+function rackNote(r: StorageLocation) {
+  if (r.code === "UNASSIGNED") return "Rack not known yet"
+  if (r.type === "DAMAGE") return "Damaged units, not for sale"
+  return r.name
+}
+
 // Parents first, each followed by its children, like the rack tree on the floor.
 function rackTree(racks: StorageLocation[]) {
   const ordered: { rack: StorageLocation; depth: number }[] = []
@@ -478,14 +485,14 @@ export function WarehouseSheet({
                         <span className="inline-block" style={{ width: depth * 18 }} />
                         <RackTag code={r.code} />
                       </td>
-                      <td>{r.code === "UNASSIGNED" ? "Rack not known yet" : r.name}</td>
+                      <td>{rackNote(r)}</td>
                       <td className="text-muted-foreground">{LOCATION_TYPE_LABEL[r.type]}</td>
                       <td>{r.isPickable ? "Pickable" : <span className="text-muted-foreground">Not picked</span>}</td>
                       <td className="text-right">{r.pickSequence}</td>
                       <td className="text-right font-semibold">{r.totalUnits}</td>
                       <td>{!r.isActive && <Pill tone="grey">Inactive</Pill>}</td>
                       <td className="w-10 text-right">
-                        {r.code !== "UNASSIGNED" && (
+                        {r.code !== "UNASSIGNED" && r.type !== "DAMAGE" && (
                           <Button size="icon-sm" variant="ghost" aria-label={`Edit ${r.code}`} onClick={() => setRack(r)}>
                             <PencilIcon />
                           </Button>

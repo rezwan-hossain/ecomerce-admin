@@ -187,7 +187,13 @@ export function WarehouseDetail({
                       <span className={cn("size-2 rounded-full", row.dot)} />
                       {row.text}
                     </dt>
-                    <dd className="font-semibold tabular-nums">{n0(row.value)}</dd>
+                    <dd className="font-semibold tabular-nums">
+                      {row.text === "Damaged" && row.value > 0 ? (
+                        <Link href={`/inventory/damaged?warehouseId=${warehouse.id}`} className="text-destructive hover:underline">{n0(row.value)}</Link>
+                      ) : (
+                        n0(row.value)
+                      )}
+                    </dd>
                   </div>
                 ))}
               </dl>

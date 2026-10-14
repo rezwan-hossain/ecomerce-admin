@@ -45,6 +45,7 @@ const labels: Record<string, string> = {
   warehouses: "Warehouses",
   map: "Rack map",
   shipping: "Shipping",
+  damaged: "Damaged stock",
   reports: "Reports",
   "stock-value": "Stock value",
   "slow-moving": "Slow-moving & dead",

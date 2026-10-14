@@ -340,6 +340,7 @@ export function AddRackDialog({
 
   async function save() {
     if (!/^[A-Z0-9][A-Z0-9-]{0,9}$/.test(code)) return setError("Use 1 to 10 capital letters, digits or dashes for the code.")
+    if (code === "DAMAGE") return setError("DAMAGE is reserved for the damage section.")
     const levelCount = Number(levels)
     const binCount = Number(bins)
     if (!(levelCount >= 1 && levelCount <= 8 && binCount >= 1 && binCount <= 6)) return setError("Choose 1 to 8 levels and 1 to 6 bins per level.")

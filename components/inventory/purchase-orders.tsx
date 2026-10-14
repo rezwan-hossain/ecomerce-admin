@@ -698,7 +698,7 @@ function ReceiveDialog({
   const racksOf = (warehouseId: string) => [
     { value: DEFAULT_RACK, label: "Default rack" },
     ...locations
-      .filter((l) => l.warehouse.id === warehouseId && l.isActive && l.code !== "UNASSIGNED")
+      .filter((l) => l.warehouse.id === warehouseId && l.isActive && l.code !== "UNASSIGNED" && l.type !== "DAMAGE")
       .sort((a, b) => a.code.localeCompare(b.code))
       .map((l) => ({ value: l.id, label: l.code })),
   ]

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import { ChevronLeftIcon, PencilRulerIcon, SearchIcon } from "lucide-react"
+import { ChevronLeftIcon, PencilRulerIcon, SearchIcon, TriangleAlertIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { getFloorPlan, getPickOrders, getPickRoute, getPutAway, rotateLocation, setPlacement } from "@/app/actions/rack-map.actions"
@@ -17,6 +17,7 @@ import { n0 } from "../inventory-ui"
 import { AddRackDialog, CountDialog, FloorSizeDialog, MoveDialog, type MoveStart, PutAwayPicker, RemoveDialog } from "./rack-dialogs"
 import {
   BinDetail,
+  DamagePanel,
   box,
   EditPanel,
   formatMetric,
@@ -86,6 +87,7 @@ export function RackMap({
   const zones = plan.items.filter((i) => isArea(i.type))
   const docks = plan.items.filter((i) => DOCKS.includes(i.type))
   const racks = plan.items.filter((i) => i.type === "RACK")
+  const damage = plan.items.filter((i) => i.type === "DAMAGE")
   const rack = racks.find((r) => r.id === rackId) ?? null
   const selected = plan.items.find((i) => i.id === rackId) ?? null
   const colourMode = mode === "route" ? "units" : mode
@@ -169,7 +171,7 @@ export function RackMap({
   async function placeUnplaced(id: string) {
     const u = plan.unplaced.find((x) => x.id === id)!
     let size = { length: 2.8, depth: 1.2, rotation: 0 as const }
-    if (DOCKS.includes(u.type)) size = { length: 3, depth: 5, rotation: 0 }
+    if (DOCKS.includes(u.type) || u.type === "DAMAGE") size = { length: 3, depth: 5, rotation: 0 }
     if (u.type === "ZONE") size = { length: 10, depth: 8, rotation: 0 }
     if (u.type === "AISLE") size = { length: 2, depth: 10, rotation: 0 }
     const spot = findFreeSpot(size, floor!, obstacles(id), isArea(u.type))
@@ -273,7 +275,8 @@ export function RackMap({
     onKeyDown: (e: React.KeyboardEvent) => itemKey(e, item),
     onPointerDown: (e: React.PointerEvent) => pointerDown(e, item),
     onDragOver: (e: React.DragEvent) => {
-      if (isArea(item.type)) return
+      // Damaged units only arrive through a write-off, never by dragging stock in.
+      if (isArea(item.type) || item.type === "DAMAGE") return
       e.preventDefault()
       setDropTarget(item.id)
     },
@@ -327,6 +330,30 @@ export function RackMap({
         <text x={b.x + b.width / 2} y={b.y + b.height / 2 + 0.45} fontSize={0.38} textAnchor="middle" dominantBaseline="central" fill="#667482">
           {sub}
         </text>
+      </g>
+    )
+  }
+
+  // Red-tinted and never heat-coloured: damaged units aren't stock you can sell or pick.
+  function drawDamage(item: FloorItem) {
+    const b = item.box
+    const cx = b.x + b.width / 2
+    const cy = b.y + b.height / 2
+    return (
+      <g key={item.id} {...itemProps(item, `Damage section: ${item.stock.units} units`)}>
+        <rect
+          x={b.x} y={b.y} width={b.width} height={b.height} rx={0.25}
+          fill="#FCEBEA" stroke={outline(item, "#C9372C")} strokeWidth={rackId === item.id || binId === item.id ? 0.2 : 0.07}
+        />
+        <TriangleAlertIcon x={cx - 0.35} y={cy - 1.15} width={0.7} height={0.7} color="#C9372C" strokeWidth={2.4} />
+        <text x={cx} y={cy + 0.05} fontSize={0.48} fontWeight={700} textAnchor="middle" dominantBaseline="central" fill="#8F1F17">
+          Damage
+        </text>
+        {item.stock.units > 0 && (
+          <text x={cx} y={cy + 0.75} fontSize={0.38} textAnchor="middle" dominantBaseline="central" fill="#A8483F">
+            {n0(item.stock.units)} {item.stock.units === 1 ? "unit" : "units"}
+          </text>
+        )}
       </g>
     )
   }
@@ -487,6 +514,18 @@ export function RackMap({
         )}
       </RackPanel>
     )
+  } else if (binId && [...plan.items, ...plan.unplaced].some((i) => i.id === binId && i.type === "DAMAGE")) {
+    panel = (
+      <>
+        <section className={box}>
+          <Button variant="ghost" size="sm" className="-ml-2" onClick={() => setBinId(null)}>
+            <ChevronLeftIcon data-icon="inline-start" />
+            Warehouse
+          </Button>
+        </section>
+        <DamagePanel locationId={binId} warehouseId={wid} version={version} />
+      </>
+    )
   } else if (binId) {
     panel = (
       <>
@@ -515,6 +554,14 @@ export function RackMap({
           <p className="text-sm text-muted-foreground">
             {plan.warehouse.name}
             {floor && ` · ${floor.width} × ${floor.depth} m floor`} · {racks.length} {racks.length === 1 ? "rack" : "racks"} · {plan.totals.binsTotal} bins
+            {plan.totals.damagedUnits > 0 && (
+              <>
+                {" · "}
+                <Link href={`/inventory/damaged?warehouseId=${wid}`} className="font-medium text-destructive hover:underline">
+                  Damaged: {n0(plan.totals.damagedUnits)} {plan.totals.damagedUnits === 1 ? "unit" : "units"}
+                </Link>
+              </>
+            )}
           </p>
         </div>
         <div className="relative w-full sm:w-72">
@@ -625,6 +672,7 @@ export function RackMap({
                 <rect x={0} y={0} width={floor.width} height={floor.depth} fill="url(#grid)" pointerEvents="none" />
                 {zones.map(drawZone)}
                 {docks.map(drawDock)}
+                {damage.map(drawDamage)}
                 {racks.map(drawRack)}
                 {drawRoute()}
               </svg>

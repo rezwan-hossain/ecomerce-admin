@@ -13,6 +13,7 @@ import {
   ListIcon,
   LockIcon,
   PackageIcon,
+  PackageXIcon,
   RepeatIcon,
   ShoppingCartIcon,
   TruckIcon,
@@ -29,6 +30,7 @@ const GROUPS = [
       { href: "/inventory/stock", text: "Stock levels", icon: LayersIcon },
       { href: "/inventory/movements", text: "Movements", icon: ListIcon },
       { href: "/inventory/batches", text: "Batches", icon: BarcodeIcon },
+      { href: "/inventory/damaged", text: "Damaged", icon: PackageXIcon },
     ],
   },
   {
