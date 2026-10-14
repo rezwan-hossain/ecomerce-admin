@@ -24,7 +24,7 @@ export default async function WarehouseMapPage({ params, searchParams }: PagePro
       key={warehouseId}
       initialPlan={plan.data}
       initialPutAway={putAway.success ? putAway.data : []}
-      warehouses={warehouses.success ? warehouses.data.map((w) => ({ id: w.id, code: w.code, name: w.name })) : []}
+      warehouses={warehouses.success ? warehouses.data.map((w) => ({ id: w.id, code: w.code, name: w.name, type: w.type, isActive: w.isActive })) : []}
       initial={{ mode: MODES.includes(mode) ? mode : "units", rack: one("rack"), bin: one("bin"), q: one("q") ?? "", edit: one("edit") === "1" }}
     />
   )

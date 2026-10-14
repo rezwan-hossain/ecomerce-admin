@@ -84,16 +84,32 @@ export function OverviewPanel({
   putAway,
   query,
   onSelectBin,
+  onSelectItem,
   onMove,
+  onEdit,
 }: {
   plan: FloorPlan
   putAway: PutAwayLine[]
   query: string
   onSelectBin: (binId: string, rackId: string | null) => void
+  onSelectItem: (item: FloorItem) => void
   onMove: (start: MoveStart) => void
+  onEdit: () => void
 }) {
   const [showAll, setShowAll] = useState(false)
-  const racks = plan.items.filter((i) => i.type === "RACK")
+  const racks = plan.items.filter((i) => i.type === "RACK").sort((a, b) => a.code.localeCompare(b.code))
+  const areas = plan.items.filter((i) => ["RECEIVING", "STAGING", "PACKING", "DAMAGE"].includes(i.type))
+  const bins = racks.flatMap((rack) => (rack.levels ?? []).flatMap((level) => level.bins.map((bin) => ({ rack, bin }))))
+  const inactive = bins.filter((b) => !b.bin.isActive).length
+  const used = bins.filter((b) => b.bin.isActive && b.bin.stock.units > 0).length
+  const empty = bins.length - used - inactive
+  const notPicked = bins.filter((b) => b.bin.isActive && !b.bin.isPickable).length
+  const share = (n: number) => `${bins.length ? (n / bins.length) * 100 : 0}%`
+  // Stock that sat still for the whole activity window: candidates to move further from the pick face.
+  const untouched = bins
+    .filter((b) => b.bin.stock.units > 0 && b.bin.stock.movements === 0)
+    .sort((a, b) => b.bin.stock.units - a.bin.stock.units)
+    .slice(0, 5)
   const q = query.trim().toLowerCase()
   // Search runs over each bin's top SKUs, which is what the floor plan returns.
   const found = q
@@ -134,23 +150,47 @@ export function OverviewPanel({
         </section>
       )}
 
+      {plan.unplaced.length > 0 && (
+        <section className={cn(box, "flex items-center gap-3 border-dashed py-3")}>
+          <p className="flex-1 text-[13px] text-muted-foreground">
+            <b className="text-foreground">{plan.unplaced.length}</b> {plan.unplaced.length === 1 ? "location isn’t" : "locations aren’t"} on the map:{" "}
+            {plan.unplaced.map((u) => u.code).join(", ")}
+          </p>
+          <Button size="sm" variant="outline" onClick={onEdit}>Place</Button>
+        </section>
+      )}
+
       <section className={box}>
-        <h2 className={cn(heading, "mb-3")}>{plan.warehouse.name}</h2>
-        {/* The 1px gap over a border-colored background draws the dividers. */}
-        <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border bg-border">
-          <Stat label="On racks" value={n0(plan.totals.unitsOnRacks)} />
-          <Stat
-            label="Bins in use"
-            value={
-              <>
-                {plan.totals.binsUsed}
-                <small className="text-sm font-medium text-muted-foreground"> of {plan.totals.binsTotal}</small>
-              </>
-            }
-          />
-          <Stat label="To put away" value={n0(plan.totals.unitsToPutAway)} warn={plan.totals.unitsToPutAway > 0} />
+        <div className="mb-2 flex items-baseline justify-between">
+          <h2 className={heading}>Bin usage</h2>
+          <span className="text-[13px] text-muted-foreground tabular-nums">{bins.length} bins on the map</span>
         </div>
-        <p className="mt-3 text-[12.5px] text-muted-foreground">
+        <div className="flex h-2.5 overflow-hidden rounded-full bg-muted" aria-hidden>
+          <i className="bg-[#1C5AA4]" style={{ width: share(used) }} />
+          <i className="bg-[#C9D8EA]" style={{ width: share(empty) }} />
+          <i className="bg-[repeating-linear-gradient(45deg,#C8D1DA_0_3px,#EEF1F4_3px_6px)]" style={{ width: share(inactive) }} />
+        </div>
+        <dl className="mt-2.5 grid grid-cols-3 gap-2 text-[13px]">
+          {[
+            { text: "Holding stock", value: used, dot: "bg-[#1C5AA4]" },
+            { text: "Empty", value: empty, dot: "bg-[#C9D8EA]" },
+            { text: "Inactive", value: inactive, dot: "bg-slate-300" },
+          ].map((row) => (
+            <div key={row.text}>
+              <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span className={cn("size-2 rounded-full", row.dot)} />
+                {row.text}
+              </dt>
+              <dd className="font-semibold tabular-nums">{n0(row.value)}</dd>
+            </div>
+          ))}
+        </dl>
+        {notPicked > 0 && (
+          <p className="mt-2 text-[12.5px] text-muted-foreground">
+            {notPicked} active {notPicked === 1 ? "bin is" : "bins are"} set to not be picked from (overflow or reserve).
+          </p>
+        )}
+        <p className="mt-2 text-[12.5px] text-muted-foreground">
           Select a rack to see it from the front. Drag a SKU onto another bin or rack to move it; every move is written to the ledger.
         </p>
       </section>
@@ -197,6 +237,26 @@ export function OverviewPanel({
         )}
       </section>
 
+      {areas.length > 0 && (
+        <section className={box}>
+          <h2 className={cn(heading, "mb-1")}>Docks and areas</h2>
+          <ul className="divide-y">
+            {areas.map((item) => (
+              <li key={item.id}>
+                <button type="button" className="flex w-full items-center gap-2.5 py-2 text-left" onClick={() => onSelectItem(item)}>
+                  <RackTag code={item.code} />
+                  <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                    {item.type === "DAMAGE" ? "Damage section, not for sale" : (item.name ?? label(item.type))}
+                  </span>
+                  <b className={cn("tabular-nums", item.type === "DAMAGE" && item.stock.units > 0 && "text-destructive")}>{n0(item.stock.units)}</b>
+                  <span className="w-9 text-xs text-muted-foreground">{item.stock.units === 1 ? "unit" : "units"}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {busiest.length > 0 && (
         <section className={box}>
           <h2 className={cn(heading, "mb-1")}>Busiest slots, last {plan.activityDays} days</h2>
@@ -213,7 +273,82 @@ export function OverviewPanel({
           </ul>
         </section>
       )}
+
+      {untouched.length > 0 && (
+        <section className={box}>
+          <h2 className={heading}>Untouched for {plan.activityDays} days</h2>
+          <p className="mb-1 text-[12.5px] text-muted-foreground">Bins holding stock with no movement in or out. Good candidates for higher or farther slots.</p>
+          <ul className="divide-y">
+            {untouched.map(({ rack, bin }) => (
+              <li key={bin.id}>
+                <button type="button" className="flex w-full items-center gap-2.5 py-2 text-left" onClick={() => onSelectBin(bin.id, rack.id)}>
+                  <RackTag code={bin.code} />
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">{bin.topSkus.map((t) => t.sku).join(", ")}</span>
+                  <b className="tabular-nums">{n0(bin.stock.units)}</b>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </>
+  )
+}
+
+// Every rack on the floor with its fill, stock and activity; a row opens the rack.
+export function RackTable({ plan, selectedId, onSelect }: { plan: FloorPlan; selectedId: string | null; onSelect: (rack: FloorItem) => void }) {
+  const racks = plan.items.filter((i) => i.type === "RACK").sort((a, b) => a.code.localeCompare(b.code))
+  if (racks.length === 0) return null
+  return (
+        <section className="overflow-hidden rounded-2xl border bg-card pt-4">
+          <h2 className={cn(heading, "mb-2 px-4")}>Racks <span className="font-normal text-muted-foreground">· {racks.length}</span></h2>
+          <table className="w-full text-[13px]">
+            <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+              <tr className="[&>th]:px-2 [&>th]:py-1.5 [&>th]:font-medium [&>th:first-child]:pl-4 [&>th:last-child]:pr-4">
+                <th>Rack</th>
+                <th className="hidden sm:table-cell">Levels × slots</th>
+                <th>Bins used</th>
+                <th className="hidden text-right sm:table-cell">SKUs</th>
+                <th className="text-right">Units</th>
+                <th className="text-right">Value</th>
+                <th className="text-right">Moves, {plan.activityDays}d</th>
+              </tr>
+            </thead>
+            <tbody className="tabular-nums">
+              {racks.map((rack) => {
+                const rackBins = (rack.levels ?? []).flatMap((l) => l.bins)
+                const full = rackBins.filter((b) => b.stock.units > 0).length
+                return (
+                  <tr
+                    key={rack.id}
+                    tabIndex={0}
+                    onClick={() => onSelect(rack)}
+                    onKeyDown={(e) => e.key === "Enter" && onSelect(rack)}
+                    className={cn("cursor-pointer border-t border-border/60 outline-none hover:bg-muted/40 focus-visible:bg-muted/40 [&>td]:px-2 [&>td]:py-1.5 [&>td:first-child]:pl-4 [&>td:last-child]:pr-4", selectedId === rack.id && "bg-[#EEF4FC]")}
+                  >
+                    <td className="whitespace-nowrap">
+                      <RackTag code={rack.code} />
+                      {!rack.isActive && <span className="ml-1 text-[11px] text-destructive">inactive</span>}
+                    </td>
+                    <td className="hidden text-muted-foreground sm:table-cell">{rack.levels?.length ?? 1} × {rack.slotCount ?? 1}</td>
+                    <td>
+                      <span className="flex items-center gap-1.5">
+                        <span className="h-1.5 w-12 overflow-hidden rounded-full bg-muted">
+                          <i className="block h-full bg-[#1C5AA4]" style={{ width: `${rackBins.length ? (full / rackBins.length) * 100 : 0}%` }} />
+                        </span>
+                        <span className="text-xs text-muted-foreground">{full}/{rackBins.length}</span>
+                      </span>
+                    </td>
+                    <td className="hidden text-right text-muted-foreground sm:table-cell">{rack.stock.skuCount}</td>
+                    <td className="text-right">{rack.stock.units ? n0(rack.stock.units) : <span className="text-muted-foreground/60">0</span>}</td>
+                    <td className="text-right text-muted-foreground">{taka(Number(rack.stock.value))}</td>
+                    <td className="text-right text-muted-foreground">{n0(rack.stock.movements)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </section>
   )
 }
 
@@ -249,6 +384,27 @@ export function RackPanel({
   const max = Math.max(1, ...binsAll.map((b) => metric(b.stock, mode === "route" ? "units" : mode)))
   const zone = plan.items.find((i) => i.id === rack.parentId)
   const q = query.trim().toLowerCase()
+  const usedBins = binsAll.filter((b) => b.stock.units > 0).length
+  // What the rack holds, summed over its bins (each bin reports its biggest SKUs).
+  const skus = new Map<string, { sku: string; quantity: number; binId: string; bins: number }>()
+  for (const bin of binsAll) {
+    for (const s of bin.topSkus) {
+      const seen = skus.get(s.inventoryLevelId)
+      if (seen) {
+        seen.quantity += s.quantity
+        seen.bins += 1
+      } else skus.set(s.inventoryLevelId, { sku: s.sku, quantity: s.quantity, binId: bin.id, bins: 1 })
+    }
+  }
+  const topSkus = [...skus.values()].sort((a, b) => b.quantity - a.quantity).slice(0, 6)
+  const facts = [
+    { text: "Layout", value: `${rack.levels?.length ?? 1} ${(rack.levels?.length ?? 1) === 1 ? "level" : "levels"} × ${slots} slots` },
+    { text: "Size", value: `${rack.placement.length} × ${rack.placement.depth} m` },
+    { text: "Walk order", value: String(rack.pickSequence) },
+    { text: `Moves, ${plan.activityDays} days`, value: n0(rack.stock.movements) },
+    { text: "Not picked from", value: `${binsAll.filter((b) => !b.isPickable).length} bins` },
+    { text: "Inactive", value: `${binsAll.filter((b) => !b.isActive).length} bins` },
+  ]
 
   return (
     <>
@@ -269,14 +425,28 @@ export function RackPanel({
             <small className="block text-muted-foreground">{zone ? (zone.name ?? zone.code) : "Not in a zone"}</small>
           </div>
         </div>
-        <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-muted-foreground">
-          <span><b className="text-foreground tabular-nums">{n0(rack.stock.units)}</b> units</span>
-          <span><b className="text-foreground tabular-nums">{taka(Number(rack.stock.value))}</b></span>
-          <span>
-            <b className="text-foreground tabular-nums">{binsAll.filter((b) => b.stock.units > 0).length}</b> of {binsAll.length} slots used
-          </span>
-          <span><b className="text-foreground tabular-nums">{rack.stock.skuCount}</b> SKUs</span>
+        <div className="mb-3 grid grid-cols-4 gap-px overflow-hidden rounded-xl border bg-border">
+          <Stat label="Units" value={n0(rack.stock.units)} />
+          <Stat label="Value" value={taka(Number(rack.stock.value))} />
+          <Stat label="SKUs" value={rack.stock.skuCount} />
+          <Stat
+            label="Bins used"
+            value={
+              <>
+                {usedBins}
+                <small className="text-sm font-medium text-muted-foreground">/{binsAll.length}</small>
+              </>
+            }
+          />
         </div>
+        <dl className="mb-3 grid grid-cols-2 gap-x-4 gap-y-1 text-[13px] sm:grid-cols-3">
+          {facts.map((f) => (
+            <div key={f.text}>
+              <dt className="text-xs text-muted-foreground">{f.text}</dt>
+              <dd className="font-medium tabular-nums">{f.value}</dd>
+            </div>
+          ))}
+        </dl>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted px-2.5 py-2 text-[13px]">
           <span>{facingText(rack.placement.rotation)}</span>
           <RotateButtons onRotate={onRotate} />
@@ -372,6 +542,22 @@ export function RackPanel({
           Front view, ground level at the bottom. Colour follows the map mode. Drag a SKU chip onto another bin to move it.
         </p>
       </section>
+      {topSkus.length > 0 && (
+        <section className={box}>
+          <h2 className={cn(heading, "mb-1")}>On this rack</h2>
+          <ul className="divide-y">
+            {topSkus.map((s) => (
+              <li key={s.sku}>
+                <button type="button" className="flex w-full items-center gap-2.5 py-1.5 text-left" onClick={() => onSelectBin(s.binId)}>
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs font-semibold">{s.sku}</span>
+                  {s.bins > 1 && <span className="text-xs text-muted-foreground">{s.bins} bins</span>}
+                  <b className="tabular-nums">{n0(s.quantity)}</b>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {children}
     </>
   )

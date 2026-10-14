@@ -2,7 +2,18 @@
 
 import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import { ChevronLeftIcon, PencilRulerIcon, SearchIcon, TriangleAlertIcon } from "lucide-react"
+import {
+  ChevronLeftIcon,
+  ClipboardCheckIcon,
+  type LucideIcon,
+  PackageXIcon,
+  PencilRulerIcon,
+  SearchIcon,
+  StoreIcon,
+  TriangleAlertIcon,
+  Undo2Icon,
+  WarehouseIcon,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import { getFloorPlan, getPickOrders, getPickRoute, getPutAway, rotateLocation, setPlacement } from "@/app/actions/rack-map.actions"
@@ -12,8 +23,9 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { boundingBox, faceLine, findFreeSpot, fitsFloor, isArea, overlaps, slotRect, snap } from "@/lib/rack-map/geometry"
 import { cn } from "@/lib/utils"
 import type { Box, FloorItem, FloorPlan, LocationContents, PickRoute, Placement, PutAwayLine } from "@/types/rack-map.type"
+import type { WarehouseType } from "@/types/warehouse.type"
 
-import { n0 } from "../inventory-ui"
+import { Kpis, n0, taka } from "../inventory-ui"
 import { AddRackDialog, CountDialog, FloorSizeDialog, MoveDialog, type MoveStart, PutAwayPicker, RemoveDialog } from "./rack-dialogs"
 import {
   BinDetail,
@@ -26,11 +38,22 @@ import {
   type Mode,
   OverviewPanel,
   RackPanel,
+  RackTable,
   RoutePanel,
   scaleGradient,
   shade,
   slotStats,
 } from "./rack-panels"
+
+export type MapWarehouse = { id: string; code: string; name: string; type: WarehouseType; isActive: boolean }
+
+const WAREHOUSE_ICON: Record<WarehouseType, LucideIcon> = {
+  PHYSICAL: WarehouseIcon,
+  STORE: StoreIcon,
+  VIRTUAL_DAMAGE: PackageXIcon,
+  VIRTUAL_QC: ClipboardCheckIcon,
+  VIRTUAL_RETURN: Undo2Icon,
+}
 
 const MODES: { value: Mode; label: string }[] = [
   { value: "units", label: "Units" },
@@ -58,7 +81,7 @@ export function RackMap({
 }: {
   initialPlan: FloorPlan
   initialPutAway: PutAwayLine[]
-  warehouses: { id: string; code: string; name: string }[]
+  warehouses: MapWarehouse[]
   initial: RackMapState
 }) {
   const [plan, setPlan] = useState(initialPlan)
@@ -93,6 +116,14 @@ export function RackMap({
   const colourMode = mode === "route" ? "units" : mode
   const max = Math.max(1, maxMetric(plan, colourMode))
   const q = query.trim().toLowerCase()
+  // Zones and aisles contain racks, so only leaf items are summed.
+  const leaves = plan.items.filter((i) => !isArea(i.type))
+  const rackValue = racks.reduce((s, r) => s + Number(r.stock.value), 0)
+  const moves = leaves.reduce((s, i) => s + i.stock.movements, 0)
+  const covered = leaves.reduce((s, i) => s + i.box.width * i.box.height, 0)
+  const binsFull = plan.totals.binsTotal ? Math.round((plan.totals.binsUsed / plan.totals.binsTotal) * 100) : 0
+  let floorKpi = { value: "—", hint: "No floor size set" }
+  if (floor) floorKpi = { value: `${Math.round((covered / (floor.width * floor.depth)) * 100)}%`, hint: `${n0(Math.round(covered))} of ${n0(floor.width * floor.depth)} m² built on` }
 
   async function refresh() {
     const [p, a] = await Promise.all([getFloorPlan(wid, plan.activityDays), getPutAway(wid)])
@@ -465,6 +496,33 @@ export function RackMap({
     )
   }
 
+  // Real buildings first; the virtual holds (damage, QC, returns) after a divider.
+  const sellable = warehouses.filter((w) => w.type === "PHYSICAL" || w.type === "STORE")
+  const holds = warehouses.filter((w) => w.type !== "PHYSICAL" && w.type !== "STORE")
+
+  function warehouseTab(w: MapWarehouse) {
+    const Icon = WAREHOUSE_ICON[w.type]
+    const current = w.id === wid
+    return (
+      <Link
+        key={w.id}
+        href={`/inventory/setup/warehouses/${w.id}/map`}
+        aria-current={current ? "page" : undefined}
+        title={w.isActive ? w.name : `${w.name} (inactive)`}
+        className={cn(
+          "inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[13px] whitespace-nowrap text-muted-foreground transition-colors hover:bg-card/60 hover:text-foreground",
+          current && "bg-card text-foreground shadow-xs ring-1 ring-foreground/5 hover:bg-card",
+          !w.isActive && !current && "opacity-60"
+        )}
+      >
+        <Icon className={cn("size-3.5 shrink-0", current && "text-primary")} />
+        <span className="font-mono text-xs font-bold">{w.code}</span>
+        {current && <span className="max-w-48 truncate">{w.name}</span>}
+        {!w.isActive && <span className="rounded bg-foreground/10 px-1 text-[10px] font-semibold uppercase">Off</span>}
+      </Link>
+    )
+  }
+
   /* ---------- Panel ---------- */
 
   let panel: React.ReactNode
@@ -539,7 +597,17 @@ export function RackMap({
       </>
     )
   } else {
-    panel = <OverviewPanel plan={plan} putAway={putAway} query={query} onSelectBin={selectBin} onMove={setMoveStart} />
+    panel = (
+      <OverviewPanel
+        plan={plan}
+        putAway={putAway}
+        query={query}
+        onSelectBin={selectBin}
+        onSelectItem={selectItem}
+        onMove={setMoveStart}
+        onEdit={() => (setEdit(true), setMode("units"))}
+      />
+    )
   }
 
   return (
@@ -570,135 +638,139 @@ export function RackMap({
         </div>
       </div>
 
-      <nav aria-label="Warehouses" className="flex max-w-full gap-0.5 self-start overflow-x-auto rounded-xl bg-muted p-1">
-        {warehouses.map((w) => (
-          <Link
-            key={w.id}
-            href={`/inventory/setup/warehouses/${w.id}/map`}
-            aria-current={w.id === wid ? "page" : undefined}
-            className={cn(
-              "inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[13px] whitespace-nowrap text-muted-foreground transition-colors hover:text-foreground",
-              w.id === wid && "bg-card text-foreground shadow-xs ring-1 ring-foreground/5"
-            )}
-          >
-            <span className="font-mono text-xs font-bold">{w.code}</span>
-            <span>{w.name}</span>
-          </Link>
-        ))}
+      <nav aria-label="Warehouses" className="flex flex-wrap items-center gap-1 self-start rounded-xl bg-muted p-1">
+        {sellable.map(warehouseTab)}
+        {holds.length > 0 && <span aria-hidden className="mx-1 h-5 w-px bg-border" />}
+        {holds.map(warehouseTab)}
       </nav>
 
+      <Kpis
+        className=""
+        items={[
+          { label: "On racks", value: n0(plan.totals.unitsOnRacks), hint: `${taka(rackValue)} at cost` },
+          { label: "Bins in use", value: `${plan.totals.binsUsed} of ${plan.totals.binsTotal}`, hint: `${binsFull}% full` },
+          { label: "To put away", value: n0(plan.totals.unitsToPutAway), hint: "at receiving or unassigned", warn: plan.totals.unitsToPutAway > 0 },
+          { label: "Damaged", value: n0(plan.totals.damagedUnits), hint: "in the damage section", warn: plan.totals.damagedUnits > 0 },
+          { label: "Movements", value: n0(moves), hint: `in and out, last ${plan.activityDays} days` },
+          { label: "Floor used", ...floorKpi },
+        ]}
+      />
+
       <div className="grid items-start gap-4 min-[1180px]:grid-cols-[minmax(0,1fr)_430px]">
-        <section className="overflow-hidden rounded-2xl border bg-card" aria-label="Floor plan">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-3.5 py-3">
-            <Tabs value={mode} onValueChange={(v) => (setMode(v as Mode), setEdit(false))}>
-              <TabsList className="h-8 rounded-lg p-0.5">
-                {MODES.map((m) => (
-                  <TabsTrigger key={m.value} value={m.value} className="h-7 px-2.5 text-[13px] data-active:shadow-xs">
-                    {m.label}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-            <div className="flex flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-xs whitespace-nowrap text-muted-foreground">
-              {mode === "route" ? (
+        <div className="flex min-w-0 flex-col gap-4">
+          <section className="overflow-hidden rounded-2xl border bg-card" aria-label="Floor plan">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-3.5 py-3">
+              <Tabs value={mode} onValueChange={(v) => (setMode(v as Mode), setEdit(false))}>
+                <TabsList className="h-8 rounded-lg p-0.5">
+                  {MODES.map((m) => (
+                    <TabsTrigger key={m.value} value={m.value} className="h-7 px-2.5 text-[13px] data-active:shadow-xs">
+                      {m.label}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+              <div className="flex flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-xs whitespace-nowrap text-muted-foreground">
+                {mode === "route" ? (
+                  <>
+                    <span className="inline-flex items-center gap-1.5"><i className="inline-block w-5 border-t-2 border-dashed border-slate-800" />Walking route</span>
+                    <span className="inline-flex items-center gap-1.5"><i className="grid size-4 place-items-center rounded-full bg-[#EE8524] text-[10px] font-bold text-white not-italic">1</i>Pick stop</span>
+                    <span className="inline-flex items-center gap-1.5"><i className="grid size-4 place-items-center rounded-full bg-slate-800 text-[10px] font-bold text-white not-italic">S</i>Start and finish</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="inline-flex items-center gap-1.5">
+                      0
+                      <i className="inline-block h-2 w-16 rounded-xs border" style={{ background: scaleGradient(mode) }} />
+                      {formatMetric(maxMetric(plan, mode), mode)}
+                    </span>
+                    <span className="inline-flex items-center gap-1.5"><i className="inline-block w-5 border-t-[3px] border-dashed border-[#EE8524]" />Pick face</span>
+                    <span className="inline-flex items-center gap-1.5"><i className="inline-block h-3 w-3.5 rounded-xs bg-[repeating-linear-gradient(45deg,#F5C518_0_3px,#14202B_3px_6px)]" />Dock</span>
+                    <span className="inline-flex items-center gap-1.5"><i className="inline-block h-3 w-3.5 rounded-xs border bg-[repeating-linear-gradient(45deg,#EEF1F4_0_3px,#C8D1DA_3px_5px)]" />Inactive</span>
+                  </>
+                )}
+              </div>
+              {floor && (
+                <Button size="sm" variant={edit ? "default" : "outline"} aria-pressed={edit} onClick={() => (setEdit(!edit), mode === "route" && setMode("units"))}>
+                  <PencilRulerIcon data-icon="inline-start" />
+                  {edit ? "Editing layout" : "Edit layout"}
+                </Button>
+              )}
+            </div>
+
+            <div className="relative bg-slate-50/70 px-3 pt-2.5 pb-1.5">
+              {floor && (
                 <>
-                  <span className="inline-flex items-center gap-1.5"><i className="inline-block w-5 border-t-2 border-dashed border-slate-800" />Walking route</span>
-                  <span className="inline-flex items-center gap-1.5"><i className="grid size-4 place-items-center rounded-full bg-[#EE8524] text-[10px] font-bold text-white not-italic">1</i>Pick stop</span>
-                  <span className="inline-flex items-center gap-1.5"><i className="grid size-4 place-items-center rounded-full bg-slate-800 text-[10px] font-bold text-white not-italic">S</i>Start and finish</span>
-                </>
-              ) : (
-                <>
-                  <span className="inline-flex items-center gap-1.5">
-                    0
-                    <i className="inline-block h-2 w-16 rounded-xs border" style={{ background: scaleGradient(mode) }} />
-                    {formatMetric(maxMetric(plan, mode), mode)}
+                  <span aria-hidden className="pointer-events-none absolute top-3 right-4 flex flex-col items-center text-[10px] font-bold text-slate-500">
+                    <span className="text-[13px] leading-none">↑</span>N
                   </span>
-                  <span className="inline-flex items-center gap-1.5"><i className="inline-block w-5 border-t-[3px] border-dashed border-[#EE8524]" />Pick face</span>
-                  <span className="inline-flex items-center gap-1.5"><i className="inline-block h-3 w-3.5 rounded-xs bg-[repeating-linear-gradient(45deg,#F5C518_0_3px,#14202B_3px_6px)]" />Dock</span>
-                  <span className="inline-flex items-center gap-1.5"><i className="inline-block h-3 w-3.5 rounded-xs border bg-[repeating-linear-gradient(45deg,#EEF1F4_0_3px,#C8D1DA_3px_5px)]" />Inactive</span>
+                  {/* 5 m at the plan's scale: the viewBox is the floor plus 1.2 m of margin. */}
+                  <span
+                    aria-hidden
+                    className="pointer-events-none absolute bottom-3 left-3 flex flex-col gap-0.5 text-[10px] font-semibold text-slate-500"
+                    style={{ width: `calc((100% - 1.5rem) * ${5 / (floor.width + 1.2)})` }}
+                  >
+                    <span className="h-1.5 w-full border-x-2 border-b-2 border-slate-400" />5 m
+                  </span>
                 </>
+              )}
+              {floor ? (
+                <svg
+                  ref={svgRef}
+                  viewBox={`-0.6 -1.4 ${floor.width + 1.2} ${floor.depth + 2}`}
+                  className="block h-auto w-full select-none"
+                  style={{ fontFamily: "var(--font-sans)" }}
+                  role="group"
+                  aria-label={`Floor plan of ${plan.warehouse.name}`}
+                  onPointerMove={pointerMove}
+                  onPointerUp={pointerUp}
+                  onPointerCancel={() => setDrag(null)}
+                >
+                  <defs>
+                    <pattern id="grid" width="1" height="1" patternUnits="userSpaceOnUse">
+                      <path d="M1 0H0V1" fill="none" stroke="#DDE3E9" strokeWidth="0.03" />
+                    </pattern>
+                    <pattern id="hazard" width="0.7" height="0.7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                      <rect width="0.35" height="0.7" fill="#F5C518" />
+                      <rect x="0.35" width="0.35" height="0.7" fill="#14202B" />
+                    </pattern>
+                    <pattern id="hatch" width="0.5" height="0.5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                      <rect width="0.5" height="0.5" fill="#EEF1F4" />
+                      <rect width="0.2" height="0.5" fill="#D5DCE3" />
+                    </pattern>
+                  </defs>
+                  <rect x={0} y={0} width={floor.width} height={floor.depth} rx={0.3} fill={edit ? "#FFFDF6" : "#fff"} stroke="#B8C3CE" strokeWidth={0.08} />
+                  <rect x={0} y={0} width={floor.width} height={floor.depth} fill="url(#grid)" pointerEvents="none" />
+                  {zones.map(drawZone)}
+                  {docks.map(drawDock)}
+                  {damage.map(drawDamage)}
+                  {racks.map(drawRack)}
+                  {drawRoute()}
+                </svg>
+              ) : (
+                <div className="flex flex-col items-center gap-2 py-16 text-center">
+                  <strong>No floor plan yet</strong>
+                  <p className="max-w-sm text-[13px] text-muted-foreground">
+                    Set the size of {plan.warehouse.name}’s floor first, then place its racks, docks and zones on it.
+                  </p>
+                  <Button size="sm" onClick={() => setSizing(true)}>Set floor size</Button>
+                </div>
               )}
             </div>
             {floor && (
-              <Button size="sm" variant={edit ? "default" : "outline"} aria-pressed={edit} onClick={() => (setEdit(!edit), mode === "route" && setMode("units"))}>
-                <PencilRulerIcon data-icon="inline-start" />
-                {edit ? "Editing layout" : "Edit layout"}
-              </Button>
-            )}
-          </div>
-
-          <div className="relative bg-slate-50/70 px-3 pt-2.5 pb-1.5">
-            {floor && (
-              <>
-                <span aria-hidden className="pointer-events-none absolute top-3 right-4 flex flex-col items-center text-[10px] font-bold text-slate-500">
-                  <span className="text-[13px] leading-none">↑</span>N
+              <div className="flex flex-wrap justify-between gap-2 px-3.5 pt-2 pb-3 text-[12.5px] text-muted-foreground">
+                <span>
+                  {plan.warehouse.name}, {floor.width} × {floor.depth} m floor
+                  {plan.items.length === 0 && ". Nothing is placed yet: use Edit layout."}
                 </span>
-                {/* 5 m at the plan's scale: the viewBox is the floor plus 1.2 m of margin. */}
-                <span
-                  aria-hidden
-                  className="pointer-events-none absolute bottom-3 left-3 flex flex-col gap-0.5 text-[10px] font-semibold text-slate-500"
-                  style={{ width: `calc((100% - 1.5rem) * ${5 / (floor.width + 1.2)})` }}
-                >
-                  <span className="h-1.5 w-full border-x-2 border-b-2 border-slate-400" />5 m
+                <span>
+                  {MODE_NOTE[mode]}
+                  {mode === "activity" && ` Last ${plan.activityDays} days.`}
                 </span>
-              </>
-            )}
-            {floor ? (
-              <svg
-                ref={svgRef}
-                viewBox={`-0.6 -1.4 ${floor.width + 1.2} ${floor.depth + 2}`}
-                className="block h-auto w-full select-none"
-                style={{ fontFamily: "var(--font-sans)" }}
-                role="group"
-                aria-label={`Floor plan of ${plan.warehouse.name}`}
-                onPointerMove={pointerMove}
-                onPointerUp={pointerUp}
-                onPointerCancel={() => setDrag(null)}
-              >
-                <defs>
-                  <pattern id="grid" width="1" height="1" patternUnits="userSpaceOnUse">
-                    <path d="M1 0H0V1" fill="none" stroke="#DDE3E9" strokeWidth="0.03" />
-                  </pattern>
-                  <pattern id="hazard" width="0.7" height="0.7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                    <rect width="0.35" height="0.7" fill="#F5C518" />
-                    <rect x="0.35" width="0.35" height="0.7" fill="#14202B" />
-                  </pattern>
-                  <pattern id="hatch" width="0.5" height="0.5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                    <rect width="0.5" height="0.5" fill="#EEF1F4" />
-                    <rect width="0.2" height="0.5" fill="#D5DCE3" />
-                  </pattern>
-                </defs>
-                <rect x={0} y={0} width={floor.width} height={floor.depth} rx={0.3} fill={edit ? "#FFFDF6" : "#fff"} stroke="#B8C3CE" strokeWidth={0.08} />
-                <rect x={0} y={0} width={floor.width} height={floor.depth} fill="url(#grid)" pointerEvents="none" />
-                {zones.map(drawZone)}
-                {docks.map(drawDock)}
-                {damage.map(drawDamage)}
-                {racks.map(drawRack)}
-                {drawRoute()}
-              </svg>
-            ) : (
-              <div className="flex flex-col items-center gap-2 py-16 text-center">
-                <strong>No floor plan yet</strong>
-                <p className="max-w-sm text-[13px] text-muted-foreground">
-                  Set the size of {plan.warehouse.name}’s floor first, then place its racks, docks and zones on it.
-                </p>
-                <Button size="sm" onClick={() => setSizing(true)}>Set floor size</Button>
               </div>
             )}
-          </div>
-          {floor && (
-            <div className="flex flex-wrap justify-between gap-2 px-3.5 pt-2 pb-3 text-[12.5px] text-muted-foreground">
-              <span>
-                {plan.warehouse.name}, {floor.width} × {floor.depth} m floor
-                {plan.items.length === 0 && ". Nothing is placed yet: use Edit layout."}
-              </span>
-              <span>
-                {MODE_NOTE[mode]}
-                {mode === "activity" && ` Last ${plan.activityDays} days.`}
-              </span>
-            </div>
-          )}
-        </section>
+          </section>
+          {!edit && <RackTable plan={plan} selectedId={rackId} onSelect={selectItem} />}
+        </div>
 
         <aside aria-label="Details" className="flex flex-col gap-3.5 min-[1180px]:sticky min-[1180px]:top-4 min-[1180px]:max-h-[calc(100dvh-2rem)] min-[1180px]:overflow-y-auto min-[1180px]:overscroll-contain">
           {panel}
