@@ -85,14 +85,20 @@ const SORTS = [
   { value: "total", label: "Highest total" },
 ]
 
-function Payment({ order }: { order: Order }) {
-  // The newest payment attempt says where the order stands; a paid one wins.
+// Total, then where the money stands: the latest payment attempt (a paid one wins) and what's still owed.
+function Amount({ order }: { order: Order }) {
   const payment = order.payments.find((p) => p.status === "PAID") ?? order.payments.at(-1)
-  if (!payment) return <Pill tone="amber">Unpaid</Pill>
+  const paid = order.payments.filter((p) => p.status === "PAID").reduce((s, p) => s + Number(p.amount), 0)
+  const due = Number(order.totalAmount) - paid
   return (
-    <span className="flex flex-col items-start gap-0.5">
-      <Pill tone={PAYMENT_TONE[payment.status] ?? "amber"}>{PAYMENT_LABEL[payment.status]}</Pill>
-      <span className="text-[11px] text-muted-foreground">{PROVIDER_LABEL[payment.provider]}</span>
+    <span className="flex flex-col items-end gap-1">
+      <span className="text-[17px] font-bold tracking-tight">{taka(Number(order.totalAmount))}</span>
+      {payment ? <Pill tone={PAYMENT_TONE[payment.status] ?? "amber"}>{PAYMENT_LABEL[payment.status]}</Pill> : <Pill tone="amber">Unpaid</Pill>}
+      {payment && <span className="text-[11px] whitespace-nowrap text-muted-foreground">{PROVIDER_LABEL[payment.provider]}</span>}
+      {due > 0 && !STOPPED.includes(order.status) && (
+        <span className="text-[11px] font-medium whitespace-nowrap text-amber-700 dark:text-amber-400">{taka(due)} due</span>
+      )}
+      {Number(order.discountAmount) > 0 && <span className="text-[11px] whitespace-nowrap text-emerald-700 dark:text-emerald-400">−{taka(Number(order.discountAmount))} off</span>}
     </span>
   )
 }
@@ -185,7 +191,7 @@ export function OrdersTable({
         if (rate !== null && rate < 80) rateTone = "text-amber-700 dark:text-amber-400"
         if (rate !== null && rate < 50) rateTone = "text-destructive"
         return (
-          <div className="flex w-60 flex-col gap-0.5 whitespace-normal">
+          <div className="flex w-56 flex-col gap-0.5 whitespace-normal">
             <span className="flex items-center gap-1.5">
               <span className="truncate font-medium">{o.customerName ?? o.customerEmail}</span>
               <span className="shrink-0 rounded bg-muted px-1 text-[10px] font-semibold text-muted-foreground uppercase">{o.userId ? "Account" : "Guest"}</span>
@@ -232,7 +238,7 @@ export function OrdersTable({
         const first = o.items[0]
         if (!first) return <span className="text-muted-foreground">No items</span>
         return (
-          <span className="flex max-w-64 items-center gap-3">
+          <span className="flex max-w-48 items-center gap-3 xl:max-w-56">
             <button
               type="button"
               onClick={() => setViewing(o)}
@@ -266,20 +272,9 @@ export function OrdersTable({
         )
       },
     },
-    { key: "payment", header: "Payment", cell: (o) => <Payment order={o} /> },
     { key: "fulfilment", header: "Fulfilment", className: "hidden md:table-cell", cell: (o) => <Fulfilment order={o} /> },
     { key: "status", header: "Status", cell: (o) => <StatusBadge status={ORDER_STATUS_LABEL[o.status]} /> },
-    {
-      key: "total",
-      header: "Total",
-      className: "text-right tabular-nums",
-      cell: (o) => (
-        <span className="flex flex-col items-end">
-          <span className="font-semibold">{taka(Number(o.totalAmount))}</span>
-          {Number(o.discountAmount) > 0 && <span className="text-[11px] text-emerald-700 dark:text-emerald-400">−{taka(Number(o.discountAmount))} off</span>}
-        </span>
-      ),
-    },
+    { key: "amount", header: "Amount", className: "text-right tabular-nums", cell: (o) => <Amount order={o} /> },
   ]
 
   const kept = orders.filter((o) => !STOPPED.includes(o.status))
