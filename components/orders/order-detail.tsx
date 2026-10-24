@@ -30,7 +30,7 @@ import {
 } from "@/app/actions/order.actions"
 import { Card, fmtDate, fmtDateTime, Kpis, label, n0, Pill, RackTag, rel, taka, type Tone, WarehouseTag } from "@/components/inventory/inventory-ui"
 import { MovementQuantity, MovementTag, movementRacks } from "@/components/inventory/movements-table"
-import { CARRIER_LABEL, ORDER_STATUS_LABEL, PAYMENT_LABEL } from "@/components/orders/orders-table"
+import { CANCELLABLE, CancelDialog, CARRIER_LABEL, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL } from "@/components/orders/orders-table"
 import { PrintInvoice } from "@/components/orders/print-invoice"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
@@ -44,17 +44,8 @@ import type { LedgerMovement, StockLevel, VariantStockDetail } from "@/types/inv
 import type { CourierCarrier, Order, OrderAddress, OrderDetail, OrderStatus, ShipmentStatus } from "@/types/order.type"
 
 // The next step on the happy path, as the backend allows it (ORDER_STATUS_TRANSITIONS).
-const NEXT: Partial<Record<OrderStatus, { status: OrderStatus; text: string }>> = {
-  PENDING: { status: "CONFIRMED", text: "Confirm order" },
-  CONFIRMED: { status: "PROCESSING", text: "Start processing" },
-  PROCESSING: { status: "READY_TO_SHIP", text: "Ready to ship" },
-  READY_TO_SHIP: { status: "SHIPPED", text: "Mark shipped" },
-  SHIPPED: { status: "DELIVERED", text: "Mark delivered" },
-  DELIVERED: { status: "COMPLETED", text: "Complete order" },
-}
 const STEPS: OrderStatus[] = ["PENDING", "CONFIRMED", "PROCESSING", "READY_TO_SHIP", "SHIPPED", "DELIVERED", "COMPLETED"]
 const STEP_LABEL: Partial<Record<OrderStatus, string>> = { PENDING: "Placed" }
-const CANCELLABLE: OrderStatus[] = ["PENDING", "CONFIRMED", "PROCESSING", "READY_TO_SHIP"]
 const STOPPED: OrderStatus[] = ["CANCELLED", "FAILED", "REFUNDED"]
 const OPEN_PAYMENT = ["PENDING", "PROCESSING"]
 // Shipment, payment and refund statuses that finished well or badly; the rest are in progress.
@@ -731,42 +722,6 @@ export function OrderDetailPage({
       )}
       {refunding && <RefundDialog orderId={order.id} max={refundable} onClose={() => setRefunding(false)} />}
     </div>
-  )
-}
-
-function CancelDialog({ orderId, orderNumber, onClose }: { orderId: string; orderNumber: string; onClose: () => void }) {
-  const [reason, setReason] = useState("")
-  const [error, setError] = useState("")
-  const [saving, setSaving] = useState(false)
-
-  async function cancel() {
-    if (!reason.trim()) return setError("Give a reason; the customer may see it.")
-    setSaving(true)
-    const res = await cancelOrder(orderId, reason.trim())
-    setSaving(false)
-    if (!res.success) return setError(res.error)
-    toast.success(`${orderNumber} cancelled`, { description: "Held stock was released." })
-    onClose()
-  }
-
-  return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Cancel {orderNumber}?</DialogTitle>
-          <DialogDescription>The order stops here and the stock it held goes back on sale. This can’t be undone.</DialogDescription>
-        </DialogHeader>
-        <Field>
-          <FieldLabel htmlFor="cancel-reason">Reason</FieldLabel>
-          <Textarea id="cancel-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Customer asked to cancel" />
-        </Field>
-        <DialogFooter className="items-center">
-          {error && <p className="mr-auto text-sm text-destructive">{error}</p>}
-          <Button variant="outline" onClick={onClose}>Keep order</Button>
-          <Button variant="destructive" onClick={cancel} disabled={saving}>{saving ? "Cancelling..." : "Cancel order"}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   )
 }
 

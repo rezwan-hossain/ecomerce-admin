@@ -2,15 +2,38 @@
 
 import Link from "next/link"
 import { useEffect, useState } from "react"
-import { ArrowRightIcon, MapPinIcon, MessageCircleIcon, PackageIcon, PhoneIcon } from "lucide-react"
+import { toast } from "sonner"
+import {
+  ArrowRightIcon,
+  BanknoteIcon,
+  CopyIcon,
+  EllipsisVerticalIcon,
+  EyeIcon,
+  MapPinIcon,
+  MessageCircleIcon,
+  PackageIcon,
+  PhoneIcon,
+  StepForwardIcon,
+  XCircleIcon,
+} from "lucide-react"
 
 import { Kpis, label, n0, Pill, rel, taka, type Tone } from "@/components/inventory/inventory-ui"
 import { ListTable, type ListColumn, type ListFilter } from "@/components/list-table"
+import { cancelOrder, markPaymentPaid, updateOrderStatus } from "@/app/actions/order.actions"
 import { getProduct } from "@/app/actions/product.actions"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Field, FieldLabel } from "@/components/ui/field"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import type { CourierCarrier, Order, OrderAddress, OrderStatus, PaymentStatus } from "@/types/order.type"
 import type { ProductDetail } from "@/types/product.type"
@@ -53,6 +76,16 @@ const PAYMENT_TONE: Partial<Record<PaymentStatus, Tone>> = { PAID: "green", FAIL
 const DAY = 86_400_000
 // Placed but not shipped yet.
 const UNFULFILLED: OrderStatus[] = ["PENDING", "CONFIRMED", "PROCESSING", "READY_TO_SHIP"]
+// The happy path, one step at a time (the backend's ORDER_STATUS_TRANSITIONS).
+export const NEXT: Partial<Record<OrderStatus, { status: OrderStatus; text: string }>> = {
+  PENDING: { status: "CONFIRMED", text: "Confirm order" },
+  CONFIRMED: { status: "PROCESSING", text: "Start processing" },
+  PROCESSING: { status: "READY_TO_SHIP", text: "Ready to ship" },
+  READY_TO_SHIP: { status: "SHIPPED", text: "Mark shipped" },
+  SHIPPED: { status: "DELIVERED", text: "Mark delivered" },
+  DELIVERED: { status: "COMPLETED", text: "Complete order" },
+}
+export const CANCELLABLE: OrderStatus[] = ["PENDING", "CONFIRMED", "PROCESSING", "READY_TO_SHIP"]
 const STOPPED: OrderStatus[] = ["CANCELLED", "FAILED", "REFUNDED"]
 
 const isPaid = (o: Order) => o.payments.some((p) => p.status === "PAID")
@@ -118,7 +151,7 @@ function Fulfilment({ order }: { order: Order }) {
     // Over two days without a parcel is worth a look.
     return <span className={cn("text-xs", age(order) > 2 ? "font-medium text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>Not shipped</span>
   }
-  return <span className="text-xs text-muted-foreground">No parcel recorded</span>
+  return <span className="text-xs text-muted-foreground">No parcel</span>
 }
 
 // One customer across orders: the phone's last 10 digits, else the email (guests have no account id).
@@ -151,6 +184,25 @@ export function OrdersTable({
 }) {
   const [sort, setSort] = useState("newest")
   const [viewing, setViewing] = useState<Order | null>(null)
+  const [cancelling, setCancelling] = useState<Order | null>(null)
+
+  async function advance(o: Order) {
+    const next = NEXT[o.status]!
+    const res = await updateOrderStatus(o.id, next.status)
+    if (!res.success) return toast.error(res.error)
+    toast.success(`${o.orderNumber} is now ${ORDER_STATUS_LABEL[next.status].toLowerCase()}`)
+  }
+
+  async function markPaid(o: Order, paymentId: string) {
+    const res = await markPaymentPaid(o.id, paymentId)
+    if (!res.success) return toast.error(res.error)
+    toast.success(`${o.orderNumber} marked as paid`)
+  }
+
+  function copy(text: string) {
+    navigator.clipboard.writeText(text)
+    toast.success(`Copied ${text}`)
+  }
 
   // Order count and delivery success per customer: delivered out of the orders that finished.
   const customers = new Map<string, { orders: number; finished: number; delivered: number }>()
@@ -238,7 +290,7 @@ export function OrdersTable({
         const first = o.items[0]
         if (!first) return <span className="text-muted-foreground">No items</span>
         return (
-          <span className="flex max-w-48 items-center gap-3 xl:max-w-56">
+          <span className="flex max-w-48 items-center gap-3 xl:max-w-52">
             <button
               type="button"
               onClick={() => setViewing(o)}
@@ -275,6 +327,67 @@ export function OrdersTable({
     { key: "fulfilment", header: "Fulfilment", className: "hidden md:table-cell", cell: (o) => <Fulfilment order={o} /> },
     { key: "status", header: "Status", cell: (o) => <StatusBadge status={ORDER_STATUS_LABEL[o.status]} /> },
     { key: "amount", header: "Amount", className: "text-right tabular-nums", cell: (o) => <Amount order={o} /> },
+    {
+      key: "actions",
+      header: <span className="sr-only">Actions</span>,
+      className: "w-10 pl-0",
+      cell: (o) => {
+        const next = NEXT[o.status]
+        const openPayment = STOPPED.includes(o.status) ? undefined : o.payments.find((p) => p.status === "PENDING" || p.status === "PROCESSING")
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="size-8 text-muted-foreground data-open:bg-muted" />}>
+              <EllipsisVerticalIcon />
+              <span className="sr-only">Actions for {o.orderNumber}</span>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuItem render={<Link href={`/orders/${o.id}`} />}>
+                <EyeIcon />
+                View order
+              </DropdownMenuItem>
+              {next && (
+                <DropdownMenuItem onClick={() => advance(o)}>
+                  <StepForwardIcon />
+                  {next.text}
+                </DropdownMenuItem>
+              )}
+              {openPayment && (
+                <DropdownMenuItem onClick={() => markPaid(o, openPayment.id)}>
+                  <BanknoteIcon />
+                  Mark as paid · {taka(Number(openPayment.amount))}
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => copy(o.orderNumber)}>
+                <CopyIcon />
+                Copy order number
+              </DropdownMenuItem>
+              {o.customerPhone && (
+                <>
+                  <DropdownMenuItem render={<a href={`tel:${o.customerPhone}`} />}>
+                    <PhoneIcon />
+                    Call customer
+                  </DropdownMenuItem>
+                  <DropdownMenuItem render={<a href={whatsApp(o.customerPhone)} target="_blank" rel="noreferrer" />}>
+                    <MessageCircleIcon />
+                    WhatsApp customer
+                  </DropdownMenuItem>
+                </>
+              )}
+              {CANCELLABLE.includes(o.status) && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onClick={() => setCancelling(o)}>
+                    <XCircleIcon />
+                    Cancel order
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )
+      },
+    },
   ]
 
   const kept = orders.filter((o) => !STOPPED.includes(o.status))
@@ -340,6 +453,7 @@ export function OrdersTable({
           </Select>
         }
       />
+      {cancelling && <CancelDialog orderId={cancelling.id} orderNumber={cancelling.orderNumber} onClose={() => setCancelling(null)} />}
       {viewing && <ItemsDialog key={viewing.id} order={viewing} images={images} onClose={() => setViewing(null)} />}
     </>
   )
@@ -447,6 +561,42 @@ function ItemsDialog({ order, images, onClose }: { order: Order; images: Record<
             Open order
             <ArrowRightIcon data-icon="inline-end" />
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+export function CancelDialog({ orderId, orderNumber, onClose }: { orderId: string; orderNumber: string; onClose: () => void }) {
+  const [reason, setReason] = useState("")
+  const [error, setError] = useState("")
+  const [saving, setSaving] = useState(false)
+
+  async function cancel() {
+    if (!reason.trim()) return setError("Give a reason; the customer may see it.")
+    setSaving(true)
+    const res = await cancelOrder(orderId, reason.trim())
+    setSaving(false)
+    if (!res.success) return setError(res.error)
+    toast.success(`${orderNumber} cancelled`, { description: "Held stock was released." })
+    onClose()
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Cancel {orderNumber}?</DialogTitle>
+          <DialogDescription>The order stops here and the stock it held goes back on sale. This can’t be undone.</DialogDescription>
+        </DialogHeader>
+        <Field>
+          <FieldLabel htmlFor="cancel-reason">Reason</FieldLabel>
+          <Textarea id="cancel-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Customer asked to cancel" />
+        </Field>
+        <DialogFooter className="items-center">
+          {error && <p className="mr-auto text-sm text-destructive">{error}</p>}
+          <Button variant="outline" onClick={onClose}>Keep order</Button>
+          <Button variant="destructive" onClick={cancel} disabled={saving}>{saving ? "Cancelling..." : "Cancel order"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
