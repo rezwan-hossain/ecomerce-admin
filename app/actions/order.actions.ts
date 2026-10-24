@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache"
 
 import { handleRequest } from "@/lib/action-response"
 import { api } from "@/lib/api"
-import type { Order, OrderDetail, OrderStatus, ShipmentDto, ShipmentStatus } from "@/types/order.type"
+import type { Order, OrderAddress, OrderDetail, OrderStatus, ShipmentDto, ShipmentStatus } from "@/types/order.type"
 
 // The API returns at most 100 per page, so walk the pages until there are no more.
 export async function getOrders() {
@@ -26,6 +26,18 @@ export async function getOrders() {
 
 export async function getOrder(id: string) {
   return handleRequest(async () => (await api.get<{ data: OrderDetail }>(`/orders/${id}`)).data)
+}
+
+// The list rows have no addresses, so read each order's shipping address from its detail.
+export async function getShippingAddresses(ids: string[]) {
+  const details = await Promise.all(ids.map((id) => getOrder(id)))
+  const addresses: Record<string, OrderAddress> = {}
+  for (const d of details) {
+    if (!d.success) continue
+    const address = d.data.addresses.find((a) => a.type === "SHIPPING")
+    if (address) addresses[d.data.id] = address
+  }
+  return addresses
 }
 
 // Every write changes the order page, the lists and (ship, cancel) stock.
