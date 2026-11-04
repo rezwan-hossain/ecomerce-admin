@@ -39,7 +39,7 @@ import {
 import { bookPathaoShipment, getPathaoStores, syncPathaoShipment } from "@/app/actions/pathao.actions"
 import { Card, fmtDate, fmtDateTime, Kpis, label, n0, Pill, RackTag, rel, taka, type Tone, WarehouseTag } from "@/components/inventory/inventory-ui"
 import { MovementQuantity, MovementTag, movementRacks } from "@/components/inventory/movements-table"
-import { CANCELLABLE, CancelDialog, CARRIER_LABEL, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL } from "@/components/orders/orders-table"
+import { CANCELLABLE, CancelDialog, CARRIER_LABEL, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL, RefreshButton } from "@/components/orders/orders-table"
 import { PrintInvoice } from "@/components/orders/print-invoice"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
@@ -249,6 +249,7 @@ export function OrderDetailPage({
           </p>
         </div>
         <div className="flex gap-2 print:hidden">
+          <RefreshButton />
           <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => window.print()}>
             <PrinterIcon />
             Print

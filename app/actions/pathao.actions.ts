@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { refresh as refreshOpenPage, revalidatePath } from "next/cache";
 
 import { handleRequest } from "@/lib/action-response";
 import { api, ApiError } from "@/lib/api";
@@ -64,4 +64,6 @@ function refresh(orderId: string) {
   revalidatePath("/orders");
   revalidatePath("/orders/pending");
   revalidatePath("/shipping");
+  // revalidatePath alone left the open order page showing old data after a booking; this re-fetches it now.
+  refreshOpenPage()
 }

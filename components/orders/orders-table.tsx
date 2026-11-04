@@ -1,7 +1,8 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
+import { useEffect, useState, useTransition } from "react"
 import { toast } from "sonner"
 import {
   ArrowRightIcon,
@@ -13,6 +14,7 @@ import {
   MessageCircleIcon,
   PackageIcon,
   PhoneIcon,
+  RefreshCwIcon,
   StepForwardIcon,
   XCircleIcon,
 } from "lucide-react"
@@ -136,6 +138,35 @@ function Amount({ order }: { order: Order }) {
   )
 }
 
+// The courier's tracking number (else its consignment id), linked when there's a tracking page, with a copy button.
+function TrackingId({ shipment }: { shipment: Order["shipments"][number] }) {
+  const id = shipment.trackingNumber ?? shipment.consignmentId
+  if (!id) return null
+  return (
+    <span className="mt-0.5 flex items-center gap-0.5">
+      {shipment.trackingUrl ? (
+        <a href={shipment.trackingUrl} target="_blank" rel="noreferrer" title={`Track ${id}`} className="max-w-28 truncate font-mono text-[11px] text-primary hover:underline">
+          {id}
+        </a>
+      ) : (
+        <span title={id} className="max-w-28 truncate font-mono text-[11px]">{id}</span>
+      )}
+      <button
+        type="button"
+        aria-label={`Copy tracking ID ${id}`}
+        title="Copy tracking ID"
+        className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+        onClick={() => {
+          navigator.clipboard.writeText(id)
+          toast.success(`Copied ${id}`)
+        }}
+      >
+        <CopyIcon className="size-3" />
+      </button>
+    </span>
+  )
+}
+
 function Fulfilment({ order }: { order: Order }) {
   const shipment = order.shipments.at(-1)
   if (shipment) {
@@ -143,6 +174,7 @@ function Fulfilment({ order }: { order: Order }) {
       <span className="flex flex-col">
         <span className="font-medium">{CARRIER_LABEL[shipment.carrier] ?? shipment.carrier}</span>
         <span className="text-[11px] text-muted-foreground">{label(shipment.status)}</span>
+        <TrackingId shipment={shipment} />
       </span>
     )
   }
@@ -290,7 +322,7 @@ export function OrdersTable({
         const first = o.items[0]
         if (!first) return <span className="text-muted-foreground">No items</span>
         return (
-          <span className="flex max-w-48 items-center gap-3 xl:max-w-52">
+          <span className="flex max-w-48 items-center gap-3 xl:max-w-[12.25rem]">
             <button
               type="button"
               onClick={() => setViewing(o)}
@@ -445,12 +477,15 @@ export function OrdersTable({
         filters={mode === "pending" ? pendingFilters : allFilters}
         emptyText={mode === "pending" ? "All caught up — no pending orders." : "No orders yet."}
         toolbar={
-          <Select value={sort} items={SORTS} onValueChange={(v) => setSort(v as string)}>
-            <SelectTrigger size="sm" aria-label="Sort orders" className="hidden w-36 sm:flex"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {SORTS.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          <>
+            <Select value={sort} items={SORTS} onValueChange={(v) => setSort(v as string)}>
+              <SelectTrigger size="sm" aria-label="Sort orders" className="hidden w-36 sm:flex"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {SORTS.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <RefreshButton iconOnly />
+          </>
         }
       />
       {cancelling && <CancelDialog orderId={cancelling.id} orderNumber={cancelling.orderNumber} onClose={() => setCancelling(null)} />}
@@ -600,5 +635,30 @@ export function CancelDialog({ orderId, orderNumber, onClose }: { orderId: strin
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+// Re-runs the page's server fetches (new orders, courier updates) without a full reload.
+export function RefreshButton({ iconOnly = false }: { iconOnly?: boolean }) {
+  const router = useRouter()
+  const [pending, startTransition] = useTransition()
+  return (
+    <Button
+      size={iconOnly ? "icon-sm" : "sm"}
+      variant="outline"
+      className="bg-card"
+      disabled={pending}
+      title="Refresh"
+      aria-label="Refresh"
+      onClick={() =>
+        startTransition(() => {
+          router.refresh()
+          toast.success("Up to date")
+        })
+      }
+    >
+      <RefreshCwIcon className={cn(pending && "animate-spin")} />
+      {!iconOnly && (pending ? "Refreshing..." : "Refresh")}
+    </Button>
   )
 }
