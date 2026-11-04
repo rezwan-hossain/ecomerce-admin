@@ -85,6 +85,8 @@ export interface Shipment {
   shippedAt: string | null;
   deliveredAt: string | null;
   createdAt: string;
+  // Pathao parcels keep Pathao's last status and its delivery fee here.
+  metadata?: { pathaoStatus?: string; pathaoStatusAt?: string; pathaoDeliveryFee?: number } | null;
 }
 
 export interface ShipmentDto {
@@ -99,18 +101,29 @@ export interface ShipmentDto {
 
 export interface OrderAddress {
   id: string;
+  orderId: string;
   type: "SHIPPING" | "BILLING";
-  firstName: string | null;
-  lastName: string | null;
-  phone: string | null;
+  fullName: string;
+  phone: string;
   company: string | null;
-  addressLine1: string;
-  addressLine2: string | null;
+  fullAddress: string; // one line, e.g. "House 123, Road 4, Sector 10, Uttara, Dhaka-1230"
   city: string;
-  state: string | null;
-  postalCode: string | null;
-  country: string;
+  country: string | null;
+  createdAt: string;
 }
+
+// What the admin sends; an edit sends only the changed fields.
+export interface OrderAddressBody {
+  fullName: string; // 1 – 200
+  phone: string; // 1 – 30
+  company?: string;
+  fullAddress: string; // 10 – 255
+  city: string;
+  country?: string;
+}
+
+// "House 12, Road 5, Uttara · Dhaka · BD", leaving out what's missing.
+export const formatAddress = (a: Pick<OrderAddress, "fullAddress" | "city" | "country">) => [a.fullAddress, a.city, a.country].filter(Boolean).join(" · ")
 
 // GET /orders/:id: the list row plus addresses, discounts, history and refunds.
 export interface OrderDetail extends Omit<Order, "items" | "payments"> {

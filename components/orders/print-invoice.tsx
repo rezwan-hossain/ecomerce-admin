@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { createPortal } from "react-dom"
 
 import { fmtDate, taka } from "@/components/inventory/inventory-ui"
-import type { OrderDetail } from "@/types/order.type"
+import { formatAddress, type OrderDetail } from "@/types/order.type"
 
 const STORE_NAME = "Acme Store"
 
@@ -31,10 +31,10 @@ export function PrintInvoice({ order }: { order: OrderDetail }) {
       </div>
 
       <p className="py-2">
-        <strong>{order.customerName ?? order.customerEmail}</strong>
-        {order.customerPhone && ` · ${order.customerPhone}`}
+        <strong>{ship?.fullName ?? order.customerName ?? order.customerEmail}</strong>
+        {(ship?.phone ?? order.customerPhone) && ` · ${ship?.phone ?? order.customerPhone}`}
         {ship && <br />}
-        {ship && [ship.addressLine1, ship.addressLine2, ship.city, ship.postalCode].filter(Boolean).join(", ")}
+        {ship && formatAddress(ship)}
       </p>
 
       <table className="w-full border-collapse">

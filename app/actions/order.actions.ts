@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache"
 
 import { handleRequest } from "@/lib/action-response"
 import { api } from "@/lib/api"
-import type { Order, OrderAddress, OrderDetail, OrderStatus, ShipmentDto, ShipmentStatus } from "@/types/order.type"
+import type { Order, OrderAddress, OrderAddressBody, OrderDetail, OrderStatus, ShipmentDto, ShipmentStatus } from "@/types/order.type"
 
 // The API returns at most 100 per page, so walk the pages until there are no more.
 export async function getOrders() {
@@ -50,6 +50,13 @@ function refresh(id: string) {
 
 export async function updateOrderStatus(id: string, status: OrderStatus, note?: string) {
   const res = await handleRequest(() => api.patch(`/orders/${id}/status`, { status, note }))
+  if (res.success) refresh(id)
+  return res
+}
+
+// Allowed until the order ships. Send only the fields that changed.
+export async function updateOrderAddress(id: string, type: "SHIPPING" | "BILLING", dto: Partial<OrderAddressBody>) {
+  const res = await handleRequest(() => api.patch(`/orders/${id}/addresses/${type}`, dto))
   if (res.success) refresh(id)
   return res
 }

@@ -35,7 +35,7 @@ import { Field, FieldLabel } from "@/components/ui/field"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
-import type { CourierCarrier, Order, OrderAddress, OrderStatus, PaymentStatus } from "@/types/order.type"
+import { formatAddress, type CourierCarrier, type Order, type OrderAddress, type OrderStatus, type PaymentStatus } from "@/types/order.type"
 import type { ProductDetail } from "@/types/product.type"
 
 export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
@@ -274,7 +274,7 @@ export function OrdersTable({
               <span className="flex items-start gap-1 text-[11px] text-muted-foreground" title={o.customerEmail}>
                 <MapPinIcon className="mt-px size-3 shrink-0" />
                 <span className="line-clamp-2">
-                  {[address.addressLine1, address.addressLine2, address.city, address.state, address.postalCode].filter(Boolean).join(", ")}
+                  {formatAddress(address)}
                 </span>
               </span>
             )}

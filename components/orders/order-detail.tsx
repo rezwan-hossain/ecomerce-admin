@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import {
   ArrowLeftIcon,
@@ -9,25 +9,34 @@ import {
   CircleXIcon,
   CopyIcon,
   ExternalLinkIcon,
+  FileTextIcon,
   MailIcon,
   MapPinIcon,
   PackageIcon,
+  PencilIcon,
   PhoneIcon,
   PrinterIcon,
+  RefreshCwIcon,
+  StickyNoteIcon,
+  StoreIcon,
   TruckIcon,
   Undo2Icon,
+  UserIcon,
+  XIcon,
+  ZapIcon,
 } from "lucide-react"
 
 import {
-  cancelOrder,
   createRefundRequest,
   createShipment,
+  updateOrderAddress,
   markPaymentFailed,
   markPaymentPaid,
   reviewRefund,
   updateOrderStatus,
   updateShipmentStatus,
 } from "@/app/actions/order.actions"
+import { bookPathaoShipment, getPathaoStores, syncPathaoShipment } from "@/app/actions/pathao.actions"
 import { Card, fmtDate, fmtDateTime, Kpis, label, n0, Pill, RackTag, rel, taka, type Tone, WarehouseTag } from "@/components/inventory/inventory-ui"
 import { MovementQuantity, MovementTag, movementRacks } from "@/components/inventory/movements-table"
 import { CANCELLABLE, CancelDialog, CARRIER_LABEL, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL } from "@/components/orders/orders-table"
@@ -39,9 +48,11 @@ import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 import type { LedgerMovement, StockLevel, VariantStockDetail } from "@/types/inventory.type"
-import type { CourierCarrier, Order, OrderAddress, OrderDetail, OrderStatus, ShipmentStatus } from "@/types/order.type"
+import { formatAddress, type CourierCarrier, type Order, type OrderAddress, type OrderAddressBody, type OrderDetail, type OrderStatus, type Shipment, type ShipmentStatus } from "@/types/order.type"
+import type { PathaoDeliveryType, PathaoItemType, PathaoStore } from "@/types/pathao.type"
 
 // The next step on the happy path, as the backend allows it (ORDER_STATUS_TRANSITIONS).
 const STEPS: OrderStatus[] = ["PENDING", "CONFIRMED", "PROCESSING", "READY_TO_SHIP", "SHIPPED", "DELIVERED", "COMPLETED"]
@@ -68,18 +79,12 @@ function stockTone(l: StockLevel, threshold: number) {
 }
 
 function Address({ address }: { address: OrderAddress }) {
-  const name = [address.firstName, address.lastName].filter(Boolean).join(" ")
   return (
     <address className="text-sm leading-relaxed not-italic">
-      {name && <div className="font-medium">{name}</div>}
+      <div className="font-medium">{address.fullName}</div>
       {address.company && <div>{address.company}</div>}
-      <div className="text-muted-foreground">
-        {address.addressLine1}
-        {address.addressLine2 && <>, {address.addressLine2}</>}
-        <br />
-        {[address.city, address.state, address.postalCode].filter(Boolean).join(", ")} · {address.country}
-      </div>
-      {address.phone && <div className="text-muted-foreground">{address.phone}</div>}
+      <div className="text-muted-foreground">{formatAddress(address)}</div>
+      <div className="text-muted-foreground">{address.phone}</div>
     </address>
   )
 }
@@ -100,6 +105,8 @@ export function OrderDetailPage({
   const [busy, setBusy] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [shipping, setShipping] = useState(false)
+  const [bookingPathao, setBookingPathao] = useState(false)
+  const [pathaoLog, setPathaoLog] = useState<{ ok: boolean; reply: unknown; at: string } | null>(null)
   const [refunding, setRefunding] = useState(false)
 
   const next = NEXT[order.status]
@@ -116,6 +123,8 @@ export function OrderDetailPage({
   const reachedAt = new Map(logs.map((l) => [l.toStatus, l.createdAt]))
   const lastLog = logs.at(-1)
   const canShip = ["CONFIRMED", "PROCESSING", "READY_TO_SHIP"].includes(order.status)
+  // The backend refuses a second Pathao parcel while one is still on the way.
+  const hasOpenPathao = order.shipments.some((s) => s.carrier === "PATHAO" && !SHIPMENT_DONE.includes(s.status) && s.status !== "FAILED")
   const payment = order.payments.find((p) => p.status === "PAID") ?? order.payments.at(-1)
   const placedAt = order.placedAt ?? order.createdAt
   // Item promotions live on each line; order-level discounts (codes) in `discounts`.
@@ -130,7 +139,7 @@ export function OrderDetailPage({
   const billing = order.addresses.find((a) => a.type === "BILLING")
   // Checkout copies the shipping address into billing when the customer gives only one.
   const sameAddress = (a: OrderAddress, b: OrderAddress) =>
-    a.addressLine1 === b.addressLine1 && a.addressLine2 === b.addressLine2 && a.city === b.city && a.postalCode === b.postalCode && a.firstName === b.firstName
+    a.fullName === b.fullName && a.phone === b.phone && a.fullAddress === b.fullAddress && a.city === b.city
   let billingAddress = billing
   if (billing && shippingAddress && sameAddress(billing, shippingAddress)) billingAddress = undefined
 
@@ -183,6 +192,26 @@ export function OrderDetailPage({
     setBusy(false)
     if (!res.success) return toast.error(res.error)
     toast.success(`Shipment is now ${label(status).toLowerCase()}`)
+  }
+
+  // One click books with the usual settings; the backend fills in the item count and the cash still due.
+  async function bookPathao() {
+    setBusy(true)
+    const res = await bookPathaoShipment(order.id, { deliveryType: "NORMAL", itemType: "PARCEL", itemWeight: 0.5 })
+    setBusy(false)
+    setPathaoLog({ ok: res.success, reply: res.reply, at: new Date().toISOString() })
+    if (!res.success) return toast.error(res.error)
+    toast.success(`${order.orderNumber} booked with Pathao`, { description: "The rider will pick it up from your store." })
+  }
+
+  async function syncPathao(shipmentId: string) {
+    setBusy(true)
+    const res = await syncPathaoShipment(order.id, shipmentId)
+    setBusy(false)
+    const reply = <ApiReply reply={res.reply} />
+    if (!res.success) return toast.error(res.error, { description: reply, duration: 15000 })
+    const title = res.data.updated ? `Shipment is now ${label(res.data.status).toLowerCase()}` : `No change · Pathao says: ${pathaoText(res.data.pathaoStatus)}`
+    toast.success(title, { description: reply, duration: 15000 })
   }
 
   async function review(refundId: string, action: "approve" | "reject" | "process") {
@@ -393,13 +422,44 @@ export function OrderDetailPage({
             title="Shipments"
             action={
               canShip && (
-                <Button size="sm" variant="outline" onClick={() => setShipping(true)}>
-                  <TruckIcon />
-                  Add shipment
-                </Button>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setShipping(true)}>
+                    <TruckIcon />
+                    Add shipment
+                  </Button>
+                  <span className="flex" title={hasOpenPathao ? "This order already has a Pathao parcel on the way" : undefined}>
+                    <Button size="sm" className="rounded-r-none" onClick={bookPathao} disabled={busy || hasOpenPathao}>
+                      <PathaoMark />
+                      {busy ? "Booking..." : "Book with Pathao"}
+                    </Button>
+                    <Button
+                      size="icon-sm"
+                      className="rounded-l-none border-l border-primary-foreground/25"
+                      onClick={() => setBookingPathao(true)}
+                      disabled={busy || hasOpenPathao}
+                      aria-label="Book with Pathao, choose the settings"
+                      title="Choose store, weight, cash to collect..."
+                    >
+                      <PencilIcon />
+                    </Button>
+                  </span>
+                </div>
               )
             }
           >
+            {pathaoLog && (
+              <div className="px-4 pb-3">
+                <PathaoLog
+                  {...pathaoLog}
+                  order={order}
+                  parcel={`${units} ${units === 1 ? "item" : "items"} · 0.5 kg · Normal`}
+                  collect={Math.max(0, Math.round(due))}
+                  onRetry={bookPathao}
+                  onEdit={() => setBookingPathao(true)}
+                  onDismiss={() => setPathaoLog(null)}
+                />
+              </div>
+            )}
             {order.shipments.length === 0 ? (
               <p className="px-4 pb-4 text-sm text-muted-foreground">Not shipped yet.</p>
             ) : (
@@ -417,7 +477,19 @@ export function OrderDetailPage({
                           {s.shippedAt && ` · shipped ${fmtDate(s.shippedAt)}`}
                           {s.deliveredAt && ` · delivered ${fmtDate(s.deliveredAt)}`}
                         </div>
+                        {s.metadata?.pathaoStatus && (
+                          <div className="text-xs text-muted-foreground">
+                            Pathao: <span className="font-medium text-foreground">{pathaoText(s.metadata.pathaoStatus)}</span>
+                            {s.metadata.pathaoStatusAt && ` · ${rel(s.metadata.pathaoStatusAt)}`}
+                          </div>
+                        )}
                       </div>
+                      {s.carrier === "PATHAO" && s.consignmentId && !SHIPMENT_DONE.includes(s.status) && (
+                        <Button size="sm" variant="ghost" onClick={() => syncPathao(s.id)} disabled={busy} title="Ask Pathao for the latest status">
+                          <RefreshCwIcon className={cn(busy && "animate-spin")} />
+                          Sync
+                        </Button>
+                      )}
                       {SHIPMENT_DONE.includes(s.status) ? (
                         <Pill tone={TONE[s.status] ?? "grey"}>{label(s.status)}</Pill>
                       ) : (
@@ -452,7 +524,12 @@ export function OrderDetailPage({
                       </div>
                       <div>
                         <dt className="text-muted-foreground">Courier charge</dt>
-                        <dd className="tabular-nums">{taka(Number(s.shippingAmount), 2)}</dd>
+                        <dd className="tabular-nums">
+                          {/* Pathao's fee is kept in metadata; the shipment's own charge stays 0. */}
+                          {Number(s.shippingAmount) === 0 && s.metadata?.pathaoDeliveryFee !== undefined
+                            ? taka(s.metadata.pathaoDeliveryFee, 2)
+                            : taka(Number(s.shippingAmount), 2)}
+                        </dd>
                       </div>
                     </dl>
                   </li>
@@ -717,11 +794,567 @@ export function OrderDetailPage({
 
       <PrintInvoice order={order} />
       {cancelling && <CancelDialog orderId={order.id} orderNumber={order.orderNumber} onClose={() => setCancelling(false)} />}
+      {bookingPathao && <PathaoDialog order={order} due={Math.max(0, due)} onClose={() => setBookingPathao(false)} />}
       {shipping && (
         <ShipmentDialog orderId={order.id} orderNumber={order.orderNumber} codAmount={codOpen ? due : 0} onClose={() => setShipping(false)} />
       )}
       {refunding && <RefundDialog orderId={order.id} max={refundable} onClose={() => setRefunding(false)} />}
     </div>
+  )
+}
+
+// "order.at-the-sorting-hub", "At_the_Sorting_HUB" or "Pending" → "At the sorting hub"
+const pathaoText = (status: string) => {
+  const words = status.replace(/^order\./, "").replace(/[-_\s]+/g, " ").trim().toLowerCase()
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+// Pathao's logo (public/couriers/pathao.png, from their GitHub avatar); the round crop hides its black corners.
+function PathaoMark({ className }: { className?: string }) {
+  return (
+    <span aria-hidden className={cn("size-4 shrink-0 overflow-hidden rounded-full bg-white", className)}>
+      {/* eslint-disable-next-line @next/next/no-img-element -- a 16px static icon */}
+      <img src="/couriers/pathao.png" alt="" className="size-full scale-[1.12] object-cover" />
+    </span>
+  )
+}
+
+// Plain-words help for the booking errors we know; anything else shows the API's own message.
+function pathaoTip(message: string) {
+  if (/storeId|PATHAO_STORE_ID/i.test(message)) return "No pickup store. Pick one with the pencil, or set PATHAO_STORE_ID in the backend's .env."
+  if (/not configured|log in to Pathao/i.test(message)) return "The backend can't sign in to Pathao. Check the PATHAO_* settings, or try later if Pathao is down."
+  if (/mobile|phone/i.test(message)) return "Fix the phone on the shipping address: Pathao needs an 11-digit number like 01712345678."
+  if (/address/i.test(message)) return "The shipping address is too short for Pathao (at least 10 characters)."
+  return null
+}
+
+// One booking attempt, logged like an SMS gateway entry: outcome, recipient, what was sent and the raw reply.
+function PathaoLog({
+  ok,
+  reply,
+  at,
+  order,
+  parcel,
+  collect,
+  onRetry,
+  onEdit,
+  onDismiss,
+}: {
+  ok: boolean
+  reply: unknown
+  at: string
+  order: OrderDetail
+  parcel: string // "1 item · 0.5 kg · Normal"
+  collect: number
+  onRetry?: () => void
+  onEdit?: () => void
+  onDismiss?: () => void
+}) {
+  const address = order.addresses.find((a) => a.type === "SHIPPING")
+  const phone = address?.phone ?? order.customerPhone
+  const name = address?.fullName || order.customerName
+  const raw = (reply as { message?: string | string[] } | null)?.message
+  const message = Array.isArray(raw) ? raw.join(", ") : raw
+  const tip = !ok && message ? pathaoTip(message) : null
+  // A booking answers with the whole order; the new parcel is its latest Pathao shipment.
+  const parcelId = ok ? (reply as { shipments?: Shipment[] } | null)?.shipments?.filter((sh) => sh.carrier === "PATHAO").at(-1)?.consignmentId : null
+  const Icon = ok ? CheckIcon : CircleXIcon
+
+  return (
+    <div className={cn("overflow-hidden rounded-xl border border-l-4 bg-card", ok ? "border-l-emerald-500" : "border-l-red-500")}>
+      <div className="flex items-start gap-3 px-4 pt-3">
+        <span className={cn("mt-0.5 grid size-7 shrink-0 place-items-center rounded-full", ok ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400" : "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400")}>
+          <Icon className="size-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span
+              className={cn(
+                "rounded border px-1.5 py-px text-[11px] font-semibold tracking-wide uppercase",
+                ok
+                  ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-400"
+                  : "border-red-300 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-400"
+              )}
+            >
+              Pathao · {ok ? "Booked" : "Failed"}
+            </span>
+            <span className="text-sm font-medium">{ok ? "Parcel booked" : "Couldn’t book this parcel"}</span>
+            <span className="ml-auto text-xs text-muted-foreground" title={fmtDateTime(at)}>{rel(at)}</span>
+          </div>
+          {parcelId && (
+            <p className="mt-1 text-sm text-muted-foreground">
+              Consignment <span className="font-mono font-medium text-foreground">{parcelId}</span>. The rider will pick it up from your store.
+            </p>
+          )}
+          {!ok && message && <p className="mt-1 text-sm text-red-700 dark:text-red-400">{message}</p>}
+          {tip && <p className="mt-0.5 text-[13px] text-muted-foreground">{tip}</p>}
+        </div>
+        {onDismiss && (
+          <Button size="icon-xs" variant="ghost" className="-mr-1 text-muted-foreground" onClick={onDismiss} aria-label="Hide this log">
+            <XIcon />
+          </Button>
+        )}
+      </div>
+
+      <dl className="mx-4 mt-3 grid grid-cols-3 gap-px overflow-hidden rounded-lg border bg-border text-[13px]">
+        <div className="min-w-0 bg-muted/40 px-3 py-2">
+          <dt className="text-[11px] text-muted-foreground">To</dt>
+          <dd className="truncate font-medium">{name}</dd>
+          {phone && <dd className="font-mono text-xs text-muted-foreground">0{phone.replace(/\D/g, "").slice(-10)}</dd>}
+        </div>
+        <div className="min-w-0 bg-muted/40 px-3 py-2">
+          <dt className="text-[11px] text-muted-foreground">Parcel</dt>
+          <dd className="font-medium">{parcel}</dd>
+          <dd className="text-xs text-muted-foreground">{order.orderNumber}</dd>
+        </div>
+        <div className="min-w-0 bg-muted/40 px-3 py-2">
+          <dt className="text-[11px] text-muted-foreground">Collect on delivery</dt>
+          <dd className="font-medium tabular-nums">{collect > 0 ? taka(collect) : "Nothing"}</dd>
+          <dd className="text-xs text-muted-foreground">{collect > 0 ? "cash from the customer" : "prepaid"}</dd>
+        </div>
+      </dl>
+
+      <div className="px-4 pt-2.5 pb-3">
+        <ApiReply reply={reply} />
+      </div>
+
+      {!ok && (onRetry || onEdit) && (
+        <div className="flex justify-end gap-2 border-t bg-muted/30 px-4 py-2">
+          {onEdit && (
+            <Button size="sm" variant="outline" onClick={onEdit}>
+              <PencilIcon />
+              Change settings
+            </Button>
+          )}
+          {onRetry && (
+            <Button size="sm" onClick={onRetry}>
+              <RefreshCwIcon />
+              Try again
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// The raw JSON an API call answered, on one line, for checking what the courier really said.
+// Long replies (a booking answers with the whole order) are clamped until opened.
+function ApiReply({ reply }: { reply: unknown }) {
+  const [open, setOpen] = useState(false)
+  const text = JSON.stringify(reply) ?? "No reply"
+  const long = text.length > 200
+  return (
+    <div className="rounded-md bg-muted/50 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+      <div className="mb-0.5 flex items-center justify-between font-sans text-[11px]">
+        <span className="font-medium tracking-wide uppercase">API reply</span>
+        <span className="flex gap-3">
+          {long && (
+            <button type="button" className="text-primary hover:underline" onClick={() => setOpen(!open)}>
+              {open ? "Show less" : "Show all"}
+            </button>
+          )}
+          <button
+            type="button"
+            className="text-primary hover:underline"
+            onClick={() => {
+              navigator.clipboard.writeText(JSON.stringify(reply, null, 2) ?? "")
+              toast.success("Reply copied")
+            }}
+          >
+            Copy
+          </button>
+        </span>
+      </div>
+      <p className={cn("break-all", long && !open && "line-clamp-2")}>{text}</p>
+    </div>
+  )
+}
+
+const ALL = "all"
+const sameAs = (value: string) => (value === ALL ? undefined : Number(value))
+
+type AddressForm = { fullName: string; phone: string; fullAddress: string; city: string; country: string }
+
+// The checks Pathao runs before taking a parcel (backend pathao-recipient.ts), so problems show before booking.
+function pathaoProblems(a: AddressForm, customerName: string | null, customerPhone: string | null) {
+  const problems: string[] = []
+  const toBd = (raw: string | null) => {
+    let digits = (raw ?? "").replace(/\D/g, "")
+    if (digits.startsWith("880")) digits = digits.slice(2)
+    return /^01[3-9]\d{8}$/.test(digits)
+  }
+  if (!toBd(a.phone) && !toBd(customerPhone)) problems.push("Pathao needs a Bangladeshi mobile number, e.g. 01712345678.")
+  else if (a.phone.trim() && !toBd(a.phone)) problems.push("This phone isn’t a Bangladeshi mobile number, so Pathao will call the customer’s account number instead.")
+  if ((a.fullName.trim() || customerName || "").trim().length < 3) problems.push("The name must be at least 3 characters.")
+  // Pathao gets the full address, plus the city when the address doesn't mention it.
+  const sent = a.fullAddress.toLowerCase().includes(a.city.trim().toLowerCase()) ? a.fullAddress : [a.fullAddress, a.city].filter(Boolean).join(", ")
+  if (sent.trim().length < 10) problems.push("The address must be at least 10 characters.")
+  return problems
+}
+
+// Books the parcel at Pathao. Pathao works out the city, zone and area from the address text,
+// and its delivery charge is only known once the parcel is booked.
+function PathaoDialog({ order, due, onClose }: { order: OrderDetail; due: number; onClose: () => void }) {
+  const address = order.addresses.find((a) => a.type === "SHIPPING")
+  // Pathao gets 11 digits ("01712345678"); the address phone wins over the customer's.
+  const phone = address?.phone ?? order.customerPhone
+  const [stores, setStores] = useState<PathaoStore[] | null>(null)
+  const [storeId, setStoreId] = useState(ALL)
+  const [deliveryType, setDeliveryType] = useState<PathaoDeliveryType>("NORMAL")
+  const [itemType, setItemType] = useState<PathaoItemType>("PARCEL")
+  const [weight, setWeight] = useState("0.5")
+  const [quantity, setQuantity] = useState(String(order.items.reduce((s, i) => s + i.quantity, 0)))
+  const [collect, setCollect] = useState(String(Math.round(due)))
+  const [description, setDescription] = useState(order.items.map((i) => `${i.quantity} × ${i.productName}`).join(", ").slice(0, 255))
+  const [instruction, setInstruction] = useState("")
+  const [error, setError] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [reply, setReply] = useState<{ ok: boolean; body: unknown; at: string } | null>(null)
+  const [storeError, setStoreError] = useState("")
+  const [addressForm, setAddressForm] = useState<AddressForm | null>(null)
+  const [addressError, setAddressError] = useState("")
+  const [savingAddress, setSavingAddress] = useState(false)
+
+  function editAddress() {
+    if (!address) return
+    setAddressError("")
+    setAddressForm({ fullName: address.fullName, phone: address.phone, fullAddress: address.fullAddress, city: address.city, country: address.country ?? "" })
+  }
+
+  async function saveAddress() {
+    if (!addressForm) return
+    if (!address) return
+    const form = Object.fromEntries(Object.entries(addressForm).map(([k, v]) => [k, v.trim()])) as AddressForm
+    if (!form.fullName || !form.phone || !form.city) return setAddressError("Full name, phone and city are required.")
+    if (form.fullAddress.length < 10) return setAddressError("The full address needs at least 10 characters.")
+    if (form.country && form.country.length < 2) return setAddressError("Country needs at least 2 characters.")
+    // Send only what changed; a cleared country is left as it was (the API can't blank it).
+    const changes: Partial<OrderAddressBody> = {}
+    if (form.fullName !== address.fullName) changes.fullName = form.fullName
+    if (form.phone !== address.phone) changes.phone = form.phone
+    if (form.fullAddress !== address.fullAddress) changes.fullAddress = form.fullAddress
+    if (form.city !== address.city) changes.city = form.city
+    if (form.country && form.country !== (address.country ?? "")) changes.country = form.country
+    if (Object.keys(changes).length === 0) return setAddressForm(null)
+    setSavingAddress(true)
+    // The order page reloads with the saved address, which this dialog then shows.
+    const res = await updateOrderAddress(order.id, "SHIPPING", changes)
+    setSavingAddress(false)
+    if (!res.success) return setAddressError(res.error)
+    toast.success("Shipping address updated")
+    setAddressForm(null)
+  }
+
+  useEffect(() => {
+    getPathaoStores().then((res) => {
+      if (res.success) setStores(res.data.filter((st) => st.is_active))
+      else {
+        setStores([])
+        setStoreError(res.error)
+      }
+    })
+  }, [])
+
+  async function book() {
+    const kg = Number(weight)
+    if (!(kg >= 0.5 && kg <= 10)) return setError("Weight must be between 0.5 and 10 kg.")
+    if (!/^\d+$/.test(quantity) || Number(quantity) < 1) return setError("Quantity must be a whole number, at least 1.")
+    if (!/^\d+$/.test(collect)) return setError("Cash to collect must be whole taka, 0 or more.")
+    setSaving(true)
+    const res = await bookPathaoShipment(order.id, {
+      storeId: sameAs(storeId),
+      deliveryType,
+      itemType,
+      itemWeight: kg,
+      itemQuantity: Number(quantity),
+      itemDescription: description.trim() || undefined,
+      specialInstruction: instruction.trim() || undefined,
+      amountToCollect: Number(collect),
+    })
+    setSaving(false)
+    // Keep the dialog open so the reply can be read; Done closes it.
+    setReply({ ok: res.success, body: res.reply, at: new Date().toISOString() })
+    if (!res.success) return setError(res.error)
+    setError("")
+    toast.success(`${order.orderNumber} booked with Pathao`, { description: "The rider will pick it up from your store." })
+  }
+
+  const storeItems = [{ value: ALL, label: "Default pickup store" }, ...(stores ?? []).map((st) => ({ value: String(st.store_id), label: st.store_name }))]
+  const store = stores?.find((st) => String(st.store_id) === storeId)
+  const kg = Number(weight)
+  const name = address?.fullName || order.customerName
+  const pick = (text: string, value: string, items: { value: string; label: string }[], onChange: (v: string) => void, disabled = false) => (
+    <Field>
+      <FieldLabel>{text}</FieldLabel>
+      <Select value={value} items={items} onValueChange={(v) => onChange(v as string)} disabled={disabled}>
+        <SelectTrigger aria-label={text} className="w-full"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          {items.map((i) => <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>)}
+        </SelectContent>
+      </Select>
+    </Field>
+  )
+  const toggle = (value: string, options: { value: string; label: string; icon: React.ElementType }[], onChange: (v: string) => void) => (
+    <ToggleGroup multiple={false} value={[value]} onValueChange={(v) => v[0] && onChange(v[0])} variant="outline" spacing={0} className="w-full">
+      {options.map((o) => (
+        <ToggleGroupItem key={o.value} value={o.value} className="flex-1 gap-1.5 px-3! data-pressed:bg-primary/10 data-pressed:font-medium data-pressed:text-primary">
+          <o.icon className="size-3.5" />
+          {o.label}
+        </ToggleGroupItem>
+      ))}
+    </ToggleGroup>
+  )
+  const section = "flex flex-col gap-3 border-t px-6 py-4 first:border-t-0"
+  const sectionTitle = "flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase [&_svg]:size-3.5"
+  const chip = (active: boolean) => cn("rounded-md border px-2 py-0.5 text-xs tabular-nums transition-colors hover:bg-muted", active && "border-primary bg-primary/10 text-primary hover:bg-primary/10")
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="flex max-h-[90vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
+        <DialogHeader className="flex-row items-center gap-3 border-b px-6 py-4">
+          <PathaoMark className="size-10 ring-4 ring-red-50 dark:ring-red-950" />
+          <div className="min-w-0 flex-1">
+            <DialogTitle className="flex items-center gap-2 text-base">
+              Book with Pathao
+              <span className="rounded-md border bg-muted/60 px-1.5 py-px font-mono text-[11px] font-medium text-muted-foreground">{order.orderNumber}</span>
+            </DialogTitle>
+            <DialogDescription>Pathao picks the parcel up from your store; its status then updates here.</DialogDescription>
+          </div>
+          <div className="mr-8 hidden text-right sm:block">
+            <div className="text-[11px] text-muted-foreground">
+              {order.items.length} {order.items.length === 1 ? "item" : "items"} · order total
+            </div>
+            <div className="font-semibold tabular-nums">{taka(Number(order.totalAmount))}</div>
+          </div>
+        </DialogHeader>
+
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className={section}>
+            <h3 className={sectionTitle}><UserIcon />Deliver to</h3>
+            {address && addressForm ? (
+              <div className="flex flex-col gap-3 rounded-xl border bg-muted/30 p-3.5">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field>
+                    <FieldLabel htmlFor="addr-name">Full name</FieldLabel>
+                    <Input id="addr-name" value={addressForm.fullName} maxLength={200} className="bg-card" onChange={(e) => setAddressForm({ ...addressForm, fullName: e.target.value })} />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="addr-phone">Phone</FieldLabel>
+                    <Input id="addr-phone" value={addressForm.phone} maxLength={30} inputMode="tel" placeholder="01712345678" className="bg-card font-mono" onChange={(e) => setAddressForm({ ...addressForm, phone: e.target.value })} />
+                  </Field>
+                </div>
+                <Field>
+                  <div className="flex items-baseline justify-between">
+                    <FieldLabel htmlFor="addr-full">Full address</FieldLabel>
+                    <span className="text-xs text-muted-foreground tabular-nums">{addressForm.fullAddress.trim().length}/255</span>
+                  </div>
+                  <Textarea
+                    id="addr-full"
+                    value={addressForm.fullAddress}
+                    maxLength={255}
+                    placeholder="House 123, Road 4, Sector 10, Uttara, Dhaka-1230"
+                    className="min-h-16 bg-card"
+                    onChange={(e) => setAddressForm({ ...addressForm, fullAddress: e.target.value })}
+                  />
+                </Field>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field>
+                    <FieldLabel htmlFor="addr-city">City</FieldLabel>
+                    <Input id="addr-city" value={addressForm.city} maxLength={100} className="bg-card" onChange={(e) => setAddressForm({ ...addressForm, city: e.target.value })} />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="addr-country">Country</FieldLabel>
+                    <Input id="addr-country" value={addressForm.country} maxLength={100} placeholder="Optional, e.g. BD" className="bg-card" onChange={(e) => setAddressForm({ ...addressForm, country: e.target.value })} />
+                  </Field>
+                </div>
+                {pathaoProblems(addressForm, order.customerName, order.customerPhone).map((p) => (
+                  <p key={p} className="-mt-1 text-xs text-amber-700 dark:text-amber-400">{p}</p>
+                ))}
+                <div className="flex items-center justify-end gap-2">
+                  {addressError ? (
+                    <p className="mr-auto text-xs text-destructive">{addressError}</p>
+                  ) : (
+                    <span className="mr-auto text-xs text-muted-foreground">Saves to the order, so the invoice shows it too.</span>
+                  )}
+                  <Button size="sm" variant="ghost" onClick={() => setAddressForm(null)} disabled={savingAddress}>Cancel</Button>
+                  <Button size="sm" onClick={saveAddress} disabled={savingAddress}>{savingAddress ? "Saving..." : "Save address"}</Button>
+                </div>
+              </div>
+            ) : address ? (
+              <div className="flex items-start gap-3 rounded-xl border bg-muted/30 px-3.5 py-3">
+                <span className="grid size-9 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary uppercase">
+                  {(name ?? "?").split(" ").map((w) => w[0]).slice(0, 2).join("")}
+                </span>
+                <div className="min-w-0 flex-1 text-sm">
+                  <div className="flex flex-wrap items-center gap-x-2">
+                    <span className="font-medium">{name}</span>
+                    {phone && <span className="font-mono text-xs text-muted-foreground">0{phone.replace(/\D/g, "").slice(-10)}</span>}
+                  </div>
+                  <div className="mt-0.5 flex gap-1 text-[13px] text-muted-foreground">
+                    <MapPinIcon className="mt-0.5 size-3.5 shrink-0" />
+                    {formatAddress(address)}
+                  </div>
+                  {pathaoProblems(
+                    { fullName: address.fullName, phone: address.phone, fullAddress: address.fullAddress, city: address.city, country: address.country ?? "" },
+                    order.customerName,
+                    order.customerPhone
+                  ).map((p) => (
+                    <p key={p} className="mt-1 text-xs text-amber-700 dark:text-amber-400">{p}</p>
+                  ))}
+                </div>
+                <Button size="sm" variant="ghost" className="shrink-0 text-primary hover:text-primary" onClick={editAddress}>
+                  <PencilIcon />
+                  Edit
+                </Button>
+              </div>
+            ) : (
+              <p className="rounded-xl bg-destructive/10 px-3.5 py-3 text-sm text-destructive">This order has no shipping address, so Pathao can’t take it.</p>
+            )}
+          </div>
+
+          <div className={section}>
+            <h3 className={sectionTitle}><StoreIcon />Pickup & service</h3>
+            <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto]">
+              {pick("Pickup store", storeId, storeItems, setStoreId, stores === null)}
+              <Field>
+                <FieldLabel>Delivery</FieldLabel>
+                {toggle(deliveryType, [{ value: "NORMAL", label: "Normal", icon: TruckIcon }, { value: "ON_DEMAND", label: "On demand", icon: ZapIcon }], (v) => setDeliveryType(v as PathaoDeliveryType))}
+              </Field>
+              <Field>
+                <FieldLabel>Item type</FieldLabel>
+                {toggle(itemType, [{ value: "PARCEL", label: "Parcel", icon: PackageIcon }, { value: "DOCUMENT", label: "Document", icon: FileTextIcon }], (v) => setItemType(v as PathaoItemType))}
+              </Field>
+            </div>
+            {stores === null && <p className="-mt-1 text-xs text-muted-foreground">Loading your Pathao stores...</p>}
+            {store && <p className="-mt-1 text-xs text-muted-foreground">Picked up from {store.store_address}</p>}
+            {storeError && <p className="-mt-1 text-xs text-amber-700 dark:text-amber-400">Couldn’t load your stores ({storeError}). The default store from the backend is used.</p>}
+          </div>
+
+          <div className={section}>
+            <h3 className={sectionTitle}><PackageIcon />Parcel</h3>
+            <div className="grid gap-3 sm:grid-cols-[1.4fr_0.6fr_1fr]">
+              <Field>
+                <FieldLabel htmlFor="pathao-weight">Weight</FieldLabel>
+                <div className="flex items-center gap-1">
+                  <Button size="icon" variant="outline" aria-label="Half a kilo less" onClick={() => setWeight(String(Math.max(0.5, kg - 0.5)))} disabled={!(kg > 0.5)}>
+                    −
+                  </Button>
+                  <div className="relative flex-1">
+                    <Input id="pathao-weight" inputMode="decimal" value={weight} onChange={(e) => setWeight(e.target.value)} className="pr-8 text-center tabular-nums" />
+                    <span className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-xs text-muted-foreground">kg</span>
+                  </div>
+                  <Button size="icon" variant="outline" aria-label="Half a kilo more" onClick={() => setWeight(String(Math.min(10, (kg || 0) + 0.5)))} disabled={kg >= 10}>
+                    +
+                  </Button>
+                </div>
+                <span className="flex gap-1">
+                  {[0.5, 1, 2, 5].map((w) => (
+                    <button key={w} type="button" onClick={() => setWeight(String(w))} className={chip(kg === w)}>
+                      {w} kg
+                    </button>
+                  ))}
+                </span>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="pathao-qty">Items</FieldLabel>
+                <div className="flex items-center gap-1">
+                  <Button size="icon" variant="outline" aria-label="One item less" onClick={() => setQuantity(String(Math.max(1, Number(quantity) - 1)))} disabled={!(Number(quantity) > 1)}>
+                    −
+                  </Button>
+                  <Input id="pathao-qty" inputMode="numeric" value={quantity} onChange={(e) => setQuantity(e.target.value)} className="text-center tabular-nums" />
+                  <Button size="icon" variant="outline" aria-label="One item more" onClick={() => setQuantity(String((Number(quantity) || 0) + 1))}>
+                    +
+                  </Button>
+                </div>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="pathao-cod">Cash to collect</FieldLabel>
+                <div className="relative">
+                  <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-sm text-muted-foreground">৳</span>
+                  <Input id="pathao-cod" inputMode="numeric" value={collect} onChange={(e) => setCollect(e.target.value)} className="pl-7 tabular-nums" />
+                </div>
+                <span className="flex gap-1">
+                  {due > 0 && (
+                    <button type="button" onClick={() => setCollect(String(Math.round(due)))} className={chip(collect === String(Math.round(due)))}>
+                      Balance due
+                    </button>
+                  )}
+                  <button type="button" onClick={() => setCollect("0")} className={chip(collect === "0")}>
+                    Nothing
+                  </button>
+                </span>
+              </Field>
+            </div>
+            <Field>
+              <FieldLabel htmlFor="pathao-desc">What’s inside</FieldLabel>
+              <Input id="pathao-desc" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={255} />
+            </Field>
+          </div>
+
+          <div className={section}>
+            <div className="flex items-baseline justify-between gap-2">
+              <h3 className={sectionTitle}><StickyNoteIcon />Note for the rider</h3>
+              <span className="text-xs text-muted-foreground tabular-nums">{instruction.length}/255</span>
+            </div>
+            <Textarea id="pathao-note" value={instruction} onChange={(e) => setInstruction(e.target.value)} maxLength={255} placeholder="Call before delivery" className="min-h-16" aria-label="Note for the rider" />
+            <span className="-mt-1 flex flex-wrap gap-1">
+              {["Call before delivery", "Handle with care", "Fragile"].map((t) => {
+                const on = instruction.includes(t)
+                // A second click takes the phrase back out of the note.
+                const next = on
+                  ? instruction.replace(t, "").replace(/^[.\s]+|[.\s]+$/g, "").replace(/(\.\s*){2,}/g, ". ")
+                  : [instruction.trim(), t].filter(Boolean).join(". ")
+                return (
+                  <button key={t} type="button" aria-pressed={on} onClick={() => setInstruction(next.slice(0, 255))} className={chip(on)}>
+                    {on ? "✓" : "+"} {t}
+                  </button>
+                )
+              })}
+            </span>
+          </div>
+
+          {reply && (
+            <div className="border-t px-6 py-4">
+              <PathaoLog
+                ok={reply.ok}
+                reply={reply.body}
+                at={reply.at}
+                order={order}
+                parcel={`${quantity} ${Number(quantity) === 1 ? "item" : "items"} · ${weight} kg · ${deliveryType === "NORMAL" ? "Normal" : "On demand"}`}
+                collect={Number(collect)}
+              />
+            </div>
+          )}
+        </div>
+
+        {error && !reply && <p className="border-t bg-destructive/10 px-6 py-2.5 text-sm text-destructive">{error}</p>}
+
+        <div className="flex flex-wrap items-center gap-3 border-t bg-muted/40 px-6 py-3">
+          <div className="mr-auto min-w-0">
+            <div className="flex items-baseline gap-2">
+              <span className="text-[13px] text-muted-foreground">Rider collects</span>
+              <span className="text-lg font-bold tabular-nums">{Number(collect) > 0 ? taka(Number(collect)) : "Nothing"}</span>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {deliveryType === "NORMAL" ? "Normal" : "On demand"} · {itemType === "PARCEL" ? "Parcel" : "Document"} · {weight} kg · {quantity}{" "}
+              {Number(quantity) === 1 ? "item" : "items"} · delivery charge shown after booking
+            </div>
+          </div>
+          {reply?.ok ? (
+            <Button onClick={onClose}>Done</Button>
+          ) : (
+            <>
+              <Button variant="outline" onClick={onClose}>Cancel</Button>
+              <Button onClick={book} disabled={saving || !address || addressForm !== null} title={addressForm ? "Save or cancel the address first" : undefined}>
+                <PathaoMark />
+                {saving ? "Booking..." : "Book parcel"}
+              </Button>
+            </>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 

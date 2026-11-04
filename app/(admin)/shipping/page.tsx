@@ -23,7 +23,7 @@ export default async function ShippingPage() {
   for (const d of details) {
     if (!d.success) continue
     const address = d.data.addresses.find((a) => a.type === "SHIPPING")
-    if (address) destinations[d.data.id] = [address.city, address.state].filter(Boolean).join(", ")
+    if (address) destinations[d.data.id] = address.city
   }
 
   return (
