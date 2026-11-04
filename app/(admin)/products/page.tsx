@@ -9,7 +9,7 @@ import { type ProductInsight, ProductsTable } from "@/components/products/produc
 
 const DAY = 86_400_000
 // These orders never took the stock, so they don't count as sold.
-const NOT_SOLD = ["CANCELLED", "FAILED", "REFUNDED"]
+const NOT_SOLD = ["CANCELLED", "FAILED", "REFUNDED", "RETURNED"]
 
 export default async function ProductsPage() {
   // Load fresh data on every request instead of once at build time.

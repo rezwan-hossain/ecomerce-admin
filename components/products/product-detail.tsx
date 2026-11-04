@@ -22,7 +22,7 @@ import type { Review } from "@/types/review.type"
 const STATUS_LABEL = { ACTIVE: "Active", DRAFT: "Draft", ARCHIVED: "Archived" } as const
 const REVIEW_TONE: Record<Review["status"], Tone> = { APPROVED: "green", PENDING: "amber", REJECTED: "red" }
 // These orders never took the stock, so they don't count as sold.
-const NOT_SOLD = ["CANCELLED", "FAILED", "REFUNDED"]
+const NOT_SOLD = ["CANCELLED", "FAILED", "REFUNDED", "RETURNED"]
 
 const th = "px-3 py-2 font-medium first:pl-4 last:pr-4"
 const td = "px-3 py-2.5 first:pl-4 last:pr-4"

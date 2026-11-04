@@ -8,7 +8,8 @@ export type OrderStatus =
   | "COMPLETED"
   | "CANCELLED"
   | "FAILED"
-  | "REFUNDED";
+  | "REFUNDED"
+  | "RETURNED"; // the courier brought the whole parcel back; final
 
 export type PaymentStatus =
   | "PENDING"
@@ -17,7 +18,8 @@ export type PaymentStatus =
   | "FAILED"
   | "CANCELLED"
   | "REFUNDED"
-  | "PARTIALLY_REFUNDED";
+  | "PARTIALLY_REFUNDED"
+  | "PARTIALLY_PAID"; // COD partial delivery: the customer kept and paid for only some items
 
 // A row from GET /orders. Decimals (amounts) come back as strings.
 // Customer details and item names are snapshots taken at checkout.
@@ -44,6 +46,7 @@ export interface Order {
     variantName: string | null;
     sku: string;
     quantity: number;
+    returnedQuantity: number; // units already received back into stock
     unitPrice: string;
     totalAmount: string;
   }[];
@@ -51,7 +54,9 @@ export interface Order {
     id: string;
     provider: "STRIPE" | "SSLCOMMERZ" | "BKASH" | "NAGAD" | "COD" | "OTHER";
     status: PaymentStatus;
-    amount: string;
+    amount: string; // PARTIALLY_PAID: the cash actually collected
+    failureMessage?: string | null; // "Returned by courier" on a returned COD
+    metadata?: { orderedAmount?: string } | null; // PARTIALLY_PAID: what should have been collected
     createdAt: string;
   }[];
   shipments: Shipment[];
@@ -122,6 +127,12 @@ export interface OrderAddressBody {
   thana: string; // 1 – 100
   city: string; // district, 1 – 100
   country?: string;
+}
+
+// POST /orders/:id/returns. Can be sent again for a later trip; returnedQuantity adds up.
+export interface ReceiveReturnedItemsBody {
+  items: { orderItemId: string; quantity: number; damaged?: boolean }[]; // damaged → damage section, not sellable
+  note?: string; // max 500
 }
 
 // "House 12, Road 5 · Mirpur 6 · Dhaka · BD", leaving out what's missing (old orders have no thana).

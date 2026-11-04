@@ -2,6 +2,9 @@
 
 import Link from "next/link"
 import { useEffect, useState } from "react"
+import { Controller, useForm } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
+import { z } from "zod"
 import { toast } from "sonner"
 import {
   ArrowLeftIcon,
@@ -13,6 +16,7 @@ import {
   MailIcon,
   MapPinIcon,
   PackageIcon,
+  PackageOpenIcon,
   PencilIcon,
   PhoneIcon,
   PrinterIcon,
@@ -32,6 +36,7 @@ import {
   updateOrderAddress,
   markPaymentFailed,
   markPaymentPaid,
+  receiveReturnedItems,
   reviewRefund,
   updateOrderStatus,
   updateShipmentStatus,
@@ -42,13 +47,16 @@ import { MovementQuantity, MovementTag, movementRacks } from "@/components/inven
 import { CANCELLABLE, CancelDialog, CARRIER_LABEL, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL, RefreshButton } from "@/components/orders/orders-table"
 import { PrintInvoice } from "@/components/orders/print-invoice"
 import { StatusBadge } from "@/components/status-badge"
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { getReturnState } from "@/lib/orders/return-state"
 import { cn } from "@/lib/utils"
 import type { LedgerMovement, StockLevel, VariantStockDetail } from "@/types/inventory.type"
 import { formatAddress, pathaoAddress, type CourierCarrier, type Order, type OrderAddress, type OrderAddressBody, type OrderDetail, type OrderStatus, type Shipment, type ShipmentStatus } from "@/types/order.type"
@@ -57,11 +65,11 @@ import type { PathaoDeliveryType, PathaoItemType, PathaoStore } from "@/types/pa
 // The next step on the happy path, as the backend allows it (ORDER_STATUS_TRANSITIONS).
 const STEPS: OrderStatus[] = ["PENDING", "CONFIRMED", "PROCESSING", "READY_TO_SHIP", "SHIPPED", "DELIVERED", "COMPLETED"]
 const STEP_LABEL: Partial<Record<OrderStatus, string>> = { PENDING: "Placed" }
-const STOPPED: OrderStatus[] = ["CANCELLED", "FAILED", "REFUNDED"]
+const STOPPED: OrderStatus[] = ["CANCELLED", "FAILED", "REFUNDED", "RETURNED"]
 const OPEN_PAYMENT = ["PENDING", "PROCESSING"]
 // Shipment, payment and refund statuses that finished well or badly; the rest are in progress.
 export const TONE: Record<string, Tone> = {
-  DELIVERED: "green", PAID: "green", APPROVED: "blue", PROCESSED: "green",
+  DELIVERED: "green", PAID: "green", PARTIALLY_PAID: "amber", APPROVED: "blue", PROCESSED: "green",
   FAILED: "red", RETURNED: "red", CANCELLED: "red", REJECTED: "red",
 }
 const carrierItems = Object.entries(CARRIER_LABEL).map(([value, text]) => ({ value, label: text }))
@@ -70,7 +78,9 @@ export const shipmentStatusItems = SHIPMENT_STATUSES.map((value) => ({ value, la
 // The backend refuses status changes once a shipment ends.
 export const SHIPMENT_DONE: ShipmentStatus[] = ["DELIVERED", "CANCELLED", "RETURNED"]
 
-const sumPaid = (o: Pick<Order, "payments">) => o.payments.filter((p) => p.status === "PAID").reduce((s, p) => s + Number(p.amount), 0)
+// A partial delivery's payment is the cash the customer actually gave.
+const sumPaid = (o: Pick<Order, "payments">) =>
+  o.payments.filter((p) => p.status === "PAID" || p.status === "PARTIALLY_PAID").reduce((s, p) => s + Number(p.amount), 0)
 
 function stockTone(l: StockLevel, threshold: number) {
   if (l.available <= 0) return "bad"
@@ -108,13 +118,18 @@ export function OrderDetailPage({
   const [bookingPathao, setBookingPathao] = useState(false)
   const [pathaoLog, setPathaoLog] = useState<{ ok: boolean; reply: unknown; at: string } | null>(null)
   const [refunding, setRefunding] = useState(false)
+  const [receiving, setReceiving] = useState(false)
 
   const next = NEXT[order.status]
   const stopped = STOPPED.includes(order.status)
   const units = order.items.reduce((s, i) => s + i.quantity, 0)
   const total = Number(order.totalAmount)
   const paid = sumPaid(order)
-  const due = total - paid
+  const returnState = getReturnState(order)
+  const partlyPaid = order.payments.find((p) => p.status === "PARTIALLY_PAID")
+  // After a partial delivery the rest isn't owed: those items come back instead.
+  let due = total - paid
+  if (partlyPaid) due = 0
   const refunded = order.refundRequests.filter((r) => r.status === "PROCESSED").reduce((s, r) => s + Number(r.amount), 0)
   // Paid money not yet refunded or promised in an open request.
   const refundable = paid - order.refundRequests.filter((r) => r.status !== "REJECTED").reduce((s, r) => s + Number(r.amount), 0)
@@ -242,7 +257,7 @@ export function OrderDetailPage({
               <span className="sr-only">Copy order number</span>
             </Button>
             <StatusBadge status={ORDER_STATUS_LABEL[order.status]} />
-            {payment && <Pill tone={TONE[payment.status] ?? "amber"}>{payment.status === "PAID" ? "Paid" : `Payment ${PAYMENT_LABEL[payment.status].toLowerCase()}`}</Pill>}
+            {payment && <Pill tone={TONE[payment.status] ?? "amber"}>{paymentPillText(payment)}</Pill>}
           </div>
           <p className="text-sm text-muted-foreground">
             Placed {fmtDateTime(placedAt)} ({rel(placedAt)}){payment && ` · ${label(payment.method)}`} · {order.userId ? "Account" : "Guest checkout"}
@@ -319,14 +334,32 @@ export function OrderDetailPage({
 
       <div className="grid gap-4 px-4 md:gap-6 lg:px-6 xl:grid-cols-3">
         <div className="flex min-w-0 flex-col gap-4 md:gap-6 xl:col-span-2">
+          {returnState.kind !== "none" && (
+            <Alert className="rounded-2xl border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200 *:data-[slot=alert-description]:text-amber-800 dark:*:data-[slot=alert-description]:text-amber-300">
+              <PackageOpenIcon />
+              <AlertTitle className="font-semibold">{returnState.kind === "returned" ? "Parcel returned by courier" : "Partly delivered"}</AlertTitle>
+              <AlertDescription>
+                {returnState.kind === "returned"
+                  ? "The customer refused it or couldn't be reached. Receive the items back into stock when the parcel arrives."
+                  : `The customer kept some items and paid ${taka(returnState.collected)} of ${taka(returnState.ordered)}. Receive the items that came back.`}
+              </AlertDescription>
+              <AlertAction>
+                <Button size="sm" onClick={() => setReceiving(true)}>
+                  Receive returned items
+                </Button>
+              </AlertAction>
+            </Alert>
+          )}
+
           <Card title="Items" action={<span className="hidden text-xs text-muted-foreground sm:inline">Available stock and pick rack right now</span>}>
             <ul className="flex flex-col">
               {order.items.map((i) => {
                 const image = i.productId ? images[i.productId] : undefined
                 const discount = Number(i.discountAmount)
                 const variant = i.variantId ? stock[i.variantId] : undefined
+                const allBack = i.returnedQuantity > 0 && i.returnedQuantity >= i.quantity
                 return (
-                  <li key={i.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border/60 px-4 py-3.5">
+                  <li key={i.id} className={cn("flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border/60 px-4 py-3.5", allBack && "opacity-55")}>
                     <span className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-xl border bg-muted/60 text-muted-foreground">
                       {image ? (
                         // eslint-disable-next-line @next/next/no-img-element -- any image host is allowed
@@ -371,6 +404,7 @@ export function OrderDetailPage({
                       <div className="text-muted-foreground">
                         {taka(Number(i.unitPrice), 2)} × {n0(i.quantity)}
                       </div>
+                      {i.returnedQuantity > 0 && <div className="text-xs text-muted-foreground">{n0(i.returnedQuantity)} returned</div>}
                       <div className="font-semibold">{taka(Number(i.totalAmount), 2)}</div>
                       {discount > 0 && <div className="text-xs text-emerald-700 dark:text-emerald-400">−{taka(discount, 2)} off</div>}
                     </div>
@@ -695,7 +729,10 @@ export function OrderDetailPage({
                       <Pill tone={TONE[p.status] ?? "amber"}>{PAYMENT_LABEL[p.status]}</Pill>
                     </div>
                     <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                      <span className="text-sm font-semibold text-foreground tabular-nums">{taka(Number(p.amount), 2)}</span>
+                      <span className="text-sm font-semibold text-foreground tabular-nums">
+                        {taka(Number(p.amount), 2)}
+                        {p.status === "PARTIALLY_PAID" && <span className="font-normal text-muted-foreground"> of {taka(Number(p.metadata?.orderedAmount), 2)}</span>}
+                      </span>
                       <span>{p.paidAt ? `Paid ${fmtDateTime(p.paidAt)}` : `Started ${fmtDateTime(p.createdAt)}`}</span>
                     </div>
                     {p.transactionId && <div className="truncate font-mono text-xs text-muted-foreground">Txn {p.transactionId}</div>}
@@ -799,6 +836,7 @@ export function OrderDetailPage({
       {shipping && (
         <ShipmentDialog orderId={order.id} orderNumber={order.orderNumber} codAmount={codOpen ? due : 0} onClose={() => setShipping(false)} />
       )}
+      {receiving && returnState.kind !== "none" && <ReceiveReturnsDialog order={order} fullReturn={returnState.kind === "returned"} onClose={() => setReceiving(false)} />}
       {refunding && <RefundDialog orderId={order.id} max={refundable} onClose={() => setRefunding(false)} />}
     </div>
   )
@@ -1481,6 +1519,145 @@ function RefundDialog({ orderId, max, onClose }: { orderId: string; max: number;
           {error && <p className="mr-auto text-sm text-destructive">{error}</p>}
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button onClick={save} disabled={saving}>{saving ? "Saving..." : "Request refund"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function paymentPillText(p: OrderDetail["payments"][number]) {
+  if (p.status === "PAID") return "Paid"
+  if (p.status === "PARTIALLY_PAID") return `Partly paid ${taka(Number(p.amount))} of ${taka(Number(p.metadata?.orderedAmount))}`
+  return `Payment ${PAYMENT_LABEL[p.status].toLowerCase()}`
+}
+
+const returnsSchema = z.object({
+  items: z.array(z.object({ orderItemId: z.string(), max: z.number(), quantity: z.number().int("Whole units only").min(0), damaged: z.boolean() })),
+  note: z.string().max(500, "At most 500 characters"),
+})
+type ReturnsForm = z.infer<typeof returnsSchema>
+
+// The admin ticks what physically came back; good units go back on sale, damaged ones to the damage section.
+function ReceiveReturnsDialog({ order, fullReturn, onClose }: { order: OrderDetail; fullReturn: boolean; onClose: () => void }) {
+  const lines = order.items.filter((i) => i.quantity - i.returnedQuantity > 0)
+  const form = useForm<ReturnsForm>({
+    resolver: zodResolver(
+      returnsSchema
+        .refine((v) => v.items.every((i) => i.quantity <= i.max), { message: "More than is still out", path: ["items"] })
+        .refine((v) => v.items.some((i) => i.quantity > 0), { message: "Enter at least one item", path: ["items"] })
+    ),
+    defaultValues: {
+      // A returned parcel brings everything back; after a partial delivery the admin counts what came.
+      items: lines.map((i) => {
+        const max = i.quantity - i.returnedQuantity
+        return { orderItemId: i.id, max, quantity: fullReturn ? max : 0, damaged: false }
+      }),
+      note: "",
+    },
+  })
+  const [serverError, setServerError] = useState("")
+  const quantities = form.watch("items")
+  const { errors, isSubmitting } = form.formState
+
+  async function submit(values: ReturnsForm) {
+    setServerError("")
+    const res = await receiveReturnedItems(order.id, {
+      items: values.items.filter((i) => i.quantity > 0).map((i) => ({ orderItemId: i.orderItemId, quantity: i.quantity, damaged: i.damaged })),
+      note: values.note.trim() || undefined,
+    })
+    if (!res.success) return setServerError(res.error)
+    toast.success("Items received back into stock")
+    onClose()
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Receive returned items</DialogTitle>
+          <DialogDescription>
+            {order.orderNumber} · enter what physically came back. Damaged items go to the damage section, not back on sale.
+          </DialogDescription>
+        </DialogHeader>
+        <form id="receive-returns" onSubmit={form.handleSubmit(submit)} className="flex flex-col gap-4">
+          <div className="overflow-hidden rounded-xl border">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50 text-xs text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">Product</th>
+                  <th className="px-3 py-2 text-right font-medium">Already back</th>
+                  <th className="px-3 py-2 text-right font-medium">Received now</th>
+                  <th className="px-3 py-2 text-center font-medium">Damaged</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lines.map((line, index) => {
+                  const max = line.quantity - line.returnedQuantity
+                  const empty = !(quantities[index]?.quantity > 0)
+                  return (
+                    <tr key={line.id} className="border-t">
+                      <td className="px-3 py-2">
+                        <div className="font-medium">{line.productName}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {line.variantName && line.variantName !== line.sku && <span>{line.variantName} · </span>}
+                          <span className="font-mono">{line.sku}</span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">
+                        {n0(line.returnedQuantity)} of {n0(line.quantity)}
+                      </td>
+                      <td className="px-3 py-2">
+                        <Input
+                          type="number"
+                          min={0}
+                          max={max}
+                          step={1}
+                          aria-label={`${line.productName} received now`}
+                          className="ml-auto w-20 text-right tabular-nums"
+                          {...form.register(`items.${index}.quantity`, {
+                            setValueAs: (v) => Math.min(max, Math.max(0, Number(v) || 0)),
+                            onChange: (e) => {
+                              if (!(Number(e.target.value) > 0)) form.setValue(`items.${index}.damaged`, false)
+                            },
+                          })}
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <Controller
+                          control={form.control}
+                          name={`items.${index}.damaged`}
+                          render={({ field }) => (
+                            <Checkbox
+                              checked={field.value}
+                              onCheckedChange={field.onChange}
+                              disabled={empty}
+                              aria-label={`${line.productName} damaged`}
+                            />
+                          )}
+                        />
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          <Field>
+            <FieldLabel htmlFor="returns-note">Note (optional)</FieldLabel>
+            <Textarea id="returns-note" placeholder="Box opened, cap scratched" maxLength={500} {...form.register("note")} />
+            {errors.note && <p className="text-sm text-destructive">{errors.note.message}</p>}
+          </Field>
+        </form>
+        <DialogFooter className="items-center">
+          {(serverError || errors.items?.root?.message || errors.items?.message) && (
+            <p className="mr-auto text-sm text-destructive">{serverError || errors.items?.root?.message || errors.items?.message}</p>
+          )}
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" form="receive-returns" disabled={isSubmitting}>
+            {isSubmitting ? "Receiving..." : "Receive into stock"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -51,6 +51,7 @@ export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
   CANCELLED: "Cancelled",
   FAILED: "Failed",
   REFUNDED: "Refunded",
+  RETURNED: "Returned",
 }
 
 export const PAYMENT_LABEL: Record<PaymentStatus, string> = {
@@ -61,6 +62,7 @@ export const PAYMENT_LABEL: Record<PaymentStatus, string> = {
   CANCELLED: "Cancelled",
   REFUNDED: "Refunded",
   PARTIALLY_REFUNDED: "Partly refunded",
+  PARTIALLY_PAID: "Partly paid",
 }
 
 export const CARRIER_LABEL: Record<CourierCarrier, string> = { PATHAO: "Pathao", REDX: "RedX", STEADFAST: "Steadfast", CARRYBEE: "CarryBee" }
@@ -73,7 +75,7 @@ export const PROVIDER_LABEL: Record<Order["payments"][number]["provider"], strin
   OTHER: "Other",
 }
 
-const PAYMENT_TONE: Partial<Record<PaymentStatus, Tone>> = { PAID: "green", FAILED: "red", CANCELLED: "grey", REFUNDED: "grey", PARTIALLY_REFUNDED: "amber" }
+const PAYMENT_TONE: Partial<Record<PaymentStatus, Tone>> = { PAID: "green", FAILED: "red", CANCELLED: "grey", REFUNDED: "grey", PARTIALLY_REFUNDED: "amber", PARTIALLY_PAID: "amber" }
 
 const DAY = 86_400_000
 // Placed but not shipped yet.
@@ -88,7 +90,7 @@ export const NEXT: Partial<Record<OrderStatus, { status: OrderStatus; text: stri
   DELIVERED: { status: "COMPLETED", text: "Complete order" },
 }
 export const CANCELLABLE: OrderStatus[] = ["PENDING", "CONFIRMED", "PROCESSING", "READY_TO_SHIP"]
-const STOPPED: OrderStatus[] = ["CANCELLED", "FAILED", "REFUNDED"]
+const STOPPED: OrderStatus[] = ["CANCELLED", "FAILED", "REFUNDED", "RETURNED"]
 
 const isPaid = (o: Order) => o.payments.some((p) => p.status === "PAID")
 const placed = (o: Order) => o.placedAt ?? o.createdAt
@@ -103,7 +105,8 @@ const allFilters: ListFilter<Order>[] = [
   { label: "Unfulfilled", value: "unfulfilled", match: (o) => UNFULFILLED.includes(o.status) },
   { label: "Shipped", value: "shipped", match: (o) => o.status === "SHIPPED" },
   { label: "Delivered", value: "delivered", match: (o) => o.status === "DELIVERED" || o.status === "COMPLETED" },
-  { label: "Cancelled", value: "cancelled", match: (o) => STOPPED.includes(o.status) },
+  { label: "Returned", value: "returned", match: (o) => o.status === "RETURNED" },
+  { label: "Cancelled", value: "cancelled", match: (o) => STOPPED.includes(o.status) && o.status !== "RETURNED" },
 ]
 
 const pendingFilters: ListFilter<Order>[] = [
@@ -124,11 +127,19 @@ const SORTS = [
 function Amount({ order }: { order: Order }) {
   const payment = order.payments.find((p) => p.status === "PAID") ?? order.payments.at(-1)
   const paid = order.payments.filter((p) => p.status === "PAID").reduce((s, p) => s + Number(p.amount), 0)
-  const due = Number(order.totalAmount) - paid
+  // After a partial delivery the rest isn't owed: those items come back instead.
+  let due = Number(order.totalAmount) - paid
+  if (payment?.status === "PARTIALLY_PAID") due = 0
   return (
     <span className="flex flex-col items-end gap-1">
       <span className="text-[17px] font-bold tracking-tight">{taka(Number(order.totalAmount))}</span>
       {payment ? <Pill tone={PAYMENT_TONE[payment.status] ?? "amber"}>{PAYMENT_LABEL[payment.status]}</Pill> : <Pill tone="amber">Unpaid</Pill>}
+      {payment?.status === "PARTIALLY_PAID" && (
+        <span className="text-[11px] font-medium whitespace-nowrap text-amber-700 dark:text-amber-400">
+          {taka(Number(payment.amount))} of {taka(Number(payment.metadata?.orderedAmount))}
+        </span>
+      )}
+      {payment?.status === "FAILED" && payment.failureMessage && <span className="text-[11px] whitespace-nowrap text-destructive">{payment.failureMessage}</span>}
       {payment && <span className="text-[11px] whitespace-nowrap text-muted-foreground">{PROVIDER_LABEL[payment.provider]}</span>}
       {due > 0 && !STOPPED.includes(order.status) && (
         <span className="text-[11px] font-medium whitespace-nowrap text-amber-700 dark:text-amber-400">{taka(due)} due</span>
@@ -199,7 +210,7 @@ const placedAt = (iso: string) => {
   return `${d.getDate()} ${d.toLocaleString("en-US", { month: "short" })} ${d.getFullYear()} · ${d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`
 }
 
-const FINISHED: OrderStatus[] = ["DELIVERED", "COMPLETED", "CANCELLED", "FAILED", "REFUNDED"]
+const FINISHED: OrderStatus[] = ["DELIVERED", "COMPLETED", "CANCELLED", "FAILED", "REFUNDED", "RETURNED"]
 
 export function OrdersTable({
   orders,

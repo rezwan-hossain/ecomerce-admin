@@ -4,7 +4,7 @@ import { refresh as refreshOpenPage, revalidatePath } from "next/cache"
 
 import { handleRequest } from "@/lib/action-response"
 import { api } from "@/lib/api"
-import type { Order, OrderAddress, OrderAddressBody, OrderDetail, OrderStatus, ShipmentDto, ShipmentStatus } from "@/types/order.type"
+import type { Order, OrderAddress, OrderAddressBody, OrderDetail, OrderStatus, ReceiveReturnedItemsBody, ShipmentDto, ShipmentStatus } from "@/types/order.type"
 
 // The API returns at most 100 per page, so walk the pages until there are no more.
 export async function getOrders() {
@@ -103,5 +103,15 @@ export async function createRefundRequest(id: string, amount: number, reason: st
 export async function reviewRefund(orderId: string, refundId: string, action: "approve" | "reject" | "process", adminNote?: string) {
   const res = await handleRequest(() => api.patch(`/orders/refund-requests/${refundId}/${action}`, { adminNote }))
   if (res.success) refresh(orderId)
+  return res
+}
+
+// Puts returned units back into stock (damaged ones into the damage section). Answers with the whole order.
+export async function receiveReturnedItems(id: string, body: ReceiveReturnedItemsBody) {
+  const res = await handleRequest(async () => (await api.post<{ data: OrderDetail }>(`/orders/${id}/returns`, body)).data)
+  if (res.success) {
+    revalidatePath("/inventory", "layout")
+    refresh(id)
+  }
   return res
 }

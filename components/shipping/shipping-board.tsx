@@ -75,8 +75,10 @@ export function ShippingBoard({ orders, destinations }: { orders: Order[]; desti
 
   // Delivered cash-on-delivery parcels: the courier has the money until the order's payment is marked paid.
   const deliveredCod = parcels.filter((p) => p.shipment.status === "DELIVERED" && Number(p.shipment.codAmount) > 0)
-  const withCouriers = deliveredCod.filter((p) => !p.order.payments.some((pay) => pay.status === "PAID"))
-  const settled = deliveredCod.filter((p) => p.order.payments.some((pay) => pay.status === "PAID"))
+  // A partial delivery is settled too: the courier paid over what the customer gave.
+  const isSettled = (p: Parcel) => p.order.payments.some((pay) => pay.status === "PAID" || pay.status === "PARTIALLY_PAID")
+  const withCouriers = deliveredCod.filter((p) => !isSettled(p))
+  const settled = deliveredCod.filter(isSettled)
   const sumCod = (list: Parcel[]) => list.reduce((s, p) => s + Number(p.shipment.codAmount), 0)
 
   // Shipping money over the last 30 days: what customers paid for delivery and what couriers charged.
