@@ -106,8 +106,9 @@ export interface OrderAddress {
   fullName: string;
   phone: string;
   company: string | null;
-  fullAddress: string; // one line, e.g. "House 123, Road 4, Sector 10, Uttara, Dhaka-1230"
-  city: string;
+  fullAddress: string; // one line, e.g. "House 32, Road 8, Block H, Mirpur 2, Dhaka-1216"
+  thana: string; // e.g. "Mirpur 6"; "" on orders placed before thana existed
+  city: string; // the district, e.g. "Dhaka"
   country: string | null;
   createdAt: string;
 }
@@ -118,12 +119,22 @@ export interface OrderAddressBody {
   phone: string; // 1 – 30
   company?: string;
   fullAddress: string; // 10 – 255
-  city: string;
+  thana: string; // 1 – 100
+  city: string; // district, 1 – 100
   country?: string;
 }
 
-// "House 12, Road 5, Uttara · Dhaka · BD", leaving out what's missing.
-export const formatAddress = (a: Pick<OrderAddress, "fullAddress" | "city" | "country">) => [a.fullAddress, a.city, a.country].filter(Boolean).join(" · ")
+// "House 12, Road 5 · Mirpur 6 · Dhaka · BD", leaving out what's missing (old orders have no thana).
+export const formatAddress = (a: Pick<OrderAddress, "fullAddress" | "thana" | "city" | "country">) =>
+  [a.fullAddress, a.thana, a.city, a.country].filter(Boolean).join(" · ")
+
+// The one line Pathao receives (backend pathao-recipient.ts): the full address, then the thana and
+// city unless the address already mentions them. Pathao finds the delivery area from this text.
+export const pathaoAddress = (a: Pick<OrderAddress, "fullAddress" | "thana" | "city">) => {
+  const street = a.fullAddress.trim()
+  const missing = [a.thana, a.city].map((p) => p.trim()).filter((p) => p && !street.toLowerCase().includes(p.toLowerCase()))
+  return [street, ...missing].filter(Boolean).join(", ")
+}
 
 // GET /orders/:id: the list row plus addresses, discounts, history and refunds.
 export interface OrderDetail extends Omit<Order, "items" | "payments"> {

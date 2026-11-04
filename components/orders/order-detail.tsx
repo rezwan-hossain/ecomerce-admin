@@ -51,7 +51,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 import type { LedgerMovement, StockLevel, VariantStockDetail } from "@/types/inventory.type"
-import { formatAddress, type CourierCarrier, type Order, type OrderAddress, type OrderAddressBody, type OrderDetail, type OrderStatus, type Shipment, type ShipmentStatus } from "@/types/order.type"
+import { formatAddress, pathaoAddress, type CourierCarrier, type Order, type OrderAddress, type OrderAddressBody, type OrderDetail, type OrderStatus, type Shipment, type ShipmentStatus } from "@/types/order.type"
 import type { PathaoDeliveryType, PathaoItemType, PathaoStore } from "@/types/pathao.type"
 
 // The next step on the happy path, as the backend allows it (ORDER_STATUS_TRANSITIONS).
@@ -139,7 +139,7 @@ export function OrderDetailPage({
   const billing = order.addresses.find((a) => a.type === "BILLING")
   // Checkout copies the shipping address into billing when the customer gives only one.
   const sameAddress = (a: OrderAddress, b: OrderAddress) =>
-    a.fullName === b.fullName && a.phone === b.phone && a.fullAddress === b.fullAddress && a.city === b.city
+    a.fullName === b.fullName && a.phone === b.phone && a.fullAddress === b.fullAddress && a.thana === b.thana && a.city === b.city
   let billingAddress = billing
   if (billing && shippingAddress && sameAddress(billing, shippingAddress)) billingAddress = undefined
 
@@ -974,7 +974,7 @@ function ApiReply({ reply }: { reply: unknown }) {
 const ALL = "all"
 const sameAs = (value: string) => (value === ALL ? undefined : Number(value))
 
-type AddressForm = { fullName: string; phone: string; fullAddress: string; city: string; country: string }
+type AddressForm = { fullName: string; phone: string; city: string; thana: string; fullAddress: string }
 
 // The checks Pathao runs before taking a parcel (backend pathao-recipient.ts), so problems show before booking.
 function pathaoProblems(a: AddressForm, customerName: string | null, customerPhone: string | null) {
@@ -987,9 +987,8 @@ function pathaoProblems(a: AddressForm, customerName: string | null, customerPho
   if (!toBd(a.phone) && !toBd(customerPhone)) problems.push("Pathao needs a Bangladeshi mobile number, e.g. 01712345678.")
   else if (a.phone.trim() && !toBd(a.phone)) problems.push("This phone isn’t a Bangladeshi mobile number, so Pathao will call the customer’s account number instead.")
   if ((a.fullName.trim() || customerName || "").trim().length < 3) problems.push("The name must be at least 3 characters.")
-  // Pathao gets the full address, plus the city when the address doesn't mention it.
-  const sent = a.fullAddress.toLowerCase().includes(a.city.trim().toLowerCase()) ? a.fullAddress : [a.fullAddress, a.city].filter(Boolean).join(", ")
-  if (sent.trim().length < 10) problems.push("The address must be at least 10 characters.")
+  if (!a.thana.trim()) problems.push("Add the thana so Pathao finds the right delivery area.")
+  if (pathaoAddress(a).length < 10) problems.push("The address must be at least 10 characters.")
   return problems
 }
 
@@ -1019,23 +1018,22 @@ function PathaoDialog({ order, due, onClose }: { order: OrderDetail; due: number
   function editAddress() {
     if (!address) return
     setAddressError("")
-    setAddressForm({ fullName: address.fullName, phone: address.phone, fullAddress: address.fullAddress, city: address.city, country: address.country ?? "" })
+    setAddressForm({ fullName: address.fullName, phone: address.phone, city: address.city, thana: address.thana, fullAddress: address.fullAddress })
   }
 
   async function saveAddress() {
     if (!addressForm) return
     if (!address) return
     const form = Object.fromEntries(Object.entries(addressForm).map(([k, v]) => [k, v.trim()])) as AddressForm
-    if (!form.fullName || !form.phone || !form.city) return setAddressError("Full name, phone and city are required.")
+    if (!form.fullName || !form.phone || !form.city || !form.thana) return setAddressError("Full name, phone, district and thana are required.")
     if (form.fullAddress.length < 10) return setAddressError("The full address needs at least 10 characters.")
-    if (form.country && form.country.length < 2) return setAddressError("Country needs at least 2 characters.")
-    // Send only what changed; a cleared country is left as it was (the API can't blank it).
+    // Send only what changed.
     const changes: Partial<OrderAddressBody> = {}
     if (form.fullName !== address.fullName) changes.fullName = form.fullName
     if (form.phone !== address.phone) changes.phone = form.phone
     if (form.fullAddress !== address.fullAddress) changes.fullAddress = form.fullAddress
     if (form.city !== address.city) changes.city = form.city
-    if (form.country && form.country !== (address.country ?? "")) changes.country = form.country
+    if (form.thana !== address.thana) changes.thana = form.thana
     if (Object.keys(changes).length === 0) return setAddressForm(null)
     setSavingAddress(true)
     // The order page reloads with the saved address, which this dialog then shows.
@@ -1144,6 +1142,16 @@ function PathaoDialog({ order, due, onClose }: { order: OrderDetail; due: number
                     <Input id="addr-phone" value={addressForm.phone} maxLength={30} inputMode="tel" placeholder="01712345678" className="bg-card font-mono" onChange={(e) => setAddressForm({ ...addressForm, phone: e.target.value })} />
                   </Field>
                 </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field>
+                    <FieldLabel htmlFor="addr-city">District</FieldLabel>
+                    <Input id="addr-city" value={addressForm.city} maxLength={100} placeholder="Dhaka" className="bg-card" onChange={(e) => setAddressForm({ ...addressForm, city: e.target.value })} />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="addr-thana">Thana</FieldLabel>
+                    <Input id="addr-thana" value={addressForm.thana} maxLength={100} placeholder="Mirpur 6" className="bg-card" onChange={(e) => setAddressForm({ ...addressForm, thana: e.target.value })} />
+                  </Field>
+                </div>
                 <Field>
                   <div className="flex items-baseline justify-between">
                     <FieldLabel htmlFor="addr-full">Full address</FieldLabel>
@@ -1153,21 +1161,14 @@ function PathaoDialog({ order, due, onClose }: { order: OrderDetail; due: number
                     id="addr-full"
                     value={addressForm.fullAddress}
                     maxLength={255}
-                    placeholder="House 123, Road 4, Sector 10, Uttara, Dhaka-1230"
+                    placeholder="HOUSE-32, ROAD-08, BLOCK-H, MIRPUR-2, DHAKA-1216"
                     className="min-h-16 bg-card"
                     onChange={(e) => setAddressForm({ ...addressForm, fullAddress: e.target.value })}
                   />
                 </Field>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field>
-                    <FieldLabel htmlFor="addr-city">City</FieldLabel>
-                    <Input id="addr-city" value={addressForm.city} maxLength={100} className="bg-card" onChange={(e) => setAddressForm({ ...addressForm, city: e.target.value })} />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="addr-country">Country</FieldLabel>
-                    <Input id="addr-country" value={addressForm.country} maxLength={100} placeholder="Optional, e.g. BD" className="bg-card" onChange={(e) => setAddressForm({ ...addressForm, country: e.target.value })} />
-                  </Field>
-                </div>
+                <p className="-mt-1 text-xs text-muted-foreground">
+                  Pathao gets: <span className="text-foreground">{pathaoAddress(addressForm) || "—"}</span>
+                </p>
                 {pathaoProblems(addressForm, order.customerName, order.customerPhone).map((p) => (
                   <p key={p} className="-mt-1 text-xs text-amber-700 dark:text-amber-400">{p}</p>
                 ))}
@@ -1195,8 +1196,9 @@ function PathaoDialog({ order, due, onClose }: { order: OrderDetail; due: number
                     <MapPinIcon className="mt-0.5 size-3.5 shrink-0" />
                     {formatAddress(address)}
                   </div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">Pathao gets: {pathaoAddress(address)}</div>
                   {pathaoProblems(
-                    { fullName: address.fullName, phone: address.phone, fullAddress: address.fullAddress, city: address.city, country: address.country ?? "" },
+                    { fullName: address.fullName, phone: address.phone, city: address.city, thana: address.thana, fullAddress: address.fullAddress },
                     order.customerName,
                     order.customerPhone
                   ).map((p) => (
