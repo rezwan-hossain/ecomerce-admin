@@ -10,6 +10,10 @@ import {
   CopyIcon,
   EllipsisVerticalIcon,
   EyeIcon,
+  HandIcon,
+  ServerIcon,
+  ShoppingCartIcon,
+  TruckIcon,
   MapPinIcon,
   MessageCircleIcon,
   PackageIcon,
@@ -19,7 +23,7 @@ import {
   XCircleIcon,
 } from "lucide-react"
 
-import { Kpis, label, n0, Pill, rel, taka, type Tone } from "@/components/inventory/inventory-ui"
+import { fmtDateTime, Kpis, label, n0, Pill, rel, taka, type Tone } from "@/components/inventory/inventory-ui"
 import { ListTable, type ListColumn, type ListFilter } from "@/components/list-table"
 import { cancelOrder, markPaymentPaid, updateOrderStatus } from "@/app/actions/order.actions"
 import { getProduct } from "@/app/actions/product.actions"
@@ -38,7 +42,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { getReturnState } from "@/lib/orders/return-state"
 import { cn } from "@/lib/utils"
-import { formatAddress, type CourierCarrier, type Order, type OrderAddress, type OrderStatus, type PaymentStatus } from "@/types/order.type"
+import { formatAddress, type ChangeSource, type CourierCarrier, type Order, type OrderAddress, type OrderStatus, type PaymentStatus, type ShipmentStatus } from "@/types/order.type"
 import type { ProductDetail } from "@/types/product.type"
 
 export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
@@ -68,6 +72,47 @@ export const PAYMENT_LABEL: Record<PaymentStatus, string> = {
 }
 
 export const CARRIER_LABEL: Record<CourierCarrier, string> = { PATHAO: "Pathao", REDX: "RedX", STEADFAST: "Steadfast", CARRYBEE: "CarryBee" }
+// Who made a change, as the backend recorded it. Manual stands out: by hand means nobody else confirmed it.
+export function SourceBadge({ source, courier, at, userId }: { source: ChangeSource; courier?: CourierCarrier | null; at?: string; userId?: string }) {
+  const name = courier ? CARRIER_LABEL[courier] : "Courier"
+  let text = "System"
+  let tip = "Made by the server, or recorded before sources were tracked"
+  let icon = <ServerIcon />
+  let tone = "border-border text-muted-foreground"
+  if (source === "MANUAL") {
+    text = "Manual"
+    tip = userId ? `Changed by an admin in the admin panel (user ${userId})` : "Changed by an admin in the admin panel"
+    icon = <HandIcon />
+    tone = "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300"
+  } else if (source === "COURIER_WEBHOOK") {
+    text = name
+    tip = `Reported by ${name}`
+    icon = <TruckIcon />
+    tone = "border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300"
+  } else if (source === "COURIER_SYNC") {
+    text = `${name} (sync)`
+    tip = `Fetched from ${name} when an admin pressed Sync`
+    icon = <RefreshCwIcon />
+    tone = "border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300"
+  } else if (source === "CHECKOUT") {
+    text = "Checkout"
+    tip = "Created at checkout"
+    icon = <ShoppingCartIcon />
+  }
+  if (at) tip += ` · ${fmtDateTime(at)}`
+  return (
+    <span title={tip} className={cn("inline-flex h-5 items-center gap-1 rounded-md border px-1.5 text-[11px] font-medium whitespace-nowrap [&_svg]:size-3", tone)}>
+      {icon}
+      {text}
+    </span>
+  )
+}
+
+// Cash on delivery settled by hand, or a parcel closed by hand: worth checking against the courier's payout.
+export const settledByHand = (o: Pick<Order, "payments" | "shipments">) =>
+  o.payments.some((p) => p.provider === "COD" && p.metadata?.settledBy === "MANUAL") ||
+  o.shipments.some((s) => (s.status === "DELIVERED" || s.status === "RETURNED") && s.metadata?.lastChange?.source === "MANUAL")
+
 export const PROVIDER_LABEL: Record<Order["payments"][number]["provider"], string> = {
   COD: "Cash on delivery",
   BKASH: "bKash",
@@ -95,6 +140,13 @@ export const NEXT: Partial<Record<OrderStatus, { status: OrderStatus; text: stri
 export const followsShipment = (o: Pick<Order, "shipments">, status: OrderStatus | undefined) =>
   (status === "SHIPPED" || status === "DELIVERED" || status === "RETURNED") && o.shipments.some((s) => s.status !== "CANCELLED")
 export const CANCELLABLE: OrderStatus[] = ["PENDING", "CONFIRMED", "PROCESSING", "READY_TO_SHIP"]
+// A parcel still with the courier; the backend won't cancel the order until it's cancelled there.
+const LIVE_SHIPMENT: ShipmentStatus[] = ["PENDING", "PROCESSING", "SHIPPED", "IN_TRANSIT", "OUT_FOR_DELIVERY"]
+export function cancelBlockedBy(o: Pick<Order, "shipments">) {
+  const s = o.shipments.find((x) => LIVE_SHIPMENT.includes(x.status))
+  if (!s) return undefined
+  return `Cancel the ${CARRIER_LABEL[s.carrier]} parcel ${s.consignmentId ?? s.trackingNumber ?? ""} first`.replace(/\s+first$/, " first")
+}
 const STOPPED: OrderStatus[] = ["CANCELLED", "FAILED", "REFUNDED", "RETURNED", "PARTIALLY_RETURNED"]
 const RETURNS: OrderStatus[] = ["RETURNED", "PARTIALLY_RETURNED"]
 
@@ -148,6 +200,7 @@ function Amount({ order }: { order: Order }) {
       )}
       {payment?.status === "FAILED" && payment.failureMessage && <span className="text-[11px] whitespace-nowrap text-destructive">{payment.failureMessage}</span>}
       {payment && <span className="text-[11px] whitespace-nowrap text-muted-foreground">{PROVIDER_LABEL[payment.provider]}</span>}
+      {settledByHand(order) && <SourceBadge source="MANUAL" />}
       {due > 0 && !STOPPED.includes(order.status) && (
         <span className="text-[11px] font-medium whitespace-nowrap text-amber-700 dark:text-amber-400">{taka(due)} due</span>
       )}
@@ -452,9 +505,12 @@ export function OrdersTable({
               {CANCELLABLE.includes(o.status) && (
                 <>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem variant="destructive" onClick={() => setCancelling(o)}>
+                  <DropdownMenuItem variant="destructive" onClick={() => setCancelling(o)} disabled={!!cancelBlockedBy(o)}>
                     <XCircleIcon />
-                    Cancel order
+                    <span className="flex flex-col">
+                      Cancel order
+                      {cancelBlockedBy(o) && <span className="text-[11px] font-normal text-muted-foreground">{cancelBlockedBy(o)}</span>}
+                    </span>
                   </DropdownMenuItem>
                 </>
               )}
@@ -556,15 +612,24 @@ function ItemsDialog({ order, images, onClose }: { order: Order; images: Record<
     }
   }, [order])
 
+  const payment = order.payments.find((p) => p.status === "PAID") ?? order.payments.at(-1)
+  const paid = order.payments.filter((p) => p.status === "PAID" || p.status === "PARTIALLY_PAID").reduce((sum, p) => sum + Number(p.amount), 0)
+  const loading = Object.keys(products).length === 0 && order.items.some((i) => i.productId)
+
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="gap-0 p-0 sm:max-w-xl">
-        <DialogHeader className="border-b px-5 pt-5 pb-4">
-          <DialogTitle className="text-base">
-            {order.items.length} {order.items.length === 1 ? "item" : "items"} · {n0(units)} {units === 1 ? "unit" : "units"}
-          </DialogTitle>
-          <DialogDescription>
-            {order.orderNumber} · {order.customerName ?? order.customerEmail} · {placedAt(placed(order))}
+      <DialogContent className="gap-0 p-0 sm:max-w-[38rem]">
+        <DialogHeader className="gap-2 border-b px-5 pt-5 pb-4">
+          <div className="flex flex-wrap items-center gap-2 pr-8">
+            <DialogTitle className="font-mono text-base">{order.orderNumber}</DialogTitle>
+            <StatusBadge status={ORDER_STATUS_LABEL[order.status]} />
+          </div>
+          <DialogDescription className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            <span className="font-medium text-foreground">{order.customerName ?? order.customerEmail}</span>
+            <span>{placedAt(placed(order))}</span>
+            <span>
+              {order.items.length} {order.items.length === 1 ? "item" : "items"} · {n0(units)} {units === 1 ? "unit" : "units"}
+            </span>
           </DialogDescription>
         </DialogHeader>
 
@@ -582,24 +647,34 @@ function ItemsDialog({ order, images, onClose }: { order: Order; images: Record<
               options = [{ name: "Variant", value: item.variantName }]
             }
             const src = variant?.images[0]?.url ?? (item.productId ? images[item.productId] : undefined)
+            const full = Number(item.unitPrice) * item.quantity
+            const saved = full - Number(item.totalAmount)
             return (
-              <li key={item.id} className="flex gap-4 px-5 py-4">
-                <span className="grid size-24 shrink-0 place-items-center overflow-hidden rounded-xl border bg-muted">
+              <li key={item.id} className={cn("flex gap-4 px-5 py-4", item.returnedQuantity >= item.quantity && "opacity-60")}>
+                <span className="relative grid size-20 shrink-0 place-items-center overflow-hidden rounded-xl border bg-muted">
                   {src ? (
                     // eslint-disable-next-line @next/next/no-img-element -- any image host is allowed
                     <img src={src} alt={item.productName} className="size-full object-cover" />
                   ) : (
                     <PackageIcon className="size-6 text-muted-foreground" />
                   )}
+                  {item.quantity > 1 && (
+                    <span className="absolute top-1 right-1 grid h-5 min-w-5 place-items-center rounded-full bg-foreground px-1 text-[11px] font-bold text-background tabular-nums">
+                      {item.quantity}
+                    </span>
+                  )}
                 </span>
                 <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-                  {item.productId ? (
-                    <Link href={`/products/${item.productId}`} className="font-medium hover:text-primary hover:underline">
-                      {item.productName}
-                    </Link>
-                  ) : (
-                    <span className="font-medium">{item.productName}</span>
-                  )}
+                  <div className="min-w-0">
+                    {product?.brand && <div className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{product.brand.name}</div>}
+                    {item.productId ? (
+                      <Link href={`/products/${item.productId}`} className="font-medium hover:text-primary hover:underline">
+                        {item.productName}
+                      </Link>
+                    ) : (
+                      <span className="font-medium">{item.productName}</span>
+                    )}
+                  </div>
                   {options.length > 0 && (
                     <span className="flex flex-wrap gap-1.5">
                       {options.map((opt) => (
@@ -610,27 +685,48 @@ function ItemsDialog({ order, images, onClose }: { order: Order; images: Record<
                       ))}
                     </span>
                   )}
-                  <span className="font-mono text-[11px] text-muted-foreground">{item.sku}</span>
+                  {loading && options.length === 0 && <span className="h-5 w-24 animate-pulse rounded-md bg-muted" />}
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+                    <span className="font-mono">{item.sku}</span>
+                    {variant && (
+                      <span className={cn(variant.stock === 0 && "text-destructive", variant.stock > 0 && variant.stock <= 5 && "text-amber-700 dark:text-amber-400")}>
+                        · {variant.stock === 0 ? "out of stock" : `${n0(variant.stock)} in stock`}
+                      </span>
+                    )}
+                    {item.returnedQuantity > 0 && (
+                      <span className="rounded bg-amber-100 px-1.5 py-px font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300">{n0(item.returnedQuantity)} returned</span>
+                    )}
+                  </div>
                 </div>
-                <div className="flex shrink-0 flex-col items-end gap-1 text-right tabular-nums">
+                <div className="flex shrink-0 flex-col items-end gap-0.5 text-right tabular-nums">
                   <span className="font-semibold">{taka(Number(item.totalAmount))}</span>
+                  {saved > 0 && <span className="text-xs text-muted-foreground line-through">{taka(full)}</span>}
                   <span className="text-xs text-muted-foreground">
                     {n0(item.quantity)} × {taka(Number(item.unitPrice))}
                   </span>
-                  {item.quantity > 1 && <span className="rounded-full bg-primary/10 px-2 text-[11px] font-semibold text-primary">Qty {item.quantity}</span>}
+                  {saved > 0 && <span className="text-[11px] font-medium text-emerald-700 dark:text-emerald-400">−{taka(saved)} off</span>}
                 </div>
               </li>
             )
           })}
         </ul>
 
-        <dl className="grid gap-1 border-t bg-muted/30 px-5 py-3 text-sm tabular-nums">
+        <dl className="grid gap-1.5 border-t bg-muted/30 px-5 py-3 text-sm tabular-nums">
           <div className="flex justify-between"><dt className="text-muted-foreground">Subtotal</dt><dd>{taka(Number(order.subtotalAmount))}</dd></div>
           {Number(order.discountAmount) > 0 && (
             <div className="flex justify-between"><dt className="text-muted-foreground">Discount</dt><dd className="text-emerald-700 dark:text-emerald-400">−{taka(Number(order.discountAmount))}</dd></div>
           )}
           <div className="flex justify-between"><dt className="text-muted-foreground">Shipping</dt><dd>{Number(order.shippingAmount) ? taka(Number(order.shippingAmount)) : "Free"}</dd></div>
-          <div className="flex justify-between font-semibold"><dt>Total</dt><dd>{taka(Number(order.totalAmount))}</dd></div>
+          <div className="flex justify-between border-t pt-1.5 text-base font-semibold"><dt>Total</dt><dd>{taka(Number(order.totalAmount))}</dd></div>
+          {payment && (
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <dt className="flex items-center gap-1.5 text-muted-foreground">
+                {PROVIDER_LABEL[payment.provider]}
+                <Pill tone={PAYMENT_TONE[payment.status] ?? "amber"}>{PAYMENT_LABEL[payment.status]}</Pill>
+              </dt>
+              <dd className="text-muted-foreground">{taka(paid)} paid</dd>
+            </div>
+          )}
         </dl>
 
         <DialogFooter className="m-0 rounded-b-xl border-t px-5 py-3">

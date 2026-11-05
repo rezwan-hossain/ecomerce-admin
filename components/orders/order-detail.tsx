@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useEffect, useState } from "react"
-import { Controller, useForm } from "react-hook-form"
+import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { toast } from "sonner"
@@ -14,16 +14,19 @@ import {
   ExternalLinkIcon,
   FileTextIcon,
   MailIcon,
+  MinusIcon,
   MapPinIcon,
   PackageIcon,
   PackageCheckIcon,
   PackageOpenIcon,
   PencilIcon,
   PhoneIcon,
+  PlusIcon,
   PrinterIcon,
   RefreshCwIcon,
   StickyNoteIcon,
   StoreIcon,
+  TriangleAlertIcon,
   TruckIcon,
   Undo2Icon,
   UserIcon,
@@ -45,13 +48,12 @@ import {
 import { bookPathaoShipment, getPathaoStores, syncPathaoShipment } from "@/app/actions/pathao.actions"
 import { Card, fmtDate, fmtDateTime, Kpis, label, n0, Pill, RackTag, rel, taka, type Tone, WarehouseTag } from "@/components/inventory/inventory-ui"
 import { MovementQuantity, MovementTag, movementRacks } from "@/components/inventory/movements-table"
-import { CANCELLABLE, CancelDialog, CARRIER_LABEL, followsShipment, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL, RefreshButton } from "@/components/orders/orders-table"
+import { CANCELLABLE, cancelBlockedBy, CancelDialog, CARRIER_LABEL, followsShipment, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL, RefreshButton, SourceBadge } from "@/components/orders/orders-table"
 import { PrintInvoice } from "@/components/orders/print-invoice"
 import { StatusBadge } from "@/components/status-badge"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -78,6 +80,14 @@ const carrierItems = Object.entries(CARRIER_LABEL).map(([value, text]) => ({ val
 const SHIPMENT_STATUSES: ShipmentStatus[] = ["PENDING", "PROCESSING", "SHIPPED", "IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED", "FAILED", "RETURNED", "CANCELLED"]
 export const shipmentStatusItems = SHIPMENT_STATUSES.map((value) => ({ value, label: label(value) }))
 // The backend refuses status changes once a shipment ends.
+// Not a real shipment status: DELIVERED plus the cash the rider collected.
+export const PARTLY_DELIVERED = "PARTLY_DELIVERED"
+// The shipment select's options; "Partly delivered" only while the courier still has cash to collect.
+export function shipmentStatusOptions(codPending: boolean): { value: string; label: string }[] {
+  if (!codPending) return shipmentStatusItems
+  const at = shipmentStatusItems.findIndex((t) => t.value === "DELIVERED") + 1
+  return [...shipmentStatusItems.slice(0, at), { value: PARTLY_DELIVERED, label: "Partly delivered" }, ...shipmentStatusItems.slice(at)]
+}
 export const SHIPMENT_DONE: ShipmentStatus[] = ["DELIVERED", "CANCELLED", "RETURNED", "FAILED"]
 // The order follows its shipment. These would also ship the order (taking the stock), so they ask first.
 const CONFIRM_TEXT: Partial<Record<ShipmentStatus, string>> = {
@@ -152,6 +162,8 @@ export function OrderDetailPage({
   const [refunding, setRefunding] = useState(false)
   const [receiving, setReceiving] = useState(false)
   const [confirming, setConfirming] = useState<{ shipmentId: string; status: ShipmentStatus } | null>(null)
+  const [partlyDelivering, setPartlyDelivering] = useState<string | null>(null)
+  const [markingCancelled, setMarkingCancelled] = useState<Shipment | null>(null)
 
   const next = NEXT[order.status]
   const stopped = STOPPED.includes(order.status)
@@ -170,6 +182,9 @@ export function OrderDetailPage({
   // Paid money not yet refunded or promised in an open request.
   const refundable = paid - order.refundRequests.filter((r) => r.status !== "REJECTED").reduce((s, r) => s + Number(r.amount), 0)
   const codOpen = order.payments.some((p) => p.method === "CASH_ON_DELIVERY" && OPEN_PAYMENT.includes(p.status))
+  // A partial delivery only makes sense while the courier still has cash to collect.
+  const codPending = order.payments.find((p) => p.provider === "COD" && p.status === "PENDING")
+  const statusItems = shipmentStatusOptions(codPending !== undefined)
   const logs = [...order.statusLogs].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   const reachedAt = new Map(logs.map((l) => [l.toStatus, l.createdAt]))
   const lastLog = logs.at(-1)
@@ -245,8 +260,9 @@ export function OrderDetailPage({
     toast.success("Payment marked as failed")
   }
 
-  function pickShipmentStatus(shipmentId: string, status: ShipmentStatus) {
-    if (needsShipmentConfirm(order.status, status)) setConfirming({ shipmentId, status })
+  function pickShipmentStatus(shipmentId: string, status: ShipmentStatus | typeof PARTLY_DELIVERED) {
+    if (status === PARTLY_DELIVERED) setPartlyDelivering(shipmentId)
+    else if (needsShipmentConfirm(order.status, status)) setConfirming({ shipmentId, status })
     else setShipmentStatus(shipmentId, status)
   }
 
@@ -256,6 +272,13 @@ export function OrderDetailPage({
     setBusy(false)
     if (!res.success) return toast.error(res.error)
     toast.success(`Shipment is now ${label(status).toLowerCase()}`)
+  }
+
+  // The dialog shows the error itself, so hand the result back.
+  async function saveShipmentStatus(shipmentId: string, status: ShipmentStatus, collectedAmount: number) {
+    const res = await updateShipmentStatus(order.id, shipmentId, status, collectedAmount)
+    if (res.success) toast.success("Recorded as partly delivered", { description: `${taka(collectedAmount)} collected. Receive the items that came back.` })
+    return res
   }
 
   // One click books with the usual settings; the backend fills in the item count and the cash still due.
@@ -276,6 +299,19 @@ export function OrderDetailPage({
     if (!res.success) return toast.error(res.error, { description: reply, duration: 15000 })
     const title = res.data.updated ? `Shipment is now ${label(res.data.status).toLowerCase()}` : `No change · Pathao says: ${pathaoText(res.data.pathaoStatus)}`
     toast.success(title, { description: reply, duration: 15000 })
+  }
+
+  // The parcel was cancelled in the courier's panel. Pathao can confirm it with a sync; otherwise the admin marks it by hand.
+  async function parcelCancelled(s: Shipment) {
+    if (s.carrier === "PATHAO" && s.consignmentId) {
+      setBusy(true)
+      const res = await syncPathaoShipment(order.id, s.id)
+      setBusy(false)
+      if (res.success && res.data.status === "CANCELLED") {
+        return toast.success("Pathao confirms the parcel is cancelled", { description: "You can cancel the order now." })
+      }
+    }
+    setMarkingCancelled(s)
   }
 
   async function review(refundId: string, action: "approve" | "reject" | "process") {
@@ -308,7 +344,7 @@ export function OrderDetailPage({
             <span title={order.status === "PARTIALLY_RETURNED" ? `${n0(order.items.reduce((s, i) => s + i.returnedQuantity, 0))} of ${n0(units)} items back in stock — the customer kept the rest.` : undefined}>
               <StatusBadge status={ORDER_STATUS_LABEL[order.status]} />
             </span>
-            {payment && <Pill tone={TONE[payment.status] ?? "amber"}>{paymentPillText(payment)}</Pill>}
+            {payment && <Pill tone={payment.status === "CANCELLED" ? "grey" : (TONE[payment.status] ?? "amber")}>{paymentPillText(payment)}</Pill>}
           </div>
           <p className="text-sm text-muted-foreground">
             Placed {fmtDateTime(placedAt)} ({rel(placedAt)}){payment && ` · ${label(payment.method)}`} · {order.userId ? "Account" : "Guest checkout"}
@@ -321,9 +357,12 @@ export function OrderDetailPage({
             Print
           </Button>
           {CANCELLABLE.includes(order.status) && (
-            <Button variant="outline" size="sm" className="text-destructive" onClick={() => setCancelling(true)} disabled={busy}>
-              Cancel order
-            </Button>
+            // A disabled button gets no hover, so the hint sits on the wrapper.
+            <span title={cancelBlockedBy(order)}>
+              <Button variant="outline" size="sm" className="text-destructive" onClick={() => setCancelling(true)} disabled={busy || !!cancelBlockedBy(order)}>
+                Cancel order
+              </Button>
+            </span>
           )}
           {next && !stuckReturn && !followsShipment(order, next.status) && (
             <Button size="sm" onClick={advance} disabled={busy}>
@@ -586,6 +625,13 @@ export function OrderDetailPage({
                           {s.shippedAt && ` · shipped ${fmtDate(s.shippedAt)}`}
                           {s.deliveredAt && ` · delivered ${fmtDate(s.deliveredAt)}`}
                         </div>
+                        {s.metadata?.lastChange && (
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                            {label(s.metadata.lastChange.status)} set by
+                            <SourceBadge source={s.metadata.lastChange.source} courier={s.metadata.lastChange.courier} at={s.metadata.lastChange.at} userId={s.metadata.lastChange.userId} />
+                            {rel(s.metadata.lastChange.at)}
+                          </div>
+                        )}
                         {s.metadata?.pathaoStatus && (
                           <div className="text-xs text-muted-foreground">
                             Pathao: <span className="font-medium text-foreground">{pathaoText(s.metadata.pathaoStatus)}</span>
@@ -593,6 +639,12 @@ export function OrderDetailPage({
                           </div>
                         )}
                       </div>
+                      {CANCELLABLE.includes(order.status) && !SHIPMENT_DONE.includes(s.status) && (
+                        <Button size="sm" variant="ghost" className="text-destructive" onClick={() => parcelCancelled(s)} disabled={busy} title="Cancelled it in the courier's panel? Record it here">
+                          <XIcon />
+                          Parcel cancelled at courier
+                        </Button>
+                      )}
                       {s.carrier === "PATHAO" && s.consignmentId && !SHIPMENT_DONE.includes(s.status) && (
                         <Button size="sm" variant="ghost" onClick={() => syncPathao(s.id)} disabled={busy} title="Ask Pathao for the latest status">
                           <RefreshCwIcon className={cn(busy && "animate-spin")} />
@@ -602,10 +654,10 @@ export function OrderDetailPage({
                       {SHIPMENT_DONE.includes(s.status) ? (
                         <Pill tone={TONE[s.status] ?? "grey"}>{label(s.status)}</Pill>
                       ) : (
-                        <Select value={s.status} items={shipmentStatusItems} onValueChange={(v) => pickShipmentStatus(s.id, v as ShipmentStatus)} disabled={busy}>
+                        <Select value={s.status} items={statusItems} onValueChange={(v) => pickShipmentStatus(s.id, v as ShipmentStatus)} disabled={busy}>
                           <SelectTrigger size="sm" aria-label="Shipment status" className="w-40"><SelectValue /></SelectTrigger>
                           <SelectContent>
-                            {shipmentStatusItems.map((t) => (
+                            {statusItems.map((t) => (
                               <SelectItem key={t.value} value={t.value}>
                                 {t.label}
                               </SelectItem>
@@ -702,7 +754,10 @@ export function OrderDetailPage({
                       <span className="font-medium">
                         {log.fromStatus ? `${ORDER_STATUS_LABEL[log.fromStatus]} → ${ORDER_STATUS_LABEL[log.toStatus]}` : "Order placed"}
                       </span>
-                      <span className="text-xs text-muted-foreground">{fmtDateTime(log.createdAt)}</span>
+                      <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <SourceBadge source={log.source} courier={log.courier} />
+                        {fmtDateTime(log.createdAt)}
+                      </span>
                     </div>
                     {log.note && log.note !== "Order placed" && <p className="text-muted-foreground">{log.note}</p>}
                   </div>
@@ -804,15 +859,28 @@ export function OrderDetailPage({
                       <span className="font-medium">
                         {p.provider} <span className="font-normal text-muted-foreground">· {label(p.method)}</span>
                       </span>
-                      <Pill tone={TONE[p.status] ?? "amber"}>{PAYMENT_LABEL[p.status]}</Pill>
+                      <span className="flex items-center gap-1.5">
+                        {p.metadata?.settledBy && (
+                          <SourceBadge source={p.metadata.settledBy} courier={p.metadata.settledByCourier} at={p.metadata.settledAt} userId={p.metadata.settledByUserId} />
+                        )}
+                        <Pill tone={p.status === "CANCELLED" ? "grey" : (TONE[p.status] ?? "amber")}>{PAYMENT_LABEL[p.status]}</Pill>
+                      </span>
                     </div>
                     <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                       <span className="text-sm font-semibold text-foreground tabular-nums">
                         {taka(Number(p.amount), 2)}
-                        {p.status === "PARTIALLY_PAID" && <span className="font-normal text-muted-foreground"> of {taka(Number(p.metadata?.orderedAmount), 2)}</span>}
+                        {p.status === "PARTIALLY_PAID" && (
+                          <span className="font-normal text-muted-foreground"> collected of {taka(Number(p.metadata?.orderedAmount), 2)}</span>
+                        )}
                       </span>
                       <span>{p.paidAt ? `Paid ${fmtDateTime(p.paidAt)}` : `Started ${fmtDateTime(p.createdAt)}`}</span>
                     </div>
+                    {p.provider === "COD" && p.metadata?.settledBy === "MANUAL" && (
+                      <div className="flex items-start gap-1.5 rounded-lg bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                        <TriangleAlertIcon className="mt-px size-3.5 shrink-0" />
+                        Marked by hand — check against the courier&apos;s payout.
+                      </div>
+                    )}
                     {p.transactionId && <div className="truncate font-mono text-xs text-muted-foreground">Txn {p.transactionId}</div>}
                     {p.failureMessage && <div className="text-xs text-destructive">{p.failureMessage}</div>}
                     {p.providerReference && <div className="truncate font-mono text-xs text-muted-foreground">Ref {p.providerReference}</div>}
@@ -914,10 +982,45 @@ export function OrderDetailPage({
       {shipping && (
         <ShipmentDialog orderId={order.id} orderNumber={order.orderNumber} codAmount={codOpen ? due : 0} onClose={() => setShipping(false)} />
       )}
+      {partlyDelivering && codPending && (
+        <PartialDeliveryDialog
+          codAmount={Number(codPending.amount)}
+          readyToShip={order.status === "READY_TO_SHIP"}
+          onSave={(collected) => saveShipmentStatus(partlyDelivering, "DELIVERED", collected)}
+          onClose={() => setPartlyDelivering(null)}
+        />
+      )}
+      {markingCancelled && (
+        <AlertDialog open onOpenChange={(open) => !open && setMarkingCancelled(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Mark this parcel cancelled?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {markingCancelled.carrier === "PATHAO"
+                  ? "Pathao doesn't show it as cancelled yet. Mark it cancelled anyway?"
+                  : `Only do this once ${CARRIER_LABEL[markingCancelled.carrier]} has cancelled it.`}{" "}
+                This is recorded as Manual, and then the order can be cancelled.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Keep parcel</AlertDialogCancel>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  setShipmentStatus(markingCancelled.id, "CANCELLED")
+                  setMarkingCancelled(null)
+                }}
+              >
+                Mark cancelled
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
       {confirming && (
         <ConfirmShipmentDialog status={confirming.status} onConfirm={() => setShipmentStatus(confirming.shipmentId, confirming.status)} onClose={() => setConfirming(null)} />
       )}
-      {receiving && returnState.kind !== "none" && <ReceiveReturnsDialog order={order} fullReturn={returnState.kind === "returned"} onClose={() => setReceiving(false)} />}
+      {receiving && returnState.kind !== "none" && <ReceiveReturnsDialog order={order} images={images} stock={stock} movements={movements} fullReturn={returnState.kind === "returned"} onClose={() => setReceiving(false)} />}
       {refunding && <RefundDialog orderId={order.id} max={refundable} onClose={() => setRefunding(false)} />}
     </div>
   )
@@ -1618,9 +1721,33 @@ const returnsSchema = z.object({
 })
 type ReturnsForm = z.infer<typeof returnsSchema>
 
-// The admin ticks what physically came back; good units go back on sale, damaged ones to the damage section.
-function ReceiveReturnsDialog({ order, fullReturn, onClose }: { order: OrderDetail; fullReturn: boolean; onClose: () => void }) {
+// The admin counts what physically came back; good units go back on sale, damaged ones to the damage section.
+function ReceiveReturnsDialog({
+  order,
+  images,
+  stock,
+  movements,
+  fullReturn,
+  onClose,
+}: {
+  order: OrderDetail
+  images: Record<string, string>
+  stock: Record<string, VariantStockDetail>
+  movements: LedgerMovement[]
+  fullReturn: boolean
+  onClose: () => void
+}) {
   const lines = order.items.filter((i) => i.quantity - i.returnedQuantity > 0)
+  const parcel = order.shipments.find((s) => s.status === "RETURNED" || s.status === "DELIVERED") ?? order.shipments.at(-1)
+  const cod = order.payments.find((p) => p.provider === "COD")
+  // Units go back to the warehouse they were sold from (the order's SALE rows); fall back to where stock is now.
+  const homeOf = (i: OrderDetail["items"][number]) => {
+    const sale = movements.find((m) => m.type === "SALE" && m.inventoryLevel.variant.id === i.variantId)
+    const code = sale?.inventoryLevel.warehouse.code
+    const level = i.variantId ? stock[i.variantId]?.levels.find((l) => l.warehouse.code === code) : undefined
+    return { code, available: level?.available }
+  }
+  const unitPrice = (i: OrderDetail["items"][number]) => Number(i.totalAmount) / i.quantity
   const form = useForm<ReturnsForm>({
     resolver: zodResolver(
       returnsSchema
@@ -1637,8 +1764,22 @@ function ReceiveReturnsDialog({ order, fullReturn, onClose }: { order: OrderDeta
     },
   })
   const [serverError, setServerError] = useState("")
-  const quantities = form.watch("items")
+  const rows = form.watch("items")
+  const note = form.watch("note")
   const { errors, isSubmitting } = form.formState
+  const onSale = rows.filter((r) => !r.damaged).reduce((sum, r) => sum + r.quantity, 0)
+  const damaged = rows.filter((r) => r.damaged).reduce((sum, r) => sum + r.quantity, 0)
+  const valueOf = (damagedRows: boolean) =>
+    rows.reduce((sum, r, index) => (r.damaged === damagedRows ? sum + unitPrice(lines[index]) * r.quantity : sum), 0)
+  const total = onSale + damaged
+  const error = serverError || errors.items?.root?.message || errors.items?.message
+
+  function setQuantity(index: number, value: number) {
+    const max = rows[index].max
+    const quantity = Math.min(max, Math.max(0, Math.round(value) || 0))
+    form.setValue(`items.${index}.quantity`, quantity, { shouldValidate: form.formState.isSubmitted })
+    if (quantity === 0) form.setValue(`items.${index}.damaged`, false)
+  }
 
   async function submit(values: ReturnsForm) {
     setServerError("")
@@ -1653,91 +1794,185 @@ function ReceiveReturnsDialog({ order, fullReturn, onClose }: { order: OrderDeta
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Receive returned items</DialogTitle>
-          <DialogDescription>
-            {order.orderNumber} · enter what physically came back. Damaged items go to the damage section, not back on sale.
-          </DialogDescription>
-        </DialogHeader>
-        <form id="receive-returns" onSubmit={form.handleSubmit(submit)} className="flex flex-col gap-4">
-          <div className="overflow-hidden rounded-xl border">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/50 text-xs text-muted-foreground">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">Product</th>
-                  <th className="px-3 py-2 text-right font-medium">Already back</th>
-                  <th className="px-3 py-2 text-right font-medium">Received now</th>
-                  <th className="px-3 py-2 text-center font-medium">Damaged</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lines.map((line, index) => {
-                  const max = line.quantity - line.returnedQuantity
-                  const empty = !(quantities[index]?.quantity > 0)
-                  return (
-                    <tr key={line.id} className="border-t">
-                      <td className="px-3 py-2">
-                        <div className="font-medium">{line.productName}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {line.variantName && line.variantName !== line.sku && <span>{line.variantName} · </span>}
-                          <span className="font-mono">{line.sku}</span>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">
-                        {n0(line.returnedQuantity)} of {n0(line.quantity)}
-                      </td>
-                      <td className="px-3 py-2">
-                        <Input
-                          type="number"
-                          min={0}
-                          max={max}
-                          step={1}
-                          aria-label={`${line.productName} received now`}
-                          className="ml-auto w-20 text-right tabular-nums"
-                          {...form.register(`items.${index}.quantity`, {
-                            setValueAs: (v) => Math.min(max, Math.max(0, Number(v) || 0)),
-                            onChange: (e) => {
-                              if (!(Number(e.target.value) > 0)) form.setValue(`items.${index}.damaged`, false)
-                            },
-                          })}
-                        />
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <Controller
-                          control={form.control}
-                          name={`items.${index}.damaged`}
-                          render={({ field }) => (
-                            <Checkbox
-                              checked={field.value}
-                              onCheckedChange={field.onChange}
-                              disabled={empty}
-                              aria-label={`${line.productName} damaged`}
-                            />
-                          )}
-                        />
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+      <DialogContent className="gap-0 p-0 sm:max-w-[46rem]">
+        <DialogHeader className="flex-row items-center gap-3 border-b px-5 py-4">
+          <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-900/60 dark:text-amber-300 dark:ring-amber-800">
+            <PackageOpenIcon className="size-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <DialogTitle>Receive returned items</DialogTitle>
+            <DialogDescription>
+              <span className="font-mono text-xs text-foreground">{order.orderNumber}</span> · count what physically came back
+            </DialogDescription>
           </div>
+        </DialogHeader>
+
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 border-b px-5 py-3 text-xs sm:grid-cols-4">
+          <div>
+            <dt className="text-muted-foreground">Customer</dt>
+            <dd className="truncate font-medium">{order.customerName ?? order.customerEmail}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Parcel</dt>
+            <dd className="truncate font-medium">
+              {parcel ? `${CARRIER_LABEL[parcel.carrier]} · ${label(parcel.status).toLowerCase()}` : "No parcel"}
+            </dd>
+            {parcel && (parcel.trackingNumber ?? parcel.consignmentId) && <dd className="truncate font-mono text-muted-foreground">{parcel.trackingNumber ?? parcel.consignmentId}</dd>}
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Cash on delivery</dt>
+            <dd className="font-medium tabular-nums">
+              {!cod && "Prepaid"}
+              {cod?.status === "PARTIALLY_PAID" && `${taka(Number(cod.amount))} of ${taka(Number(cod.metadata?.orderedAmount))}`}
+              {cod?.status === "FAILED" && <span className="text-destructive">Not collected</span>}
+              {cod && cod.status !== "PARTIALLY_PAID" && cod.status !== "FAILED" && `${taka(Number(cod.amount))} · ${PAYMENT_LABEL[cod.status].toLowerCase()}`}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Order total</dt>
+            <dd className="font-medium tabular-nums">{taka(Number(order.totalAmount))}</dd>
+          </div>
+        </dl>
+
+        <form id="receive-returns" onSubmit={form.handleSubmit(submit)} className="flex max-h-[60vh] flex-col gap-4 overflow-y-auto bg-muted/30 px-5 py-4">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-muted-foreground">
+              {lines.length} {lines.length === 1 ? "item" : "items"} still out
+            </span>
+            <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => lines.forEach((_, index) => setQuantity(index, rows[index].max))}>
+              Everything came back
+            </Button>
+          </div>
+
+          <ul className="flex flex-col gap-2">
+            {lines.map((line, index) => {
+              const row = rows[index]
+              const image = line.productId ? images[line.productId] : undefined
+              const empty = row.quantity === 0
+              const home = homeOf(line)
+              return (
+                <li key={line.id} className={cn("overflow-hidden rounded-xl border bg-card transition-colors", !empty && "border-primary/30")}>
+                  <div className="flex items-center gap-3 px-3 py-3">
+                    <span className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-lg border bg-muted/60 text-muted-foreground">
+                      {image ? (
+                        // eslint-disable-next-line @next/next/no-img-element -- any image host is allowed
+                        <img src={image} alt="" className="size-full object-cover" />
+                      ) : (
+                        <PackageIcon className="size-4" />
+                      )}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-medium">{line.productName}</div>
+                      <div className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+                        {line.variantName && line.variantName !== line.sku && <span className="font-medium text-foreground">{line.variantName}</span>}
+                        <span className="font-mono">{line.sku}</span>
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
+                        {taka(unitPrice(line))} each · {n0(line.quantity)} ordered
+                        {line.returnedQuantity > 0 && ` · ${n0(line.returnedQuantity)} already back`} ·{" "}
+                        <span className="font-medium text-amber-700 dark:text-amber-400">{n0(row.max)} still out</span>
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <div className="text-sm font-semibold tabular-nums">{empty ? <span className="text-muted-foreground">—</span> : taka(unitPrice(line) * row.quantity)}</div>
+                      <div className="text-[11px] text-muted-foreground">{empty ? "nothing yet" : "receiving"}</div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-dashed bg-muted/30 px-3 py-2">
+                    <div className="flex items-center rounded-lg border bg-background">
+                      <Button type="button" variant="ghost" size="icon-sm" aria-label="One less" onClick={() => setQuantity(index, row.quantity - 1)} disabled={row.quantity === 0}>
+                        <MinusIcon />
+                      </Button>
+                      <Input
+                        inputMode="numeric"
+                        aria-label={`${line.productName} received now`}
+                        value={row.quantity}
+                        onChange={(e) => setQuantity(index, Number(e.target.value))}
+                        className="h-8 w-10 border-0 px-0 text-center font-semibold tabular-nums shadow-none focus-visible:ring-0"
+                      />
+                      <Button type="button" variant="ghost" size="icon-sm" aria-label="One more" onClick={() => setQuantity(index, row.quantity + 1)} disabled={row.quantity >= row.max}>
+                        <PlusIcon />
+                      </Button>
+                    </div>
+                    <span className="text-xs text-muted-foreground tabular-nums">of {n0(row.max)}</span>
+
+                    <ToggleGroup
+                      multiple={false}
+                      value={[row.damaged ? "damaged" : "good"]}
+                      onValueChange={(v) => v[0] && form.setValue(`items.${index}.damaged`, v[0] === "damaged")}
+                      disabled={empty}
+                      spacing={0}
+                      variant="outline"
+                      size="sm"
+                      aria-label={`${line.productName} condition`}
+                    >
+                      <ToggleGroupItem value="good" className="gap-1 bg-background text-xs data-pressed:bg-emerald-50 data-pressed:text-emerald-800 dark:data-pressed:bg-emerald-950 dark:data-pressed:text-emerald-300">
+                        <CheckIcon className="size-3.5" />
+                        Good
+                      </ToggleGroupItem>
+                      <ToggleGroupItem value="damaged" className="gap-1 bg-background text-xs data-pressed:bg-red-50 data-pressed:text-red-700 dark:data-pressed:bg-red-950 dark:data-pressed:text-red-300">
+                        <TriangleAlertIcon className="size-3.5" />
+                        Damaged
+                      </ToggleGroupItem>
+                    </ToggleGroup>
+
+                    {home.code && !empty && (
+                      <span className="ml-auto flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                        {row.damaged ? "To damage section in" : "Back on sale in"}
+                        <WarehouseTag code={home.code} />
+                        {home.available !== undefined && !row.damaged && (
+                          <span className="tabular-nums">
+                            {n0(home.available)} → <span className="font-semibold text-emerald-700 dark:text-emerald-400">{n0(home.available + row.quantity)}</span>
+                          </span>
+                        )}
+                      </span>
+                    )}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+
           <Field>
-            <FieldLabel htmlFor="returns-note">Note (optional)</FieldLabel>
-            <Textarea id="returns-note" placeholder="Box opened, cap scratched" maxLength={500} {...form.register("note")} />
+            <div className="flex items-baseline justify-between">
+              <FieldLabel htmlFor="returns-note">
+                Note <span className="font-normal text-muted-foreground">(optional)</span>
+              </FieldLabel>
+              <span className="text-[11px] text-muted-foreground tabular-nums">{note.length}/500</span>
+            </div>
+            <Textarea id="returns-note" placeholder="e.g. Box opened, cap scratched" maxLength={500} className="min-h-16 bg-background" {...form.register("note")} />
             {errors.note && <p className="text-sm text-destructive">{errors.note.message}</p>}
           </Field>
         </form>
-        <DialogFooter className="items-center">
-          {(serverError || errors.items?.root?.message || errors.items?.message) && (
-            <p className="mr-auto text-sm text-destructive">{serverError || errors.items?.root?.message || errors.items?.message}</p>
-          )}
+
+        <DialogFooter className="m-0 flex-col gap-3 rounded-b-xl border-t px-5 py-3 sm:flex-row sm:items-center">
+          <div className="mr-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            {error ? (
+              <span className="text-sm text-destructive">{error}</span>
+            ) : (
+              <>
+                {(onSale > 0 || damaged === 0) && (
+                  <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
+                    <PackageCheckIcon className="size-3.5" />
+                    {n0(onSale)} back on sale{onSale > 0 && ` · ${taka(valueOf(false))}`}
+                  </span>
+                )}
+                {damaged > 0 && (
+                  <span className="inline-flex items-center gap-1 text-red-700 dark:text-red-400">
+                    <TriangleAlertIcon className="size-3.5" />
+                    {n0(damaged)} to the damage section · {taka(valueOf(true))}
+                  </span>
+                )}
+              </>
+            )}
+          </div>
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
           <Button type="submit" form="receive-returns" disabled={isSubmitting}>
-            {isSubmitting ? "Receiving..." : "Receive into stock"}
+            <PackageCheckIcon />
+            {isSubmitting ? "Receiving..." : `Receive ${n0(total)} ${total === 1 ? "unit" : "units"}`}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1860,5 +2095,66 @@ function ReturnAlert({
         </div>
       )}
     </section>
+  )
+}
+
+// The customer kept only some items and paid for those. Records DELIVERED with the cash collected;
+// the items that came back are received afterwards from the order page.
+export function PartialDeliveryDialog({
+  codAmount,
+  readyToShip,
+  onSave,
+  onClose,
+}: {
+  codAmount: number
+  readyToShip: boolean
+  onSave: (collected: number) => Promise<{ success: boolean; error?: string }>
+  onClose: () => void
+}) {
+  const [amount, setAmount] = useState("")
+  const [error, setError] = useState("")
+  const [saving, setSaving] = useState(false)
+
+  async function save() {
+    const value = Number(amount)
+    if (amount.trim() === "" || !(value >= 0)) return setError("Enter the cash the rider collected.")
+    if (value === 0) return setError("Nothing collected? Mark the parcel Returned instead.")
+    if (value >= codAmount) return setError(`That's the full ${taka(codAmount)}. Mark the parcel Delivered instead.`)
+    setSaving(true)
+    const res = await onSave(Math.round(value * 100) / 100)
+    setSaving(false)
+    if (!res.success) return setError(res.error ?? "Something went wrong")
+    onClose()
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Partly delivered</DialogTitle>
+          <DialogDescription>
+            The customer kept some items and paid only for those. Cash on delivery was {taka(codAmount)}.
+            {readyToShip && " The order will move to Shipped and then Delivered."}
+          </DialogDescription>
+        </DialogHeader>
+        <Field>
+          <FieldLabel htmlFor="partial-collected">Cash collected (৳)</FieldLabel>
+          <Input id="partial-collected" inputMode="decimal" autoFocus value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" className="text-right tabular-nums" />
+        </Field>
+        <p className="flex items-start gap-1.5 rounded-lg bg-amber-50 px-2.5 py-2 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+          <TriangleAlertIcon className="mt-px size-3.5 shrink-0" />
+          This is recorded as Manual. Check it against the courier&apos;s payout.
+        </p>
+        <DialogFooter className="items-center">
+          {error && <p className="mr-auto text-sm text-destructive">{error}</p>}
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={saving}>
+            {saving ? "Saving..." : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

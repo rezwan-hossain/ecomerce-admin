@@ -87,8 +87,9 @@ export async function createShipment(id: string, dto: ShipmentDto) {
   return res
 }
 
-export async function updateShipmentStatus(id: string, shipmentId: string, status: ShipmentStatus) {
-  const res = await handleRequest(() => api.patch(`/orders/${id}/shipments/${shipmentId}`, { status }))
+// collectedAmount with DELIVERED records a partial delivery: the COD payment becomes PARTIALLY_PAID for that cash.
+export async function updateShipmentStatus(id: string, shipmentId: string, status: ShipmentStatus, collectedAmount?: number) {
+  const res = await handleRequest(() => api.patch(`/orders/${id}/shipments/${shipmentId}`, { status, collectedAmount }))
   if (res.success) refresh(id)
   return res
 }

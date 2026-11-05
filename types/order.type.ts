@@ -22,6 +22,9 @@ export type PaymentStatus =
   | "PARTIALLY_REFUNDED"
   | "PARTIALLY_PAID"; // COD partial delivery: the customer kept and paid for only some items
 
+// Who made a change. The server decides it from the endpoint called; the admin never sends it.
+export type ChangeSource = "MANUAL" | "COURIER_WEBHOOK" | "COURIER_SYNC" | "CHECKOUT" | "SYSTEM";
+
 // A row from GET /orders. Decimals (amounts) come back as strings.
 // Customer details and item names are snapshots taken at checkout.
 export interface Order {
@@ -57,7 +60,14 @@ export interface Order {
     status: PaymentStatus;
     amount: string; // PARTIALLY_PAID: the cash actually collected
     failureMessage?: string | null; // "Returned by courier" on a returned COD
-    metadata?: { orderedAmount?: string } | null; // PARTIALLY_PAID: what should have been collected
+    metadata?: {
+      orderedAmount?: string; // PARTIALLY_PAID: what should have been collected
+      collectedAmount?: string; // PARTIALLY_PAID: the cash collected
+      settledBy?: ChangeSource; // who changed the payment status last (missing on older payments)
+      settledByCourier?: CourierCarrier;
+      settledAt?: string;
+      settledByUserId?: string;
+    } | null;
     createdAt: string;
   }[];
   shipments: Shipment[];
@@ -92,7 +102,13 @@ export interface Shipment {
   deliveredAt: string | null;
   createdAt: string;
   // Pathao parcels keep Pathao's last status and its delivery fee here.
-  metadata?: { pathaoStatus?: string; pathaoStatusAt?: string; pathaoDeliveryFee?: number } | null;
+  metadata?: {
+    pathaoStatus?: string;
+    pathaoStatusAt?: string;
+    pathaoDeliveryFee?: number;
+    // The last status change and who made it (missing on older shipments).
+    lastChange?: { status: ShipmentStatus; source: ChangeSource; courier?: CourierCarrier; at: string; userId?: string };
+  } | null;
 }
 
 export interface ShipmentDto {
@@ -169,6 +185,14 @@ export interface OrderDetail extends Omit<Order, "items" | "payments"> {
     failureMessage: string | null;
     paidAt: string | null;
   })[];
-  statusLogs: { id: string; fromStatus: OrderStatus | null; toStatus: OrderStatus; note: string | null; createdAt: string }[];
+  statusLogs: {
+    id: string;
+    fromStatus: OrderStatus | null;
+    toStatus: OrderStatus;
+    note: string | null;
+    source: ChangeSource; // SYSTEM on rows from before sources were tracked
+    courier: CourierCarrier | null;
+    createdAt: string;
+  }[];
   refundRequests: { id: string; status: "PENDING" | "APPROVED" | "REJECTED" | "PROCESSED"; reason: string; amount: string; adminNote: string | null; createdAt: string }[];
 }

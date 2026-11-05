@@ -18,7 +18,15 @@ import {
 import { updateShipmentStatus } from "@/app/actions/order.actions"
 import { Card, fmtDate, Kpis, label, n0, Pill, rel, taka } from "@/components/inventory/inventory-ui"
 import { ListTable, type ListColumn } from "@/components/list-table"
-import { ConfirmShipmentDialog, needsShipmentConfirm, SHIPMENT_DONE, shipmentStatusItems, TONE } from "@/components/orders/order-detail"
+import {
+  ConfirmShipmentDialog,
+  needsShipmentConfirm,
+  PARTLY_DELIVERED,
+  PartialDeliveryDialog,
+  SHIPMENT_DONE,
+  shipmentStatusOptions,
+  TONE,
+} from "@/components/orders/order-detail"
 import { CARRIER_LABEL, ORDER_STATUS_LABEL } from "@/components/orders/orders-table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
@@ -42,6 +50,7 @@ const PIPELINE: { text: string; statuses: ShipmentStatus[] }[] = [
 
 type Parcel = { shipment: Shipment; order: Order }
 
+const codPending = (o: Order) => o.payments.find((p) => p.provider === "COD" && p.status === "PENDING")
 const units = (o: Order) => o.items.reduce((s, i) => s + i.quantity, 0)
 const isCod = (o: Order) => o.payments.some((p) => p.provider === "COD") && !o.payments.some((p) => p.status === "PAID")
 const deliveryDays = (s: Shipment) =>
@@ -60,6 +69,7 @@ function daysText(days: number | null) {
 export function ShippingBoard({ orders, destinations }: { orders: Order[]; destinations: Record<string, string> }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [confirming, setConfirming] = useState<{ parcel: Parcel; status: ShipmentStatus } | null>(null)
+  const [partlyDelivering, setPartlyDelivering] = useState<Parcel | null>(null)
 
   const waiting = orders.filter((o) => TO_PACK.includes(o.status) || o.status === "READY_TO_SHIP")
   const parcels: Parcel[] = orders
@@ -109,6 +119,13 @@ export function ShippingBoard({ orders, destinations }: { orders: Order[]; desti
     setBusy(null)
     if (!res.success) return toast.error(res.error)
     toast.success(`${p.order.orderNumber}: parcel is now ${label(status).toLowerCase()}`)
+  }
+
+  // The dialog shows the error itself, so hand the result back.
+  async function savePartial(p: Parcel, collectedAmount: number) {
+    const res = await updateShipmentStatus(p.order.id, p.shipment.id, "DELIVERED", collectedAmount)
+    if (res.success) toast.success(`${p.order.orderNumber}: recorded as partly delivered`, { description: `${taka(collectedAmount)} collected. Receive the items that came back on the order page.` })
+    return res
   }
 
   const queueColumns: ListColumn<Order>[] = [
@@ -207,15 +224,17 @@ export function ShippingBoard({ orders, destinations }: { orders: Order[]; desti
       header: "Status",
       cell: (p) => {
         if (SHIPMENT_DONE.includes(p.shipment.status)) return <Pill tone={TONE[p.shipment.status] ?? "grey"}>{label(p.shipment.status)}</Pill>
+        const items = shipmentStatusOptions(codPending(p.order) !== undefined)
         return (
-          <Select value={p.shipment.status} items={shipmentStatusItems} onValueChange={(v) => {
+          <Select value={p.shipment.status} items={items} onValueChange={(v: string | null) => {
             const status = v as ShipmentStatus
-            if (needsShipmentConfirm(p.order.status, status)) setConfirming({ parcel: p, status })
+            if (v === PARTLY_DELIVERED) setPartlyDelivering(p)
+            else if (needsShipmentConfirm(p.order.status, status)) setConfirming({ parcel: p, status })
             else setStatus(p, status)
           }} disabled={busy !== null}>
             <SelectTrigger size="sm" aria-label={`Status of ${p.order.orderNumber}'s parcel`} className="w-40"><SelectValue /></SelectTrigger>
             <SelectContent>
-              {shipmentStatusItems.map((t) => (
+              {items.map((t) => (
                 <SelectItem key={t.value} value={t.value}>
                   {t.label}
                 </SelectItem>
@@ -474,6 +493,14 @@ export function ShippingBoard({ orders, destinations }: { orders: Order[]; desti
         />
       </section>
 
+      {partlyDelivering && codPending(partlyDelivering.order) && (
+        <PartialDeliveryDialog
+          codAmount={Number(codPending(partlyDelivering.order)!.amount)}
+          readyToShip={partlyDelivering.order.status === "READY_TO_SHIP"}
+          onSave={(collected) => savePartial(partlyDelivering, collected)}
+          onClose={() => setPartlyDelivering(null)}
+        />
+      )}
       {confirming && (
         <ConfirmShipmentDialog status={confirming.status} onConfirm={() => setStatus(confirming.parcel, confirming.status)} onClose={() => setConfirming(null)} />
       )}
