@@ -110,9 +110,8 @@ export async function reviewRefund(orderId: string, refundId: string, action: "a
 // Puts returned units back into stock (damaged ones into the damage section). Answers with the whole order.
 export async function receiveReturnedItems(id: string, body: ReceiveReturnedItemsBody) {
   const res = await handleRequest(async () => (await api.post<{ data: OrderDetail }>(`/orders/${id}/returns`, body)).data)
-  if (res.success) {
-    revalidatePath("/inventory", "layout")
-    refresh(id)
-  }
+  // A refused receipt usually means someone else just received these items, so refresh either way.
+  revalidatePath("/inventory", "layout")
+  refresh(id)
   return res
 }

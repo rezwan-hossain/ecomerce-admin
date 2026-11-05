@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -1020,7 +1020,7 @@ export function OrderDetailPage({
       {confirming && (
         <ConfirmShipmentDialog status={confirming.status} onConfirm={() => setShipmentStatus(confirming.shipmentId, confirming.status)} onClose={() => setConfirming(null)} />
       )}
-      {receiving && returnState.kind !== "none" && <ReceiveReturnsDialog order={order} images={images} stock={stock} movements={movements} fullReturn={returnState.kind === "returned"} onClose={() => setReceiving(false)} />}
+      {receiving && <ReceiveReturnsDialog order={order} images={images} stock={stock} movements={movements} fullReturn={returnState.kind === "returned"} onClose={() => setReceiving(false)} />}
       {refunding && <RefundDialog orderId={order.id} max={refundable} onClose={() => setRefunding(false)} />}
     </div>
   )
@@ -1737,7 +1737,6 @@ function ReceiveReturnsDialog({
   fullReturn: boolean
   onClose: () => void
 }) {
-  const lines = order.items.filter((i) => i.quantity - i.returnedQuantity > 0)
   const parcel = order.shipments.find((s) => s.status === "RETURNED" || s.status === "DELIVERED") ?? order.shipments.at(-1)
   const cod = order.payments.find((p) => p.provider === "COD")
   // Units go back to the warehouse they were sold from (the order's SALE rows); fall back to where stock is now.
@@ -1756,7 +1755,7 @@ function ReceiveReturnsDialog({
     ),
     defaultValues: {
       // A returned parcel brings everything back; after a partial delivery the admin counts what came.
-      items: lines.map((i) => {
+      items: order.items.filter((i) => i.quantity > i.returnedQuantity).map((i) => {
         const max = i.quantity - i.returnedQuantity
         return { orderItemId: i.id, max, quantity: fullReturn ? max : 0, damaged: false }
       }),
@@ -1764,7 +1763,32 @@ function ReceiveReturnsDialog({
     },
   })
   const [serverError, setServerError] = useState("")
+  const sending = useRef(false)
   const rows = form.watch("items")
+  // Lines follow the form rows, so they stay aligned while the rows catch up with a refreshed order.
+  const lines = rows.map((r) => order.items.find((i) => i.id === r.orderItemId)!)
+  const itemsKey = order.items.map((i) => `${i.id}:${i.returnedQuantity}`).join(",")
+
+  // Someone else may have received some of these: shrink each line's max, keep what was typed (clamped).
+  useEffect(() => {
+    const current = form.getValues("items")
+    const next = order.items
+      .filter((i) => i.quantity > i.returnedQuantity)
+      .map((i) => {
+        const max = i.quantity - i.returnedQuantity
+        const old = current.find((r) => r.orderItemId === i.id)
+        const quantity = Math.min(max, old?.quantity ?? 0)
+        return { orderItemId: i.id, max, quantity, damaged: quantity > 0 && (old?.damaged ?? false) }
+      })
+    if (next.length === 0) {
+      toast.info("These items were already received", { description: "Someone else just recorded them. Stock is up to date." })
+      onClose()
+      return
+    }
+    form.setValue("items", next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run only when the returned counts change
+  }, [itemsKey])
+
   const note = form.watch("note")
   const { errors, isSubmitting } = form.formState
   const onSale = rows.filter((r) => !r.damaged).reduce((sum, r) => sum + r.quantity, 0)
@@ -1773,6 +1797,7 @@ function ReceiveReturnsDialog({
     rows.reduce((sum, r, index) => (r.damaged === damagedRows ? sum + unitPrice(lines[index]) * r.quantity : sum), 0)
   const total = onSale + damaged
   const error = serverError || errors.items?.root?.message || errors.items?.message
+  const raced = serverError.startsWith("Only ") && serverError.includes("can still be returned")
 
   function setQuantity(index: number, value: number) {
     const max = rows[index].max
@@ -1782,11 +1807,15 @@ function ReceiveReturnsDialog({
   }
 
   async function submit(values: ReturnsForm) {
+    // Enter in a quantity box can submit again while the button is disabled.
+    if (sending.current) return
+    sending.current = true
     setServerError("")
     const res = await receiveReturnedItems(order.id, {
       items: values.items.filter((i) => i.quantity > 0).map((i) => ({ orderItemId: i.orderItemId, quantity: i.quantity, damaged: i.damaged })),
       note: values.note.trim() || undefined,
     })
+    sending.current = false
     if (!res.success) return setServerError(res.error)
     toast.success("Items received back into stock")
     onClose()
@@ -1946,11 +1975,17 @@ function ReceiveReturnsDialog({
           </Field>
         </form>
 
+        {raced && (
+          <div className="border-t bg-destructive/10 px-5 py-2.5 text-sm text-destructive">
+            Someone just received some of these items. The counts below are updated. Check them and submit again.
+            <span className="block text-xs opacity-80">{serverError}</span>
+          </div>
+        )}
+
         <DialogFooter className="m-0 flex-col gap-3 rounded-b-xl border-t px-5 py-3 sm:flex-row sm:items-center">
           <div className="mr-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-            {error ? (
-              <span className="text-sm text-destructive">{error}</span>
-            ) : (
+            {error && !raced && <span className="text-sm text-destructive">{error}</span>}
+            {(!error || raced) && (
               <>
                 {(onSale > 0 || damaged === 0) && (
                   <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
