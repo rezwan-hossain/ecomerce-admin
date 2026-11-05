@@ -9,7 +9,8 @@ export type OrderStatus =
   | "CANCELLED"
   | "FAILED"
   | "REFUNDED"
-  | "RETURNED"; // the courier brought the whole parcel back; final
+  | "RETURNED" // every item is back in stock, or the courier is bringing the whole parcel back
+  | "PARTIALLY_RETURNED"; // some items are back in stock, the customer kept the rest
 
 export type PaymentStatus =
   | "PENDING"

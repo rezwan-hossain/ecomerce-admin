@@ -36,6 +36,7 @@ import {
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { getReturnState } from "@/lib/orders/return-state"
 import { cn } from "@/lib/utils"
 import { formatAddress, type CourierCarrier, type Order, type OrderAddress, type OrderStatus, type PaymentStatus } from "@/types/order.type"
 import type { ProductDetail } from "@/types/product.type"
@@ -52,6 +53,7 @@ export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
   FAILED: "Failed",
   REFUNDED: "Refunded",
   RETURNED: "Returned",
+  PARTIALLY_RETURNED: "Partly returned",
 }
 
 export const PAYMENT_LABEL: Record<PaymentStatus, string> = {
@@ -89,8 +91,12 @@ export const NEXT: Partial<Record<OrderStatus, { status: OrderStatus; text: stri
   SHIPPED: { status: "DELIVERED", text: "Mark delivered" },
   DELIVERED: { status: "COMPLETED", text: "Complete order" },
 }
+// Shipped, delivered and returned come from the parcel once there is one: the order follows its shipment.
+export const followsShipment = (o: Pick<Order, "shipments">, status: OrderStatus | undefined) =>
+  (status === "SHIPPED" || status === "DELIVERED" || status === "RETURNED") && o.shipments.some((s) => s.status !== "CANCELLED")
 export const CANCELLABLE: OrderStatus[] = ["PENDING", "CONFIRMED", "PROCESSING", "READY_TO_SHIP"]
-const STOPPED: OrderStatus[] = ["CANCELLED", "FAILED", "REFUNDED", "RETURNED"]
+const STOPPED: OrderStatus[] = ["CANCELLED", "FAILED", "REFUNDED", "RETURNED", "PARTIALLY_RETURNED"]
+const RETURNS: OrderStatus[] = ["RETURNED", "PARTIALLY_RETURNED"]
 
 const isPaid = (o: Order) => o.payments.some((p) => p.status === "PAID")
 const placed = (o: Order) => o.placedAt ?? o.createdAt
@@ -106,7 +112,8 @@ const allFilters: ListFilter<Order>[] = [
   { label: "Shipped", value: "shipped", match: (o) => o.status === "SHIPPED" },
   { label: "Delivered", value: "delivered", match: (o) => o.status === "DELIVERED" || o.status === "COMPLETED" },
   { label: "Returned", value: "returned", match: (o) => o.status === "RETURNED" },
-  { label: "Cancelled", value: "cancelled", match: (o) => STOPPED.includes(o.status) && o.status !== "RETURNED" },
+  { label: "Partly returned", value: "partly-returned", match: (o) => o.status === "PARTIALLY_RETURNED" },
+  { label: "Cancelled", value: "cancelled", match: (o) => STOPPED.includes(o.status) && !RETURNS.includes(o.status) },
 ]
 
 const pendingFilters: ListFilter<Order>[] = [
@@ -145,6 +152,31 @@ function Amount({ order }: { order: Order }) {
         <span className="text-[11px] font-medium whitespace-nowrap text-amber-700 dark:text-amber-400">{taka(due)} due</span>
       )}
       {Number(order.discountAmount) > 0 && <span className="text-[11px] whitespace-nowrap text-emerald-700 dark:text-emerald-400">−{taka(Number(order.discountAmount))} off</span>}
+    </span>
+  )
+}
+
+// A returned parcel or partial delivery also says whether the items are back in stock yet.
+function OrderStatusCell({ order }: { order: Order }) {
+  const units = itemCount(order)
+  const back = order.items.reduce((s, i) => s + i.returnedQuantity, 0)
+  let title: string | undefined
+  if (order.status === "PARTIALLY_RETURNED") title = `${n0(back)} of ${n0(units)} items back in stock — the customer kept the rest.`
+  const badge = (
+    <span title={title}>
+      <StatusBadge status={ORDER_STATUS_LABEL[order.status]} />
+    </span>
+  )
+  const partial = order.payments.some((p) => p.status === "PARTIALLY_PAID")
+  if (!RETURNS.includes(order.status) && !partial) return badge
+  let note = <span className="text-amber-700 dark:text-amber-400">Not received yet</span>
+  if (getReturnState(order).kind === "none") note = <span className="text-emerald-700 dark:text-emerald-400">Returned to stock</span>
+  else if (back > 0) note = <span className="text-amber-700 dark:text-amber-400">{n0(back)} back in stock, more to come</span>
+  return (
+    <span className="flex flex-col items-start gap-1">
+      {badge}
+      {partial && <span className="text-[11px] font-medium whitespace-nowrap text-amber-700 dark:text-amber-400">Partly delivered</span>}
+      <span className="text-[11px] whitespace-nowrap">{note}</span>
     </span>
   )
 }
@@ -210,7 +242,7 @@ const placedAt = (iso: string) => {
   return `${d.getDate()} ${d.toLocaleString("en-US", { month: "short" })} ${d.getFullYear()} · ${d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`
 }
 
-const FINISHED: OrderStatus[] = ["DELIVERED", "COMPLETED", "CANCELLED", "FAILED", "REFUNDED", "RETURNED"]
+const FINISHED: OrderStatus[] = ["DELIVERED", "COMPLETED", "CANCELLED", "FAILED", "REFUNDED", "RETURNED", "PARTIALLY_RETURNED"]
 
 export function OrdersTable({
   orders,
@@ -368,7 +400,7 @@ export function OrdersTable({
       },
     },
     { key: "fulfilment", header: "Fulfilment", className: "hidden md:table-cell", cell: (o) => <Fulfilment order={o} /> },
-    { key: "status", header: "Status", cell: (o) => <StatusBadge status={ORDER_STATUS_LABEL[o.status]} /> },
+    { key: "status", header: "Status", cell: (o) => <OrderStatusCell order={o} /> },
     { key: "amount", header: "Amount", className: "text-right tabular-nums", cell: (o) => <Amount order={o} /> },
     {
       key: "actions",
@@ -388,7 +420,7 @@ export function OrdersTable({
                 <EyeIcon />
                 View order
               </DropdownMenuItem>
-              {next && (
+              {next && !followsShipment(o, next.status) && (
                 <DropdownMenuItem onClick={() => advance(o)}>
                   <StepForwardIcon />
                   {next.text}

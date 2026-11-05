@@ -30,6 +30,7 @@ const icons: Record<string, React.ReactNode> = {
   Failed: <CircleXIcon className="text-destructive" />,
   Refunded: <Undo2Icon />,
   Returned: <Undo2Icon className="text-amber-600 dark:text-amber-400" />,
+  "Partly returned": <Undo2Icon className="text-amber-600 dark:text-amber-400" />,
   Draft: <CircleDashedIcon />,
   Archived: <ArchiveIcon />,
   Inactive: <CircleDashedIcon />,
@@ -40,7 +41,8 @@ const icons: Record<string, React.ReactNode> = {
 
 export function StatusBadge({ status }: { status: string }) {
   return (
-    <Badge variant="outline" className={cn("px-1.5 text-muted-foreground", status === "Returned" && "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300")}>
+    <Badge variant="outline" className={cn("px-1.5 text-muted-foreground", status === "Returned" && "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300",
+        status === "Partly returned" && "border-amber-400 text-amber-800 dark:border-amber-700 dark:text-amber-300")}>
       {icons[status]}
       {status}
     </Badge>

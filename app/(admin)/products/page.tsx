@@ -31,8 +31,10 @@ export default async function ProductsPage() {
       const i = insight(item.productId)
       if (!i.lastSoldAt || placed > i.lastSoldAt) i.lastSoldAt = placed
       if (new Date(placed).getTime() < since) continue
-      i.sold30 += item.quantity
-      i.revenue30 += Number(item.totalAmount)
+      // Units that came back weren't sold.
+      const kept = item.quantity - (item.returnedQuantity ?? 0)
+      i.sold30 += kept
+      i.revenue30 += (Number(item.totalAmount) / item.quantity) * kept
     }
   }
   for (const r of reviews.success ? reviews.data : []) {

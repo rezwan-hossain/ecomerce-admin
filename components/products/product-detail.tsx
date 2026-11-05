@@ -65,8 +65,9 @@ export function ProductDetailPage({
     return {
       order: o,
       items,
-      quantity: items.reduce((s, i) => s + i.quantity, 0),
-      total: items.reduce((s, i) => s + Number(i.totalAmount), 0),
+      // Units that came back weren't sold.
+      quantity: items.reduce((s, i) => s + i.quantity - (i.returnedQuantity ?? 0), 0),
+      total: items.reduce((s, i) => s + (Number(i.totalAmount) / i.quantity) * (i.quantity - (i.returnedQuantity ?? 0)), 0),
     }
   })
   const sold = orderLines.filter((l) => !NOT_SOLD.includes(l.order.status))

@@ -18,7 +18,7 @@ import {
 import { updateShipmentStatus } from "@/app/actions/order.actions"
 import { Card, fmtDate, Kpis, label, n0, Pill, rel, taka } from "@/components/inventory/inventory-ui"
 import { ListTable, type ListColumn } from "@/components/list-table"
-import { SHIPMENT_DONE, shipmentStatusItems, TONE } from "@/components/orders/order-detail"
+import { ConfirmShipmentDialog, needsShipmentConfirm, SHIPMENT_DONE, shipmentStatusItems, TONE } from "@/components/orders/order-detail"
 import { CARRIER_LABEL, ORDER_STATUS_LABEL } from "@/components/orders/orders-table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
@@ -59,6 +59,7 @@ function daysText(days: number | null) {
 
 export function ShippingBoard({ orders, destinations }: { orders: Order[]; destinations: Record<string, string> }) {
   const [busy, setBusy] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState<{ parcel: Parcel; status: ShipmentStatus } | null>(null)
 
   const waiting = orders.filter((o) => TO_PACK.includes(o.status) || o.status === "READY_TO_SHIP")
   const parcels: Parcel[] = orders
@@ -207,10 +208,18 @@ export function ShippingBoard({ orders, destinations }: { orders: Order[]; desti
       cell: (p) => {
         if (SHIPMENT_DONE.includes(p.shipment.status)) return <Pill tone={TONE[p.shipment.status] ?? "grey"}>{label(p.shipment.status)}</Pill>
         return (
-          <Select value={p.shipment.status} items={shipmentStatusItems} onValueChange={(v) => setStatus(p, v as ShipmentStatus)} disabled={busy !== null}>
+          <Select value={p.shipment.status} items={shipmentStatusItems} onValueChange={(v) => {
+            const status = v as ShipmentStatus
+            if (needsShipmentConfirm(p.order.status, status)) setConfirming({ parcel: p, status })
+            else setStatus(p, status)
+          }} disabled={busy !== null}>
             <SelectTrigger size="sm" aria-label={`Status of ${p.order.orderNumber}'s parcel`} className="w-40"><SelectValue /></SelectTrigger>
             <SelectContent>
-              {shipmentStatusItems.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+              {shipmentStatusItems.map((t) => (
+                <SelectItem key={t.value} value={t.value}>
+                  {t.label}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         )
@@ -465,6 +474,9 @@ export function ShippingBoard({ orders, destinations }: { orders: Order[]; desti
         />
       </section>
 
+      {confirming && (
+        <ConfirmShipmentDialog status={confirming.status} onConfirm={() => setStatus(confirming.parcel, confirming.status)} onClose={() => setConfirming(null)} />
+      )}
     </>
   )
 }

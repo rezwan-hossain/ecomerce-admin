@@ -16,6 +16,7 @@ import {
   MailIcon,
   MapPinIcon,
   PackageIcon,
+  PackageCheckIcon,
   PackageOpenIcon,
   PencilIcon,
   PhoneIcon,
@@ -44,10 +45,11 @@ import {
 import { bookPathaoShipment, getPathaoStores, syncPathaoShipment } from "@/app/actions/pathao.actions"
 import { Card, fmtDate, fmtDateTime, Kpis, label, n0, Pill, RackTag, rel, taka, type Tone, WarehouseTag } from "@/components/inventory/inventory-ui"
 import { MovementQuantity, MovementTag, movementRacks } from "@/components/inventory/movements-table"
-import { CANCELLABLE, CancelDialog, CARRIER_LABEL, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL, RefreshButton } from "@/components/orders/orders-table"
+import { CANCELLABLE, CancelDialog, CARRIER_LABEL, followsShipment, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL, RefreshButton } from "@/components/orders/orders-table"
 import { PrintInvoice } from "@/components/orders/print-invoice"
 import { StatusBadge } from "@/components/status-badge"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -65,7 +67,7 @@ import type { PathaoDeliveryType, PathaoItemType, PathaoStore } from "@/types/pa
 // The next step on the happy path, as the backend allows it (ORDER_STATUS_TRANSITIONS).
 const STEPS: OrderStatus[] = ["PENDING", "CONFIRMED", "PROCESSING", "READY_TO_SHIP", "SHIPPED", "DELIVERED", "COMPLETED"]
 const STEP_LABEL: Partial<Record<OrderStatus, string>> = { PENDING: "Placed" }
-const STOPPED: OrderStatus[] = ["CANCELLED", "FAILED", "REFUNDED", "RETURNED"]
+const STOPPED: OrderStatus[] = ["CANCELLED", "FAILED", "REFUNDED", "RETURNED", "PARTIALLY_RETURNED"]
 const OPEN_PAYMENT = ["PENDING", "PROCESSING"]
 // Shipment, payment and refund statuses that finished well or badly; the rest are in progress.
 export const TONE: Record<string, Tone> = {
@@ -76,7 +78,37 @@ const carrierItems = Object.entries(CARRIER_LABEL).map(([value, text]) => ({ val
 const SHIPMENT_STATUSES: ShipmentStatus[] = ["PENDING", "PROCESSING", "SHIPPED", "IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED", "FAILED", "RETURNED", "CANCELLED"]
 export const shipmentStatusItems = SHIPMENT_STATUSES.map((value) => ({ value, label: label(value) }))
 // The backend refuses status changes once a shipment ends.
-export const SHIPMENT_DONE: ShipmentStatus[] = ["DELIVERED", "CANCELLED", "RETURNED"]
+export const SHIPMENT_DONE: ShipmentStatus[] = ["DELIVERED", "CANCELLED", "RETURNED", "FAILED"]
+// The order follows its shipment. These would also ship the order (taking the stock), so they ask first.
+const CONFIRM_TEXT: Partial<Record<ShipmentStatus, string>> = {
+  RETURNED: "The order will move to Shipped and then Returned, and the cash-on-delivery payment will be marked failed.",
+  DELIVERED: "The order will move to Shipped and then Delivered.",
+}
+export const needsShipmentConfirm = (orderStatus: OrderStatus, status: ShipmentStatus) => orderStatus === "READY_TO_SHIP" && CONFIRM_TEXT[status] !== undefined
+
+export function ConfirmShipmentDialog({ status, onConfirm, onClose }: { status: ShipmentStatus; onConfirm: () => void; onClose: () => void }) {
+  return (
+    <AlertDialog open onOpenChange={(open) => !open && onClose()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Mark this parcel as {label(status).toLowerCase()}?</AlertDialogTitle>
+          <AlertDialogDescription>{CONFIRM_TEXT[status]}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <Button
+            onClick={() => {
+              onConfirm()
+              onClose()
+            }}
+          >
+            Mark {label(status).toLowerCase()}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
 
 // A partial delivery's payment is the cash the customer actually gave.
 const sumPaid = (o: Pick<Order, "payments">) =>
@@ -119,6 +151,7 @@ export function OrderDetailPage({
   const [pathaoLog, setPathaoLog] = useState<{ ok: boolean; reply: unknown; at: string } | null>(null)
   const [refunding, setRefunding] = useState(false)
   const [receiving, setReceiving] = useState(false)
+  const [confirming, setConfirming] = useState<{ shipmentId: string; status: ShipmentStatus } | null>(null)
 
   const next = NEXT[order.status]
   const stopped = STOPPED.includes(order.status)
@@ -126,6 +159,9 @@ export function OrderDetailPage({
   const total = Number(order.totalAmount)
   const paid = sumPaid(order)
   const returnState = getReturnState(order)
+  // A parcel marked returned before the order was shipped leaves the order stuck on SHIPPED.
+  const stuckReturn =
+    order.status === "SHIPPED" && order.shipments.some((s) => s.status === "RETURNED") && !order.shipments.some((s) => s.status !== "RETURNED" && s.status !== "CANCELLED")
   const partlyPaid = order.payments.find((p) => p.status === "PARTIALLY_PAID")
   // After a partial delivery the rest isn't owed: those items come back instead.
   let due = total - paid
@@ -185,6 +221,14 @@ export function OrderDetailPage({
     toast.success(`Order is now ${ORDER_STATUS_LABEL[next.status].toLowerCase()}`)
   }
 
+  async function markReturned() {
+    setBusy(true)
+    const res = await updateOrderStatus(order.id, "RETURNED", "Returned by courier")
+    setBusy(false)
+    if (!res.success) return toast.error(res.error)
+    toast.success("Order marked returned")
+  }
+
   async function markPaid(paymentId: string) {
     setBusy(true)
     const res = await markPaymentPaid(order.id, paymentId)
@@ -199,6 +243,11 @@ export function OrderDetailPage({
     setBusy(false)
     if (!res.success) return toast.error(res.error)
     toast.success("Payment marked as failed")
+  }
+
+  function pickShipmentStatus(shipmentId: string, status: ShipmentStatus) {
+    if (needsShipmentConfirm(order.status, status)) setConfirming({ shipmentId, status })
+    else setShipmentStatus(shipmentId, status)
   }
 
   async function setShipmentStatus(shipmentId: string, status: ShipmentStatus) {
@@ -256,7 +305,9 @@ export function OrderDetailPage({
               <CopyIcon />
               <span className="sr-only">Copy order number</span>
             </Button>
-            <StatusBadge status={ORDER_STATUS_LABEL[order.status]} />
+            <span title={order.status === "PARTIALLY_RETURNED" ? `${n0(order.items.reduce((s, i) => s + i.returnedQuantity, 0))} of ${n0(units)} items back in stock — the customer kept the rest.` : undefined}>
+              <StatusBadge status={ORDER_STATUS_LABEL[order.status]} />
+            </span>
             {payment && <Pill tone={TONE[payment.status] ?? "amber"}>{paymentPillText(payment)}</Pill>}
           </div>
           <p className="text-sm text-muted-foreground">
@@ -274,10 +325,13 @@ export function OrderDetailPage({
               Cancel order
             </Button>
           )}
-          {next && (
+          {next && !stuckReturn && !followsShipment(order, next.status) && (
             <Button size="sm" onClick={advance} disabled={busy}>
               {next.text}
             </Button>
+          )}
+          {next && followsShipment(order, next.status) && (
+            <span className="self-center text-xs text-muted-foreground">Change the shipment status — the order follows it.</span>
           )}
         </div>
       </header>
@@ -334,21 +388,41 @@ export function OrderDetailPage({
 
       <div className="grid gap-4 px-4 md:gap-6 lg:px-6 xl:grid-cols-3">
         <div className="flex min-w-0 flex-col gap-4 md:gap-6 xl:col-span-2">
-          {returnState.kind !== "none" && (
+          {stuckReturn && (
             <Alert className="rounded-2xl border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200 *:data-[slot=alert-description]:text-amber-800 dark:*:data-[slot=alert-description]:text-amber-300">
               <PackageOpenIcon />
-              <AlertTitle className="font-semibold">{returnState.kind === "returned" ? "Parcel returned by courier" : "Partly delivered"}</AlertTitle>
-              <AlertDescription>
-                {returnState.kind === "returned"
-                  ? "The customer refused it or couldn't be reached. Receive the items back into stock when the parcel arrives."
-                  : `The customer kept some items and paid ${taka(returnState.collected)} of ${taka(returnState.ordered)}. Receive the items that came back.`}
-              </AlertDescription>
+              <AlertTitle className="font-semibold">The parcel came back, but the order still says Shipped</AlertTitle>
+              <AlertDescription>Mark the order returned, then receive the items back into stock.</AlertDescription>
               <AlertAction>
-                <Button size="sm" onClick={() => setReceiving(true)}>
-                  Receive returned items
+                <Button size="sm" onClick={markReturned} disabled={busy}>
+                  Mark order returned
                 </Button>
               </AlertAction>
             </Alert>
+          )}
+
+          {returnState.kind !== "none" && (
+            <ReturnAlert
+              title={returnState.kind === "returned" ? "Parcel returned by courier" : "Partly delivered"}
+              text={
+                returnState.kind === "returned"
+                  ? "The customer refused it or couldn't be reached. Receive the items back into stock when the parcel arrives."
+                  : `The customer kept some items and paid ${taka(returnState.collected)} of ${taka(returnState.ordered)}. Receive the items that came back.`
+              }
+              items={order.items}
+              images={images}
+              movements={movements}
+              onReceive={() => setReceiving(true)}
+            />
+          )}
+          {returnState.kind === "none" && order.items.some((i) => i.returnedQuantity > 0) && (
+            <ReturnAlert
+              title="Returned items are back in stock"
+              text="Everything that came back has been received."
+              items={order.items}
+              images={images}
+              movements={movements}
+            />
           )}
 
           <Card title="Items" action={<span className="hidden text-xs text-muted-foreground sm:inline">Available stock and pick rack right now</span>}>
@@ -528,10 +602,14 @@ export function OrderDetailPage({
                       {SHIPMENT_DONE.includes(s.status) ? (
                         <Pill tone={TONE[s.status] ?? "grey"}>{label(s.status)}</Pill>
                       ) : (
-                        <Select value={s.status} items={shipmentStatusItems} onValueChange={(v) => setShipmentStatus(s.id, v as ShipmentStatus)} disabled={busy}>
+                        <Select value={s.status} items={shipmentStatusItems} onValueChange={(v) => pickShipmentStatus(s.id, v as ShipmentStatus)} disabled={busy}>
                           <SelectTrigger size="sm" aria-label="Shipment status" className="w-40"><SelectValue /></SelectTrigger>
                           <SelectContent>
-                            {shipmentStatusItems.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+                            {shipmentStatusItems.map((t) => (
+                              <SelectItem key={t.value} value={t.value}>
+                                {t.label}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       )}
@@ -835,6 +913,9 @@ export function OrderDetailPage({
       {bookingPathao && <PathaoDialog order={order} due={Math.max(0, due)} onClose={() => setBookingPathao(false)} />}
       {shipping && (
         <ShipmentDialog orderId={order.id} orderNumber={order.orderNumber} codAmount={codOpen ? due : 0} onClose={() => setShipping(false)} />
+      )}
+      {confirming && (
+        <ConfirmShipmentDialog status={confirming.status} onConfirm={() => setShipmentStatus(confirming.shipmentId, confirming.status)} onClose={() => setConfirming(null)} />
       )}
       {receiving && returnState.kind !== "none" && <ReceiveReturnsDialog order={order} fullReturn={returnState.kind === "returned"} onClose={() => setReceiving(false)} />}
       {refunding && <RefundDialog orderId={order.id} max={refundable} onClose={() => setRefunding(false)} />}
@@ -1661,5 +1742,123 @@ function ReceiveReturnsDialog({ order, fullReturn, onClose }: { order: OrderDeta
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+// What's still out with the courier or customer and what has already gone back into stock (and where).
+// Without onReceive it's the finished state: everything expected is back.
+function ReturnAlert({
+  title,
+  text,
+  items,
+  images,
+  movements,
+  onReceive,
+}: {
+  title: string
+  text: string
+  items: OrderDetail["items"]
+  images: Record<string, string>
+  movements: LedgerMovement[]
+  onReceive?: () => void
+}) {
+  const stillOut = onReceive ? items.filter((i) => i.quantity > i.returnedQuantity) : []
+  const back = items.filter((i) => i.returnedQuantity > 0)
+  const out = stillOut.reduce((sum, i) => sum + i.quantity - i.returnedQuantity, 0)
+  const done = !onReceive
+
+  // The ledger rows this order wrote for a returned line: where it was restocked and how much went to damage.
+  function receipt(i: OrderDetail["items"][number]) {
+    const rows = movements.filter((m) => m.inventoryLevel.variant.id === i.variantId)
+    const warehouses = [...new Set(rows.filter((m) => m.type === "RETURN_RESTOCKED").map((m) => m.inventoryLevel.warehouse.code))]
+    const damaged = rows.filter((m) => m.type === "DAMAGED").reduce((sum, m) => sum + Math.abs(m.quantity), 0)
+    return { warehouses, damaged }
+  }
+
+  function thumb(i: OrderDetail["items"][number]) {
+    const image = i.productId ? images[i.productId] : undefined
+    return (
+      <span className="grid size-7 shrink-0 place-items-center overflow-hidden rounded-md bg-muted text-muted-foreground">
+        {image ? (
+          // eslint-disable-next-line @next/next/no-img-element -- any image host is allowed
+          <img src={image} alt="" className="size-full object-cover" />
+        ) : (
+          <PackageIcon className="size-3.5" />
+        )}
+      </span>
+    )
+  }
+
+  return (
+    <section
+      role="alert"
+      className={cn("overflow-hidden rounded-2xl border bg-card shadow-xs", done ? "border-emerald-200 dark:border-emerald-900" : "border-amber-200 dark:border-amber-900")}
+    >
+      <div className={cn("flex flex-wrap items-center gap-4 px-4 py-3.5", done ? "bg-emerald-50/80 dark:bg-emerald-950/40" : "bg-amber-50/80 dark:bg-amber-950/40")}>
+        <span
+          className={cn(
+            "grid size-10 shrink-0 place-items-center rounded-xl ring-1",
+            done
+              ? "bg-emerald-100 text-emerald-700 ring-emerald-200 dark:bg-emerald-900/60 dark:text-emerald-300 dark:ring-emerald-800"
+              : "bg-amber-100 text-amber-700 ring-amber-200 dark:bg-amber-900/60 dark:text-amber-300 dark:ring-amber-800"
+          )}
+        >
+          {done ? <PackageCheckIcon className="size-5" /> : <PackageOpenIcon className="size-5" />}
+        </span>
+        <div className="min-w-0 flex-1 basis-64">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className={cn("font-semibold", done ? "text-emerald-950 dark:text-emerald-100" : "text-amber-950 dark:text-amber-100")}>{title}</h2>
+            {!done && (
+              <span className="rounded-full bg-amber-200/70 px-2 py-0.5 text-[11px] font-semibold text-amber-900 tabular-nums dark:bg-amber-900 dark:text-amber-200">
+                {n0(out)} {out === 1 ? "unit" : "units"} to receive
+              </span>
+            )}
+          </div>
+          <p className={cn("mt-0.5 text-sm", done ? "text-emerald-900/80 dark:text-emerald-200/80" : "text-amber-900/80 dark:text-amber-200/80")}>{text}</p>
+        </div>
+        {onReceive && (
+          <Button onClick={onReceive} className="shrink-0">
+            <PackageCheckIcon />
+            Receive returned items
+          </Button>
+        )}
+      </div>
+
+      {stillOut.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-amber-100 px-4 py-3 dark:border-amber-900/60">
+          <span className="w-28 shrink-0 text-xs font-medium text-muted-foreground">Still out</span>
+          {stillOut.map((i) => (
+            <span key={i.id} className="flex items-center gap-2 rounded-lg border bg-background py-1 pr-2.5 pl-1 text-xs">
+              {thumb(i)}
+              <span className="max-w-48 truncate font-medium">{i.productName}</span>
+              {i.variantName && i.variantName !== i.sku && <span className="text-muted-foreground">{i.variantName}</span>}
+              <span className="font-semibold text-amber-700 tabular-nums dark:text-amber-400">×{n0(i.quantity - i.returnedQuantity)}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {back.length > 0 && (
+        <div className={cn("flex flex-wrap items-center gap-2 border-t px-4 py-3", done ? "border-emerald-100 dark:border-emerald-900/60" : "border-amber-100 dark:border-amber-900/60")}>
+          <span className="w-28 shrink-0 text-xs font-medium text-muted-foreground">Back in stock</span>
+          {back.map((i) => {
+            const { warehouses, damaged } = receipt(i)
+            const sellable = i.returnedQuantity - damaged
+            return (
+              <span key={i.id} className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50/60 py-1 pr-2.5 pl-1 text-xs dark:border-emerald-900 dark:bg-emerald-950/40">
+                {thumb(i)}
+                <span className="max-w-48 truncate font-medium">{i.productName}</span>
+                {i.variantName && i.variantName !== i.sku && <span className="text-muted-foreground">{i.variantName}</span>}
+                <span className="inline-flex items-center gap-0.5 font-semibold text-emerald-700 tabular-nums dark:text-emerald-400">
+                  <CheckIcon className="size-3" strokeWidth={3} />×{n0(i.returnedQuantity)}
+                </span>
+                {sellable > 0 && warehouses.map((code) => <WarehouseTag key={code} code={code} />)}
+                {damaged > 0 && <span className="rounded bg-red-100 px-1.5 py-0.5 font-medium text-red-700 dark:bg-red-950 dark:text-red-300">{n0(damaged)} damaged</span>}
+              </span>
+            )
+          })}
+        </div>
+      )}
+    </section>
   )
 }
