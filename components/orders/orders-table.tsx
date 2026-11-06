@@ -655,8 +655,9 @@ export function OrdersTable({
         searchText={(o) =>
           `${o.orderNumber} ${o.customerName ?? ""} ${o.customerEmail} ${o.customerPhone ?? ""} ${o.customerPhone ? localPhone(o.customerPhone) : ""} ${Object.values(addresses[o.id] ?? {}).join(" ")} ${o.items.map((i) => `${i.productName} ${i.sku}`).join(" ")} ${o.customerNote ?? ""} ${(promotions[o.id] ?? []).join(" ")}`
         }
-        searchPlaceholder="Order, customer, phone, address..."
-        filters={mode === "pending" ? pendingFilters : allFilters}
+        searchPlaceholder="Search orders…"
+        // Empty tabs only add noise; "All" always stays.
+        filters={(mode === "pending" ? pendingFilters : allFilters).filter((f, index) => index === 0 || sorted.some(f.match))}
         emptyText={mode === "pending" ? "All caught up — no pending orders." : "No orders yet."}
         toolbar={
           <>

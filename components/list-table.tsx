@@ -5,6 +5,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   SearchIcon,
+  XIcon,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -83,7 +84,7 @@ export function ListTable<T>({
         {filters ? (
           <Tabs
             className="min-w-0 max-w-full"
-            value={filter}
+            value={activeFilter ? filter : filters[0]?.value}
             onValueChange={(value) => {
               setFilter(value as string)
               setPage(0)
@@ -124,9 +125,22 @@ export function ListTable<T>({
                   setPage(0)
                 }}
                 placeholder={searchPlaceholder}
-                className="h-8 pl-8"
+                className="h-8 pr-8 pl-8"
                 aria-label="Search"
               />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery("")
+                    setPage(0)
+                  }}
+                  className="absolute top-1/2 right-1.5 grid size-5 -translate-y-1/2 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <XIcon className="size-3.5" />
+                  <span className="sr-only">Clear search</span>
+                </button>
+              )}
             </div>
           )}
           {toolbar}
