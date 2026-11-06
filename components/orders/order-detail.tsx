@@ -17,6 +17,7 @@ import {
   MinusIcon,
   MapPinIcon,
   PackageIcon,
+  InfoIcon,
   PackageCheckIcon,
   PackageOpenIcon,
   PencilIcon,
@@ -48,7 +49,7 @@ import {
 import { bookPathaoShipment, getPathaoStores, syncPathaoShipment } from "@/app/actions/pathao.actions"
 import { Card, fmtDate, fmtDateTime, Kpis, label, n0, Pill, RackTag, rel, taka, type Tone, WarehouseTag } from "@/components/inventory/inventory-ui"
 import { MovementQuantity, MovementTag, movementRacks } from "@/components/inventory/movements-table"
-import { CANCELLABLE, cancelBlockedBy, CancelDialog, CARRIER_LABEL, followsShipment, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL, RefreshButton, SourceBadge } from "@/components/orders/orders-table"
+import { CANCELLABLE, cancelBlockedBy, CancelDialog, CARRIER_LABEL, followsShipment, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL, PROVIDER_LABEL, RefreshButton, SourceBadge } from "@/components/orders/orders-table"
 import { PrintInvoice } from "@/components/orders/print-invoice"
 import { StatusBadge } from "@/components/status-badge"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -63,7 +64,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { getReturnState } from "@/lib/orders/return-state"
 import { cn } from "@/lib/utils"
 import type { LedgerMovement, StockLevel, VariantStockDetail } from "@/types/inventory.type"
-import { formatAddress, pathaoAddress, type CourierCarrier, type Order, type OrderAddress, type OrderAddressBody, type OrderDetail, type OrderStatus, type Shipment, type ShipmentStatus } from "@/types/order.type"
+import { formatAddress, pathaoAddress, type CourierCarrier, type Order, type OrderAddress, type OrderAddressBody, type OrderDetail, type OrderStatus, type PaymentStatus, type Shipment, type ShipmentStatus } from "@/types/order.type"
 import type { PathaoDeliveryType, PathaoItemType, PathaoStore } from "@/types/pathao.type"
 
 // The next step on the happy path, as the backend allows it (ORDER_STATUS_TRANSITIONS).
@@ -121,8 +122,9 @@ export function ConfirmShipmentDialog({ status, onConfirm, onClose }: { status: 
 }
 
 // A partial delivery's payment is the cash the customer actually gave.
-const sumPaid = (o: Pick<Order, "payments">) =>
-  o.payments.filter((p) => p.status === "PAID" || p.status === "PARTIALLY_PAID").reduce((s, p) => s + Number(p.amount), 0)
+// Same rule as the backend: refunded payments still count as received; refunds are shown on their own line.
+const RECEIVED: PaymentStatus[] = ["PAID", "PARTIALLY_PAID", "REFUNDED", "PARTIALLY_REFUNDED"]
+const sumPaid = (o: Pick<Order, "payments">) => o.payments.filter((p) => RECEIVED.includes(p.status)).reduce((s, p) => s + Number(p.amount), 0)
 
 function stockTone(l: StockLevel, threshold: number) {
   if (l.available <= 0) return "bad"
@@ -181,6 +183,9 @@ export function OrderDetailPage({
   const refunded = order.refundRequests.filter((r) => r.status === "PROCESSED").reduce((s, r) => s + Number(r.amount), 0)
   // Paid money not yet refunded or promised in an open request.
   const refundable = paid - order.refundRequests.filter((r) => r.status !== "REJECTED").reduce((s, r) => s + Number(r.amount), 0)
+  let paidHint = "nothing due"
+  if (due > 0 && !stopped) paidHint = `${taka(due)} still due`
+  else if (refunded > 0) paidHint = `${taka(refunded)} refunded`
   const codOpen = order.payments.some((p) => p.method === "CASH_ON_DELIVERY" && OPEN_PAYMENT.includes(p.status))
   // A partial delivery only makes sense while the courier still has cash to collect.
   const codPending = order.payments.find((p) => p.provider === "COD" && p.status === "PENDING")
@@ -370,7 +375,10 @@ export function OrderDetailPage({
             </Button>
           )}
           {next && followsShipment(order, next.status) && (
-            <span className="self-center text-xs text-muted-foreground">Change the shipment status — the order follows it.</span>
+            <span className="inline-flex items-center gap-1.5 self-center rounded-full border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground">
+              <InfoIcon className="size-3.5" />
+              Change the shipment status, the order follows it
+            </span>
           )}
         </div>
       </header>
@@ -417,7 +425,7 @@ export function OrderDetailPage({
       <Kpis
         items={[
           { label: "Order total", value: taka(total), hint: `${n0(units)} ${units === 1 ? "unit" : "units"} in ${order.items.length} ${order.items.length === 1 ? "line" : "lines"}` },
-          { label: "Paid", value: taka(paid), hint: due > 0 && !stopped ? `${taka(due)} still due` : "nothing due", warn: due > 0 && !stopped },
+          { label: "Paid", value: taka(paid), hint: paidHint, warn: due > 0 && !stopped },
           { label: "Discount", value: taka(Number(order.discountAmount)), hint: promotions.join(", ") || "no promotion" },
           { label: "Cost of goods", value: costKnown ? taka(cost) : "—", hint: costHint },
           { label: "Customer orders", value: n0(history.length), hint: `${taka(spent)} spent in total` },
@@ -729,7 +737,8 @@ export function OrderDetailPage({
                         <td>
                           <span className="inline-flex items-center gap-1">
                             <WarehouseTag code={m.inventoryLevel.warehouse.code} />
-                            {movementRacks(m) && <RackTag code={movementRacks(m)} />}
+                            {movementRacks(m) === "UNASSIGNED" && <span className="text-[11px] text-muted-foreground">no rack</span>}
+                            {movementRacks(m) && movementRacks(m) !== "UNASSIGNED" && <RackTag code={movementRacks(m)} />}
                           </span>
                         </td>
                         <td className="text-right">
@@ -857,7 +866,8 @@ export function OrderDetailPage({
                   <li key={p.id} className="flex flex-col gap-2 rounded-xl border px-3 py-2.5 text-sm">
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-medium">
-                        {p.provider} <span className="font-normal text-muted-foreground">· {label(p.method)}</span>
+                        {PROVIDER_LABEL[p.provider]}
+                        {label(p.method) !== PROVIDER_LABEL[p.provider] && <span className="font-normal text-muted-foreground"> · {label(p.method)}</span>}
                       </span>
                       <span className="flex items-center gap-1.5">
                         {p.metadata?.settledBy && (
@@ -968,8 +978,14 @@ export function OrderDetailPage({
                 </>
               )}
               <dt className="text-muted-foreground">ID</dt>
-              <dd className="truncate font-mono text-xs leading-5" title={order.id}>
-                {order.id}
+              <dd className="flex min-w-0 items-center gap-1">
+                <span className="truncate font-mono text-xs leading-5" title={order.id}>
+                  {order.id}
+                </span>
+                <Button variant="ghost" size="icon-xs" className="shrink-0 text-muted-foreground" onClick={() => navigator.clipboard.writeText(order.id).then(() => toast.success("Order ID copied"))}>
+                  <CopyIcon />
+                  <span className="sr-only">Copy order ID</span>
+                </Button>
               </dd>
             </dl>
           </Card>

@@ -613,7 +613,7 @@ function ItemsDialog({ order, images, onClose }: { order: Order; images: Record<
   }, [order])
 
   const payment = order.payments.find((p) => p.status === "PAID") ?? order.payments.at(-1)
-  const paid = order.payments.filter((p) => p.status === "PAID" || p.status === "PARTIALLY_PAID").reduce((sum, p) => sum + Number(p.amount), 0)
+  const paid = order.payments.filter((p) => ["PAID", "PARTIALLY_PAID", "REFUNDED", "PARTIALLY_REFUNDED"].includes(p.status)).reduce((sum, p) => sum + Number(p.amount), 0)
   const loading = Object.keys(products).length === 0 && order.items.some((i) => i.productId)
 
   return (
