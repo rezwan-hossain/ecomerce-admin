@@ -1,7 +1,7 @@
 // Sales numbers shared by the analytics pages. Built on the server from orders, products and stock,
 // then summed in the browser for whichever period is picked.
 import type { VariantStock } from "@/types/inventory.type"
-import type { Order, OrderStatus } from "@/types/order.type"
+import type { Order, OrderAddress, OrderStatus } from "@/types/order.type"
 import type { Product } from "@/types/product.type"
 
 const DAY = 86_400_000
@@ -23,6 +23,13 @@ export type SaleOrder = {
   shipping: number // delivery charged to the customer
   units: number
   cancelled: boolean
+  customer: string // phone's last 10 digits, else the email: one person across orders
+  customerName: string
+  firstOrder: boolean // the customer's first order that wasn't cancelled
+  city: string | null // the shipping district
+  promotions: string[]
+  cod: boolean
+  deliveryDays: number | null // placed → parcel delivered
 }
 
 export type SaleLine = {
@@ -45,7 +52,12 @@ export type ProductInfo = {
   stock: number // sellable units now
 }
 
-export function buildSalesData(orders: Order[], products: Product[], stock: VariantStock[]) {
+export function buildSalesData(
+  orders: Order[],
+  products: Product[],
+  stock: VariantStock[],
+  details: { addresses?: Record<string, OrderAddress>; promotions?: Record<string, string[]> } = {}
+) {
   // Average unit cost per variant, weighted by the units on hand in each warehouse.
   const unitCost: Record<string, number> = {}
   const stockByProduct: Record<string, number> = {}
@@ -60,6 +72,13 @@ export function buildSalesData(orders: Order[], products: Product[], stock: Vari
     }
     if (units > 0) unitCost[v.variantId] = value / units
     stockByProduct[v.product.id] = (stockByProduct[v.product.id] ?? 0) + v.stock
+  }
+
+  // Each customer's first order that went through, oldest first.
+  const customerOf = (o: Order) => o.customerPhone?.replace(/\D/g, "").slice(-10) || o.customerEmail.toLowerCase()
+  const firstOrderId = new Map<string, string>()
+  for (const o of [...orders].sort((a, b) => (a.placedAt ?? a.createdAt).localeCompare(b.placedAt ?? b.createdAt))) {
+    if (!NEVER_SOLD.includes(o.status) && !firstOrderId.has(customerOf(o))) firstOrderId.set(customerOf(o), o.id)
   }
 
   const saleOrders: SaleOrder[] = []
@@ -96,6 +115,13 @@ export function buildSalesData(orders: Order[], products: Product[], stock: Vari
       shipping: Number(o.shippingAmount),
       units,
       cancelled,
+      customer: customerOf(o),
+      customerName: o.customerName ?? o.customerEmail,
+      firstOrder: firstOrderId.get(customerOf(o)) === o.id,
+      city: details.addresses?.[o.id]?.city || null,
+      promotions: details.promotions?.[o.id] ?? [],
+      cod: o.payments.some((p) => p.provider === "COD"),
+      deliveryDays: deliveredAfter(o, at),
     })
   }
 
@@ -113,6 +139,12 @@ export function buildSalesData(orders: Order[], products: Product[], stock: Vari
 }
 
 export type SalesData = ReturnType<typeof buildSalesData>
+
+function deliveredAfter(o: Order, at: string) {
+  const delivered = o.shipments.find((s) => s.status === "DELIVERED" && s.deliveredAt)?.deliveredAt
+  if (!delivered) return null
+  return Math.max(0, (new Date(delivered).getTime() - new Date(at).getTime()) / DAY)
+}
 
 // ── Periods ─────────────────────────────────────────
 
