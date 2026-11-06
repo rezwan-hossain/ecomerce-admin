@@ -1,6 +1,6 @@
 "use server"
 
-import { revalidatePath } from "next/cache"
+import { refresh, revalidatePath } from "next/cache"
 
 import { handleRequest } from "@/lib/action-response"
 import { api } from "@/lib/api"
@@ -33,6 +33,9 @@ export async function moderateReview(id: string, productId: string, status: "APP
   if (res.success) {
     revalidatePath(`/products/${productId}`)
     revalidatePath("/products")
+    revalidatePath("/reviews")
+    // Re-fetch the open page now, so the list shows the new status without a reload.
+    refresh()
   }
   return res
 }

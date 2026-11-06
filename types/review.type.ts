@@ -4,11 +4,14 @@ export type ReviewStatus = "PENDING" | "APPROVED" | "REJECTED";
 export interface Review {
   id: string;
   productId: string;
+  userId: string | null;
   rating: number; // 1-5
   title: string | null;
   body: string | null;
   status: ReviewStatus;
   isVerifiedPurchase: boolean;
   createdAt: string;
-  user: { id: string; firstName: string | null; lastName: string | null; image: string | null } | null;
+  updatedAt: string;
+  user: { id: string; firstName: string | null; lastName: string | null; image: string | null; email?: string } | null;
+  product?: { id: string; name: string; slug: string };
 }

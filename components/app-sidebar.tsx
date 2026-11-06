@@ -145,7 +145,7 @@ const data = {
     },
     { name: "Discounts", url: "/marketing/promotions", icon: <TagIcon /> },
     { name: "Shipping", url: "/shipping", icon: <TruckIcon /> },
-    { name: "Reviews", url: "#", icon: <StarIcon /> },
+    { name: "Reviews", url: "/reviews", icon: <StarIcon /> },
   ],
 }
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
