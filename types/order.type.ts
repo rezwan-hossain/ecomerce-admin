@@ -101,6 +101,7 @@ export interface Shipment {
   codAmount: string | null; // what the courier collects on delivery
   shippedAt: string | null;
   deliveredAt: string | null;
+  updatedAt: string;
   createdAt: string;
   // Pathao parcels keep Pathao's last status and its delivery fee here.
   metadata?: {

@@ -12,6 +12,8 @@ import {
   BanknoteIcon,
   CheckIcon,
   CircleCheckIcon,
+  MessageCircleIcon,
+  ChevronRightIcon,
   CreditCardIcon,
   LandmarkIcon,
   ShoppingCartIcon,
@@ -32,6 +34,7 @@ import {
   PhoneIcon,
   PlusIcon,
   PrinterIcon,
+  ReceiptIcon,
   RefreshCwIcon,
   StickyNoteIcon,
   StoreIcon,
@@ -59,7 +62,7 @@ import { type PromotionInfo } from "@/app/actions/marketing.actions"
 import { bookPathaoShipment, getPathaoStores, syncPathaoShipment } from "@/app/actions/pathao.actions"
 import { Card, fmtDate, fmtDateTime, Kpis, label, n0, Pill, RackTag, rel, taka, type Tone, WarehouseTag } from "@/components/inventory/inventory-ui"
 import { MovementQuantity, MovementTag, movementRacks } from "@/components/inventory/movements-table"
-import { CANCELLABLE, cancelBlockedBy, CancelDialog, CARRIER_LABEL, followsShipment, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL, PROVIDER_LABEL, RefreshButton, SourceBadge } from "@/components/orders/orders-table"
+import { CANCELLABLE, cancelBlockedBy, CancelDialog, CARRIER_LABEL, FINISHED, followsShipment, localPhone, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL, PROVIDER_LABEL, RefreshButton, SourceBadge, whatsApp } from "@/components/orders/orders-table"
 import { offerSentence, offerText } from "@/components/marketing/marketing-utils"
 import { PrintInvoice } from "@/components/orders/print-invoice"
 import { StatusBadge } from "@/components/status-badge"
@@ -157,13 +160,62 @@ function stockTone(l: StockLevel, threshold: number) {
   return undefined
 }
 
-function Address({ address }: { address: OrderAddress }) {
+function Address({ address, customerPhone, shipping = false }: { address: OrderAddress; customerPhone: string | null; shipping?: boolean }) {
+  const oneLine = formatAddress(address)
+  // Someone else receiving the parcel is worth knowing before the rider calls.
+  const otherPhone = customerPhone && localPhone(customerPhone) !== localPhone(address.phone)
   return (
-    <address className="text-sm leading-relaxed not-italic">
-      <div className="font-medium">{address.fullName}</div>
-      {address.company && <div>{address.company}</div>}
-      <div className="text-muted-foreground">{formatAddress(address)}</div>
-      <div className="text-muted-foreground">{address.phone}</div>
+    <address className="flex flex-col gap-2 text-sm not-italic">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="truncate font-medium">{address.fullName}</div>
+          {address.company && <div className="truncate text-xs text-muted-foreground">{address.company}</div>}
+          <div className="flex items-center gap-1 font-mono text-[13px] text-muted-foreground">
+            {localPhone(address.phone)}
+            {otherPhone && <span className="font-sans text-[11px] text-amber-700 dark:text-amber-400">· not the customer&apos;s phone</span>}
+          </div>
+        </div>
+        <span className="flex shrink-0">
+          <Button variant="ghost" size="icon-xs" className="text-muted-foreground" nativeButton={false} render={<a href={`tel:${address.phone}`} />}>
+            <PhoneIcon />
+            <span className="sr-only">Call {address.fullName}</span>
+          </Button>
+          <Button variant="ghost" size="icon-xs" className="text-emerald-600 hover:text-emerald-700" nativeButton={false} render={<a href={whatsApp(address.phone)} target="_blank" rel="noreferrer" />}>
+            <MessageCircleIcon />
+            <span className="sr-only">WhatsApp {address.fullName}</span>
+          </Button>
+        </span>
+      </div>
+      <p className="leading-relaxed">{address.fullAddress}</p>
+      <div className="flex flex-wrap gap-1.5 text-[11px]">
+        {address.thana && (
+          <span className="rounded-md bg-muted px-1.5 py-0.5">
+            <span className="text-muted-foreground">Thana</span> <span className="font-medium">{address.thana}</span>
+          </span>
+        )}
+        {/* Only the parcel's address goes to the courier. */}
+        {!address.thana && shipping && (
+          <span className="rounded-md bg-amber-50 px-1.5 py-0.5 font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300">No thana — couriers need it</span>
+        )}
+        <span className="rounded-md bg-muted px-1.5 py-0.5">
+          <span className="text-muted-foreground">District</span> <span className="font-medium">{address.city}</span>
+        </span>
+        {address.country && (
+          <span className="rounded-md bg-muted px-1.5 py-0.5">
+            <span className="text-muted-foreground">Country</span> <span className="font-medium">{address.country}</span>
+          </span>
+        )}
+      </div>
+      <div className="flex gap-1">
+        <Button variant="outline" size="xs" onClick={() => navigator.clipboard.writeText(`${address.fullName}, ${localPhone(address.phone)}, ${oneLine}`).then(() => toast.success("Address copied"))}>
+          <CopyIcon />
+          Copy
+        </Button>
+        <Button variant="outline" size="xs" nativeButton={false} render={<a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(oneLine)}`} target="_blank" rel="noreferrer" />}>
+          <MapPinIcon />
+          Map
+        </Button>
+      </div>
     </address>
   )
 }
@@ -287,6 +339,15 @@ export function OrderDetailPage({
   const kept = history.filter((o) => !STOPPED.includes(o.status))
   const spent = kept.reduce((s, o) => s + Number(o.totalAmount), 0)
   const firstOrder = history.reduce((first, o) => (o.createdAt < first ? o.createdAt : first), order.createdAt)
+  // Delivered out of finished orders, the same rate the orders list shows.
+  const finished = history.filter((o) => FINISHED.includes(o.status)).length
+  const delivered = history.filter((o) => o.status === "DELIVERED" || o.status === "COMPLETED").length
+  const returned = history.filter((o) => o.status === "RETURNED" || o.status === "PARTIALLY_RETURNED").length
+  const cancelled = history.filter((o) => o.status === "CANCELLED" || o.status === "FAILED").length
+  const deliveryRate = finished ? Math.round((delivered / finished) * 100) : null
+  let deliveryTone = "text-emerald-700 dark:text-emerald-400"
+  if (deliveryRate !== null && deliveryRate < 80) deliveryTone = "text-amber-700 dark:text-amber-400"
+  if (deliveryRate !== null && deliveryRate < 50) deliveryTone = "text-destructive"
 
   async function advance() {
     if (!next) return
@@ -916,57 +977,107 @@ export function OrderDetailPage({
           <Card title="Customer" action={<Pill tone={order.userId ? "blue" : "grey"}>{order.userId ? "Account" : "Guest"}</Pill>}>
             <div className="flex flex-col gap-3 px-4 pb-4 text-sm">
               <div className="flex items-center gap-3">
-                <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary/10 font-semibold text-primary uppercase">
+                <span className="grid size-11 shrink-0 place-items-center rounded-full bg-primary/10 font-semibold text-primary uppercase ring-4 ring-primary/5">
                   {(order.customerName ?? order.customerEmail).slice(0, 2)}
                 </span>
-                <div className="min-w-0">
-                  <div className="truncate font-medium">{order.customerName ?? "No name given"}</div>
-                  <div className="text-xs text-muted-foreground">First order {fmtDate(firstOrder)}</div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="truncate font-semibold">{order.customerName ?? "No name given"}</span>
+                    {history.length <= 1 ? (
+                      <span className="shrink-0 rounded-md bg-sky-50 px-1.5 text-[11px] font-medium text-sky-700 dark:bg-sky-950 dark:text-sky-300">New</span>
+                    ) : (
+                      <span className="shrink-0 rounded-md bg-violet-50 px-1.5 text-[11px] font-medium text-violet-700 dark:bg-violet-950 dark:text-violet-300">Repeat</span>
+                    )}
+                  </div>
+                  <div className="text-xs text-muted-foreground">Customer since {fmtDate(firstOrder)}</div>
                 </div>
               </div>
-              <div className="flex flex-col gap-1.5">
-                <a href={`mailto:${order.customerEmail}`} className="flex items-center gap-2 truncate text-primary hover:underline">
+
+              <div className="flex flex-col gap-1 rounded-xl border px-3 py-2">
+                <div className="flex items-center gap-2">
                   <MailIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                  {order.customerEmail}
-                </a>
-                {order.customerPhone && (
-                  <a href={`tel:${order.customerPhone}`} className="flex items-center gap-2 hover:underline">
-                    <PhoneIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                    {order.customerPhone}
+                  <a href={`mailto:${order.customerEmail}`} className="min-w-0 flex-1 truncate hover:text-primary hover:underline">
+                    {order.customerEmail}
                   </a>
+                </div>
+                {order.customerPhone && (
+                  <div className="flex items-center gap-2">
+                    <PhoneIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{localPhone(order.customerPhone)}</span>
+                    <Button variant="ghost" size="icon-xs" className="text-muted-foreground" nativeButton={false} render={<a href={`tel:${order.customerPhone}`} />}>
+                      <PhoneIcon />
+                      <span className="sr-only">Call</span>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className="text-emerald-600 hover:text-emerald-700"
+                      nativeButton={false}
+                      render={<a href={whatsApp(order.customerPhone)} target="_blank" rel="noreferrer" />}
+                    >
+                      <MessageCircleIcon />
+                      <span className="sr-only">WhatsApp</span>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className="text-muted-foreground"
+                      onClick={() => navigator.clipboard.writeText(localPhone(order.customerPhone ?? "")).then(() => toast.success("Phone copied"))}
+                    >
+                      <CopyIcon />
+                      <span className="sr-only">Copy phone</span>
+                    </Button>
+                  </div>
                 )}
               </div>
+
               <div className="grid grid-cols-3 divide-x rounded-xl border bg-muted/30 text-center">
                 <div className="px-2 py-2">
                   <div className="font-semibold tabular-nums">{n0(history.length)}</div>
                   <div className="text-[11px] text-muted-foreground">Orders</div>
                 </div>
-                <div className="min-w-0 px-2 py-2">
+                <div className="min-w-0 px-2 py-2" title={`Average order ${taka(kept.length ? spent / kept.length : 0)}`}>
                   <div className="truncate font-semibold tabular-nums">{taka(spent)}</div>
                   <div className="text-[11px] text-muted-foreground">Spent</div>
                 </div>
-                <div className="min-w-0 px-2 py-2">
-                  <div className="truncate font-semibold tabular-nums">{taka(kept.length ? spent / kept.length : 0)}</div>
-                  <div className="text-[11px] text-muted-foreground">Avg order</div>
+                <div className="px-2 py-2" title={`${n0(delivered)} of ${n0(finished)} finished orders delivered`}>
+                  <div className={cn("font-semibold tabular-nums", deliveryTone)}>{deliveryRate === null ? "—" : `${deliveryRate}%`}</div>
+                  <div className="text-[11px] text-muted-foreground">Delivered</div>
                 </div>
               </div>
-              {order.customerNote && (
-                <p className="rounded-lg border border-dashed px-3 py-2 text-muted-foreground">
-                  <span className="block text-xs font-medium text-foreground">Note from customer</span>“{order.customerNote}”
-                </p>
+              {(returned > 0 || cancelled > 0) && (
+                <div className="flex items-start gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                  <TriangleAlertIcon className="mt-px size-3.5 shrink-0" />
+                  <span>
+                    {[returned > 0 && `${n0(returned)} returned`, cancelled > 0 && `${n0(cancelled)} cancelled or failed`].filter(Boolean).join(" · ")} — check before shipping cash on delivery.
+                  </span>
+                </div>
               )}
+
+              {order.customerNote && (
+                <div className="flex gap-1.5 rounded-r-lg border-l-2 border-amber-400 bg-amber-50/70 py-1.5 pr-2.5 pl-2 dark:border-amber-600 dark:bg-amber-950/60">
+                  <StickyNoteIcon className="mt-0.5 size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <span className="text-amber-900 italic dark:text-amber-200">{order.customerNote}</span>
+                </div>
+              )}
+
               {others.length > 0 && (
                 <div className="flex flex-col">
-                  <span className="mb-1 text-xs font-medium text-muted-foreground">Other orders</span>
+                  <div className="mb-1 flex items-baseline justify-between text-xs">
+                    <span className="font-medium text-muted-foreground">Other orders</span>
+                    {others.length > 5 && <span className="text-muted-foreground">latest 5 of {n0(others.length)}</span>}
+                  </div>
                   {others.slice(0, 5).map((o) => (
-                    <Link key={o.id} href={`/orders/${o.id}`} className="-mx-2 flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-muted">
-                      <span className="min-w-0">
-                        <span className="block truncate text-xs font-medium">{o.orderNumber}</span>
+                    <Link key={o.id} href={`/orders/${o.id}`} className="group -mx-2 flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-muted">
+                      <span className={cn("size-2 shrink-0 rounded-full", statusDot(o.status))} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-mono text-xs font-medium group-hover:text-primary">{o.orderNumber}</span>
                         <span className="block text-[11px] text-muted-foreground">
                           {fmtDate(o.placedAt ?? o.createdAt)} · {ORDER_STATUS_LABEL[o.status]}
                         </span>
                       </span>
-                      <span className="text-xs tabular-nums">{taka(Number(o.totalAmount))}</span>
+                      <span className="text-xs font-medium tabular-nums">{taka(Number(o.totalAmount))}</span>
+                      <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/50 group-hover:text-primary" />
                     </Link>
                   ))}
                 </div>
@@ -975,21 +1086,28 @@ export function OrderDetailPage({
           </Card>
 
           <Card title="Addresses">
-            <div className="flex flex-col gap-4 px-4 pb-4">
-              <div className="flex gap-3">
-                <MapPinIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                <div>
-                  <div className="mb-0.5 text-xs font-medium text-muted-foreground">Ship to</div>
-                  {shippingAddress ? <Address address={shippingAddress} /> : <p className="text-sm text-muted-foreground">None given.</p>}
+            <div className="flex flex-col gap-3 px-4 pb-4">
+              <div className="rounded-xl border p-3">
+                <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                  <TruckIcon className="size-3.5" />
+                  Ship to
                 </div>
+                {shippingAddress ? <Address address={shippingAddress} customerPhone={order.customerPhone} shipping /> : <p className="text-sm text-muted-foreground">None given.</p>}
               </div>
-              <div className="flex gap-3 border-t pt-4">
-                <MapPinIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                <div>
-                  <div className="mb-0.5 text-xs font-medium text-muted-foreground">Bill to</div>
-                  {billingAddress ? <Address address={billingAddress} /> : <p className="text-sm text-muted-foreground">Same as shipping.</p>}
+              {billingAddress ? (
+                <div className="rounded-xl border p-3">
+                  <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                    <ReceiptIcon className="size-3.5" />
+                    Bill to
+                  </div>
+                  <Address address={billingAddress} customerPhone={order.customerPhone} />
                 </div>
-              </div>
+              ) : (
+                <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+                  <ReceiptIcon className="size-3.5" />
+                  Billing address is the same as shipping
+                </div>
+              )}
             </div>
           </Card>
 
@@ -1923,6 +2041,13 @@ function duration(from: string, to: string) {
     unit = "hour"
   }
   return `${n} ${unit}${n === 1 ? "" : "s"}`
+}
+
+function statusDot(status: OrderStatus) {
+  if (status === "DELIVERED" || status === "COMPLETED") return "bg-emerald-500"
+  if (status === "CANCELLED" || status === "FAILED") return "bg-red-500"
+  if (status === "RETURNED" || status === "PARTIALLY_RETURNED" || status === "REFUNDED") return "bg-amber-500"
+  return "bg-primary"
 }
 
 function paymentPillText(p: OrderDetail["payments"][number]) {

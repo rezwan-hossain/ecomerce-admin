@@ -329,8 +329,8 @@ function ShipmentTiming({ shipment }: { shipment: Order["shipments"][number] }) 
 const customerKey = (o: Order) => o.customerPhone?.replace(/\D/g, "").slice(-10) || o.customerEmail.toLowerCase()
 
 // "01911087109" style for display, and the international number WhatsApp links need.
-const localPhone = (phone: string) => `0${phone.replace(/\D/g, "").slice(-10)}`
-const whatsApp = (phone: string) => `https://wa.me/880${phone.replace(/\D/g, "").slice(-10)}`
+export const localPhone = (phone: string) => `0${phone.replace(/\D/g, "").slice(-10)}`
+export const whatsApp = (phone: string) => `https://wa.me/880${phone.replace(/\D/g, "").slice(-10)}`
 
 // "11 Oct 2026 · 7:16 PM"
 const placedAt = (iso: string) => {
@@ -338,7 +338,7 @@ const placedAt = (iso: string) => {
   return `${d.getDate()} ${d.toLocaleString("en-US", { month: "short" })} ${d.getFullYear()} · ${d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`
 }
 
-const FINISHED: OrderStatus[] = ["DELIVERED", "COMPLETED", "CANCELLED", "FAILED", "REFUNDED", "RETURNED", "PARTIALLY_RETURNED"]
+export const FINISHED: OrderStatus[] = ["DELIVERED", "COMPLETED", "CANCELLED", "FAILED", "REFUNDED", "RETURNED", "PARTIALLY_RETURNED"]
 
 export function OrdersTable({
   orders,
