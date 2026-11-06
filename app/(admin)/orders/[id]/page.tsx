@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation"
 import { connection } from "next/server"
 
+import { getPromotion, type PromotionInfo } from "@/app/actions/marketing.actions"
 import { getReferenceMovements, getVariantStock } from "@/app/actions/inventory.actions"
 import { getOrder, getOrders } from "@/app/actions/order.actions"
 import { getProduct } from "@/app/actions/product.actions"
@@ -16,12 +17,24 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
 
   const productIds = [...new Set(order.data.items.flatMap((i) => (i.productId ? [i.productId] : [])))]
   const variantIds = [...new Set(order.data.items.flatMap((i) => (i.variantId ? [i.variantId] : [])))]
-  const [products, variants, movements, orders] = await Promise.all([
+  const promotionIds = [
+    ...new Set([
+      ...order.data.items.flatMap((i) => (i.metadata?.appliedPromotion ? [i.metadata.appliedPromotion.id] : [])),
+      ...order.data.discounts.flatMap((d) => (d.promotionId ? [d.promotionId] : [])),
+    ]),
+  ]
+  const [products, variants, movements, orders, promotionRes] = await Promise.all([
     Promise.all(productIds.map((productId) => getProduct(productId))),
     Promise.all(variantIds.map((variantId) => getVariantStock(variantId))),
     getReferenceMovements(id),
     getOrders(),
+    Promise.all(promotionIds.map((promotionId) => getPromotion(promotionId))),
   ])
+  // A deleted promotion just loses its rule; the order still has its name.
+  const promotions: Record<string, PromotionInfo> = {}
+  for (const p of promotionRes) {
+    if (p.success) promotions[p.data.id] = p.data
+  }
 
   // Order items are snapshots without images, so look up each product's primary image.
   const images: Record<string, string> = {}
@@ -46,6 +59,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
       stock={stock}
       movements={movements.success ? movements.data : []}
       history={history}
+      promotionRules={promotions}
     />
   )
 }

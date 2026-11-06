@@ -1,6 +1,6 @@
 import { connection } from "next/server"
 
-import { getOrders, getShippingAddresses } from "@/app/actions/order.actions"
+import { getOrders, getListDetails } from "@/app/actions/order.actions"
 import { getProducts } from "@/app/actions/product.actions"
 import { OrdersTable } from "@/components/orders/orders-table"
 import { PageHeader } from "@/components/page-header"
@@ -10,7 +10,7 @@ export default async function PendingOrdersPage() {
 
   const res = await getOrders()
   const pending = res.success ? res.data.filter((o) => ["PENDING", "CONFIRMED", "PROCESSING", "READY_TO_SHIP"].includes(o.status)) : []
-  const addresses = await getShippingAddresses(pending.map((o) => o.id))
+  const { addresses, promotions } = await getListDetails(pending.map((o) => o.id))
   // Order items are snapshots without images, so show each product's primary image.
   const products = await getProducts()
   const images: Record<string, string> = {}
@@ -26,7 +26,7 @@ export default async function PendingOrdersPage() {
         description="Orders placed but not shipped yet: waiting for payment, confirmation or packing."
       />
       {res.success ? (
-        <OrdersTable orders={pending} history={res.data} addresses={addresses} images={images} mode="pending" />
+        <OrdersTable orders={pending} history={res.data} addresses={addresses} promotions={promotions} images={images} mode="pending" />
       ) : (
         <p className="px-4 text-muted-foreground lg:px-6">Couldn’t load orders: {res.error}</p>
       )}

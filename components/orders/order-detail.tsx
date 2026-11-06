@@ -27,6 +27,7 @@ import {
   RefreshCwIcon,
   StickyNoteIcon,
   StoreIcon,
+  TagIcon,
   TriangleAlertIcon,
   TruckIcon,
   Undo2Icon,
@@ -46,10 +47,12 @@ import {
   updateOrderStatus,
   updateShipmentStatus,
 } from "@/app/actions/order.actions"
+import { type PromotionInfo } from "@/app/actions/marketing.actions"
 import { bookPathaoShipment, getPathaoStores, syncPathaoShipment } from "@/app/actions/pathao.actions"
 import { Card, fmtDate, fmtDateTime, Kpis, label, n0, Pill, RackTag, rel, taka, type Tone, WarehouseTag } from "@/components/inventory/inventory-ui"
 import { MovementQuantity, MovementTag, movementRacks } from "@/components/inventory/movements-table"
 import { CANCELLABLE, cancelBlockedBy, CancelDialog, CARRIER_LABEL, followsShipment, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL, PROVIDER_LABEL, RefreshButton, SourceBadge } from "@/components/orders/orders-table"
+import { offerSentence, offerText } from "@/components/marketing/marketing-utils"
 import { PrintInvoice } from "@/components/orders/print-invoice"
 import { StatusBadge } from "@/components/status-badge"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -149,12 +152,14 @@ export function OrderDetailPage({
   stock,
   movements,
   history,
+  promotionRules,
 }: {
   order: OrderDetail
   images: Record<string, string>
   stock: Record<string, VariantStockDetail>
   movements: LedgerMovement[]
   history: Order[]
+  promotionRules: Record<string, PromotionInfo> // promotion id → its rule (missing if deleted)
 }) {
   const [busy, setBusy] = useState(false)
   const [cancelling, setCancelling] = useState(false)
@@ -205,6 +210,23 @@ export function OrderDetailPage({
       ...order.discounts.map((d) => d.promotionName),
     ]),
   ]
+  // One row per promotion: what it saved and on which lines (or the whole order).
+  const promotionRows = new Map<string, { id: string; name: string; saved: number; items: string[]; onOrder: boolean }>()
+  for (const i of order.items) {
+    const p = i.metadata?.appliedPromotion
+    if (!p) continue
+    const row = promotionRows.get(p.id) ?? { id: p.id, name: p.name, saved: 0, items: [], onOrder: false }
+    row.saved += Number(i.discountAmount)
+    row.items.push(i.productName)
+    promotionRows.set(p.id, row)
+  }
+  for (const d of order.discounts) {
+    const key = d.promotionId ?? d.id
+    const row = promotionRows.get(key) ?? { id: key, name: d.promotionName, saved: 0, items: [], onOrder: false }
+    row.saved += Number(d.amount)
+    row.onOrder = true
+    promotionRows.set(key, row)
+  }
 
   const shippingAddress = order.addresses.find((a) => a.type === "SHIPPING")
   const billing = order.addresses.find((a) => a.type === "BILLING")
@@ -501,7 +523,12 @@ export function OrderDetailPage({
                         {/* Single-variant products snapshot the SKU as the variant name. */}
                         {i.variantName && i.variantName !== i.sku && <span className="font-medium text-foreground">{i.variantName}</span>}
                         <span className="font-mono">{i.sku}</span>
-                        {i.metadata?.appliedPromotion && <Pill tone="blue">{i.metadata.appliedPromotion.name}</Pill>}
+                        {i.metadata?.appliedPromotion && (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-1.5 py-px text-[11px] text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                            <TagIcon className="size-3" />
+                            {i.metadata.appliedPromotion.name}
+                          </span>
+                        )}
                       </div>
                       {variant?.activeReservations
                         .filter((h) => h.order?.orderNumber === order.orderNumber)
@@ -573,6 +600,52 @@ export function OrderDetailPage({
               )}
             </dl>
           </Card>
+
+          {promotionRows.size > 0 && (
+            <Card
+              title="Promotions"
+              action={
+                <Link href="/marketing/promotions" className="text-xs text-muted-foreground hover:text-primary hover:underline">
+                  Manage promotions
+                </Link>
+              }
+            >
+              <ul className="flex flex-col">
+                {[...promotionRows.values()].map((row) => {
+                  const rule = promotionRules[row.id]
+                  let statusTone: Tone = "grey"
+                  if (rule?.status === "ACTIVE") statusTone = "green"
+                  if (rule?.status === "SCHEDULED") statusTone = "blue"
+                  return (
+                    <li key={row.id} className="flex items-start gap-3 border-t border-border/60 px-4 py-3.5">
+                      <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:ring-emerald-900">
+                        <TagIcon className="size-4" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="font-medium">{row.name}</span>
+                          {rule && <Pill tone="green">{offerText(rule)}</Pill>}
+                          {rule && <Pill tone={statusTone}>{label(rule.status)}</Pill>}
+                        </div>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{rule ? offerSentence(rule) : "This promotion has since been deleted."}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {row.onOrder ? "Applied to the whole order" : `Applied to ${row.items.join(", ")}`}
+                          {rule?.endsAt && ` · ${new Date(rule.endsAt) < new Date() ? "ended" : "ends"} ${fmtDate(rule.endsAt)}`}
+                          {rule?.maxDiscountAmount && row.saved >= rule.maxDiscountAmount && (
+                            <span className="font-medium text-amber-700 dark:text-amber-400"> · hit the {taka(rule.maxDiscountAmount)} cap</span>
+                          )}
+                        </p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className="font-semibold text-emerald-700 tabular-nums dark:text-emerald-400">−{taka(row.saved, 2)}</div>
+                        <div className="text-[11px] text-muted-foreground">saved</div>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            </Card>
+          )}
 
           <Card
             title="Shipments"

@@ -78,9 +78,11 @@ export function ListTable<T>({
 
   return (
     <div className={`flex flex-col gap-4 ${className}`}>
-      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+      {/* Wraps instead of widening the page when the tabs and the search don't fit on one line. */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
         {filters ? (
           <Tabs
+            className="min-w-0 max-w-full"
             value={filter}
             onValueChange={(value) => {
               setFilter(value as string)
@@ -111,7 +113,7 @@ export function ListTable<T>({
         ) : (
           <div />
         )}
-        <div className="flex items-center gap-2">
+        <div className="ml-auto flex w-full items-center gap-2 md:w-auto">
           {searchText && (
             <div className="relative w-full md:w-64">
               <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />

@@ -13,6 +13,8 @@ import {
   HandIcon,
   ServerIcon,
   ShoppingCartIcon,
+  StickyNoteIcon,
+  TagIcon,
   TruckIcon,
   MapPinIcon,
   MessageCircleIcon,
@@ -38,6 +40,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Field, FieldLabel } from "@/components/ui/field"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { getReturnState } from "@/lib/orders/return-state"
@@ -150,7 +153,9 @@ export function cancelBlockedBy(o: Pick<Order, "shipments">) {
 const STOPPED: OrderStatus[] = ["CANCELLED", "FAILED", "REFUNDED", "RETURNED", "PARTIALLY_RETURNED"]
 const RETURNS: OrderStatus[] = ["RETURNED", "PARTIALLY_RETURNED"]
 
-const isPaid = (o: Order) => o.payments.some((p) => p.status === "PAID")
+// Same rule as the backend: refunded payments still count as received.
+const RECEIVED: PaymentStatus[] = ["PAID", "PARTIALLY_PAID", "REFUNDED", "PARTIALLY_REFUNDED"]
+const isPaid = (o: Order) => o.payments.some((p) => RECEIVED.includes(p.status))
 const placed = (o: Order) => o.placedAt ?? o.createdAt
 const age = (o: Order) => (Date.now() - new Date(placed(o)).getTime()) / DAY
 const itemCount = (o: Order) => o.items.reduce((sum, item) => sum + item.quantity, 0)
@@ -183,28 +188,45 @@ const SORTS = [
 ]
 
 // Total, then where the money stands: the latest payment attempt (a paid one wins) and what's still owed.
-function Amount({ order }: { order: Order }) {
-  const payment = order.payments.find((p) => p.status === "PAID") ?? order.payments.at(-1)
-  const paid = order.payments.filter((p) => p.status === "PAID").reduce((s, p) => s + Number(p.amount), 0)
+function Amount({ order, promotions = [] }: { order: Order; promotions?: string[] }) {
+  const payment = order.payments.find((p) => RECEIVED.includes(p.status)) ?? order.payments.at(-1)
+  const paid = order.payments.filter((p) => RECEIVED.includes(p.status)).reduce((s, p) => s + Number(p.amount), 0)
   // After a partial delivery the rest isn't owed: those items come back instead.
   let due = Number(order.totalAmount) - paid
-  if (payment?.status === "PARTIALLY_PAID") due = 0
+  if (payment?.status === "PARTIALLY_PAID" || STOPPED.includes(order.status)) due = 0
+  const discount = Number(order.discountAmount)
   return (
     <span className="flex flex-col items-end gap-1">
       <span className="text-[17px] font-bold tracking-tight">{taka(Number(order.totalAmount))}</span>
-      {payment ? <Pill tone={PAYMENT_TONE[payment.status] ?? "amber"}>{PAYMENT_LABEL[payment.status]}</Pill> : <Pill tone="amber">Unpaid</Pill>}
+      <span className="flex flex-wrap items-center justify-end gap-1">
+        {payment ? <Pill tone={PAYMENT_TONE[payment.status] ?? "amber"}>{PAYMENT_LABEL[payment.status]}</Pill> : <Pill tone="amber">Unpaid</Pill>}
+        {settledByHand(order) && <SourceBadge source="MANUAL" />}
+      </span>
+      {/* Each part stays whole; the line breaks between them when the column is narrow. */}
+      <span className="flex flex-wrap justify-end gap-x-1 text-[11px] text-muted-foreground">
+        {payment && <span className="whitespace-nowrap">{PROVIDER_LABEL[payment.provider]}</span>}
+        {due > 0 && <span className="font-medium whitespace-nowrap text-amber-700 dark:text-amber-400">{taka(due)} due</span>}
+        {discount > 0 && promotions.length === 0 && <span className="whitespace-nowrap text-emerald-700 dark:text-emerald-400">−{taka(discount)} off</span>}
+      </span>
+      {discount > 0 && promotions.length > 0 && (
+        <span className="flex flex-wrap items-center justify-end gap-1 text-[11px]">
+          <span
+            title={promotions.join(", ")}
+            className="inline-flex max-w-28 items-center gap-1 rounded-md bg-emerald-50 px-1.5 py-px text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+          >
+            <TagIcon className="size-3 shrink-0" />
+            <span className="truncate">{promotions[0]}</span>
+            {promotions.length > 1 && <span className="shrink-0 font-medium">+{promotions.length - 1}</span>}
+          </span>
+          <span className="font-medium whitespace-nowrap text-emerald-700 dark:text-emerald-400">−{taka(discount)}</span>
+        </span>
+      )}
       {payment?.status === "PARTIALLY_PAID" && (
         <span className="text-[11px] font-medium whitespace-nowrap text-amber-700 dark:text-amber-400">
           {taka(Number(payment.amount))} of {taka(Number(payment.metadata?.orderedAmount))}
         </span>
       )}
-      {payment?.status === "FAILED" && payment.failureMessage && <span className="text-[11px] whitespace-nowrap text-destructive">{payment.failureMessage}</span>}
-      {payment && <span className="text-[11px] whitespace-nowrap text-muted-foreground">{PROVIDER_LABEL[payment.provider]}</span>}
-      {settledByHand(order) && <SourceBadge source="MANUAL" />}
-      {due > 0 && !STOPPED.includes(order.status) && (
-        <span className="text-[11px] font-medium whitespace-nowrap text-amber-700 dark:text-amber-400">{taka(due)} due</span>
-      )}
-      {Number(order.discountAmount) > 0 && <span className="text-[11px] whitespace-nowrap text-emerald-700 dark:text-emerald-400">−{taka(Number(order.discountAmount))} off</span>}
+      {payment?.status === "FAILED" && payment.failureMessage && <span className="max-w-28 text-right text-[11px] leading-tight whitespace-normal text-destructive">{payment.failureMessage}</span>}
     </span>
   )
 }
@@ -229,7 +251,7 @@ function OrderStatusCell({ order }: { order: Order }) {
     <span className="flex flex-col items-start gap-1">
       {badge}
       {partial && <span className="text-[11px] font-medium whitespace-nowrap text-amber-700 dark:text-amber-400">Partly delivered</span>}
-      <span className="text-[11px] whitespace-nowrap">{note}</span>
+      <span className="max-w-28 text-[11px] leading-tight whitespace-normal">{note}</span>
     </span>
   )
 }
@@ -270,6 +292,7 @@ function Fulfilment({ order }: { order: Order }) {
       <span className="flex flex-col">
         <span className="font-medium">{CARRIER_LABEL[shipment.carrier] ?? shipment.carrier}</span>
         <span className="text-[11px] text-muted-foreground">{label(shipment.status)}</span>
+        <ShipmentTiming shipment={shipment} />
         <TrackingId shipment={shipment} />
       </span>
     )
@@ -280,6 +303,26 @@ function Fulfilment({ order }: { order: Order }) {
     return <span className={cn("text-xs", age(order) > 2 ? "font-medium text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>Not shipped</span>
   }
   return <span className="text-xs text-muted-foreground">No parcel</span>
+}
+
+const days = (from: string, to = Date.now()) => Math.max(0, Math.round((to - new Date(from).getTime()) / DAY))
+const dayText = (n: number) => (n === 0 ? "same day" : `${n} ${n === 1 ? "day" : "days"}`)
+
+// How long the parcel took, or how long it has been out; over 3 days on the road needs a look.
+function ShipmentTiming({ shipment }: { shipment: Order["shipments"][number] }) {
+  if (shipment.status === "DELIVERED" && shipment.deliveredAt) {
+    const took = days(shipment.shippedAt ?? shipment.createdAt, new Date(shipment.deliveredAt).getTime())
+    return <span className="text-[11px] text-muted-foreground">{took === 0 ? "Same day" : `Took ${dayText(took)}`}</span>
+  }
+  if (["SHIPPED", "IN_TRANSIT", "OUT_FOR_DELIVERY"].includes(shipment.status) && shipment.shippedAt) {
+    const out = days(shipment.shippedAt)
+    return <span className={cn("text-[11px] text-muted-foreground", out > 3 && "font-medium text-amber-700 dark:text-amber-400")}>{out === 0 ? "Out today" : `Out ${dayText(out)}`}</span>
+  }
+  if (shipment.status === "PENDING" || shipment.status === "PROCESSING") {
+    const waiting = days(shipment.createdAt)
+    return <span className={cn("text-[11px] text-muted-foreground", waiting > 1 && "font-medium text-amber-700 dark:text-amber-400")}>{waiting === 0 ? "Booked today" : `Booked ${dayText(waiting)} ago`}</span>
+  }
+  return null
 }
 
 // One customer across orders: the phone's last 10 digits, else the email (guests have no account id).
@@ -301,12 +344,14 @@ export function OrdersTable({
   orders,
   history = orders,
   addresses,
+  promotions,
   images,
   mode = "all",
 }: {
   orders: Order[]
   history?: Order[] // every order, for each customer's track record
   addresses: Record<string, OrderAddress>
+  promotions: Record<string, string[]> // order id → promotion names
   images: Record<string, string> // product id → primary image
   mode?: "all" | "pending"
 }) {
@@ -353,11 +398,40 @@ export function OrdersTable({
       key: "order",
       header: "Order",
       cell: (o) => (
-        <Link href={`/orders/${o.id}`} className="group flex flex-col">
-          <span className="font-medium whitespace-nowrap group-hover:text-primary group-hover:underline">{o.orderNumber}</span>
-          <span className="text-[11px] whitespace-nowrap text-muted-foreground tabular-nums">{placedAt(placed(o))}</span>
-          <span className="text-[11px] text-muted-foreground">{rel(placed(o))}</span>
-        </Link>
+        <div className="flex flex-col items-start">
+          <Link href={`/orders/${o.id}`} className="group flex flex-col">
+            <span className="font-medium whitespace-nowrap group-hover:text-primary group-hover:underline">{o.orderNumber}</span>
+            <span className="text-[11px] whitespace-nowrap text-muted-foreground tabular-nums">{placedAt(placed(o))}</span>
+            <span className="text-[11px] text-muted-foreground">{rel(placed(o))}</span>
+          </Link>
+          {o.customerNote && (
+            <Popover>
+              {/* A quote of the note, two lines at most; click for all of it. */}
+              <PopoverTrigger className="group/note mt-1.5 flex w-40 cursor-pointer gap-1.5 rounded-r-md border-l-2 border-amber-400 bg-amber-50/70 py-1 pr-2 pl-1.5 text-left whitespace-normal outline-none hover:bg-amber-100 focus-visible:ring-3 focus-visible:ring-ring/50 dark:border-amber-600 dark:bg-amber-950/60 dark:hover:bg-amber-950">
+                <StickyNoteIcon className="mt-px size-3 shrink-0 text-amber-600 dark:text-amber-400" />
+                <span className="line-clamp-2 text-[11px] leading-snug text-amber-900 italic dark:text-amber-200">{o.customerNote}</span>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-80">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-amber-800 dark:text-amber-300">
+                  <StickyNoteIcon className="size-3.5" />
+                  Note from {o.customerName ?? "the customer"}
+                </div>
+                <p className="text-sm whitespace-pre-wrap">{o.customerNote}</p>
+                <div className="flex items-center justify-between gap-2 border-t pt-2 text-xs text-muted-foreground">
+                  <span>{o.orderNumber}</span>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => navigator.clipboard.writeText(o.customerNote ?? "").then(() => toast.success("Note copied"))}
+                  >
+                    <CopyIcon />
+                    Copy
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
+        </div>
       ),
     },
     {
@@ -371,7 +445,7 @@ export function OrdersTable({
         if (rate !== null && rate < 80) rateTone = "text-amber-700 dark:text-amber-400"
         if (rate !== null && rate < 50) rateTone = "text-destructive"
         return (
-          <div className="flex w-56 flex-col gap-0.5 whitespace-normal">
+          <div className="flex w-52 flex-col gap-0.5 whitespace-normal">
             <span className="flex items-center gap-1.5">
               <span className="truncate font-medium">{o.customerName ?? o.customerEmail}</span>
               <span className="shrink-0 rounded bg-muted px-1 text-[10px] font-semibold text-muted-foreground uppercase">{o.userId ? "Account" : "Guest"}</span>
@@ -418,33 +492,42 @@ export function OrdersTable({
         const first = o.items[0]
         if (!first) return <span className="text-muted-foreground">No items</span>
         return (
-          <span className="flex max-w-48 items-center gap-3 xl:max-w-[12.25rem]">
+          <span className="flex max-w-48 items-center gap-3 xl:max-w-[12.5rem]">
             <button
               type="button"
               onClick={() => setViewing(o)}
               aria-label={`See the ${o.items.length === 1 ? "item" : `${o.items.length} items`} in ${o.orderNumber}`}
-              className="relative shrink-0 cursor-zoom-in rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+              className="flex shrink-0 cursor-zoom-in rounded-lg outline-none hover:[&>span]:ring-primary/40 focus-visible:ring-3 focus-visible:ring-ring/50"
             >
-              <span className="grid size-11 place-items-center overflow-hidden rounded-lg border bg-muted transition-shadow hover:ring-2 hover:ring-primary/40">
-                {first.productId && images[first.productId] ? (
-                  // eslint-disable-next-line @next/next/no-img-element -- any image host is allowed
-                  <img src={images[first.productId]} alt={first.productName} className="size-full object-cover" />
-                ) : (
-                  <PackageIcon className="size-4 text-muted-foreground" />
-                )}
-              </span>
-              {o.items.length > 1 && (
-                <span className="absolute -right-1.5 -bottom-1.5 rounded-full border-2 border-card bg-foreground px-1.5 text-[10px] leading-4 font-semibold text-background">
-                  +{o.items.length - 1}
+              {/* Up to three pictures; with four or more the third tile counts the rest. */}
+              {(o.items.length > 3 ? o.items.slice(0, 2) : o.items).map((item, index) => (
+                <span
+                  key={item.id}
+                  title={item.productName}
+                  // The first item (the one named beside it) sits on top.
+                  style={{ zIndex: 3 - index }}
+                  className={cn("relative grid size-9 shrink-0 place-items-center overflow-hidden rounded-lg border bg-muted ring-2 ring-card transition-shadow", index > 0 && "-ml-3.5")}
+                >
+                  {item.productId && images[item.productId] ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- any image host is allowed
+                    <img src={images[item.productId]} alt={item.productName} className="size-full object-cover" />
+                  ) : (
+                    <PackageIcon className="size-4 text-muted-foreground" />
+                  )}
+                </span>
+              ))}
+              {o.items.length > 3 && (
+                <span className="relative -ml-3.5 grid size-9 shrink-0 place-items-center rounded-lg border bg-foreground text-xs font-semibold text-background ring-2 ring-card">
+                  +{o.items.length - 2}
                 </span>
               )}
             </button>
             <span className="flex min-w-0 flex-col">
-              <span className="truncate">
-                {first.productName}
-                {o.items.length > 1 && <span className="text-muted-foreground"> +{o.items.length - 1} more</span>}
-              </span>
-              <span className="text-[11px] text-muted-foreground">
+              <span className="truncate" title={first.productName}>{first.productName}</span>
+              <span className="truncate text-[11px] text-muted-foreground">
+                {/* Single-variant products snapshot the SKU as the variant name, so that one says nothing. */}
+                {first.variantName && first.variantName !== first.sku && <span className="font-medium text-foreground">{first.variantName} · </span>}
+                {o.items.length > 1 && `${o.items.length} items · `}
                 {n0(itemCount(o))} {itemCount(o) === 1 ? "unit" : "units"}
               </span>
             </span>
@@ -454,7 +537,7 @@ export function OrdersTable({
     },
     { key: "fulfilment", header: "Fulfilment", className: "hidden md:table-cell", cell: (o) => <Fulfilment order={o} /> },
     { key: "status", header: "Status", cell: (o) => <OrderStatusCell order={o} /> },
-    { key: "amount", header: "Amount", className: "text-right tabular-nums", cell: (o) => <Amount order={o} /> },
+    { key: "amount", header: "Amount", className: "text-right tabular-nums", cell: (o) => <Amount order={o} promotions={promotions[o.id]} /> },
     {
       key: "actions",
       header: <span className="sr-only">Actions</span>,
@@ -570,7 +653,7 @@ export function OrdersTable({
         columns={columns}
         getRowId={(o) => o.id}
         searchText={(o) =>
-          `${o.orderNumber} ${o.customerName ?? ""} ${o.customerEmail} ${o.customerPhone ?? ""} ${o.customerPhone ? localPhone(o.customerPhone) : ""} ${Object.values(addresses[o.id] ?? {}).join(" ")} ${o.items.map((i) => `${i.productName} ${i.sku}`).join(" ")}`
+          `${o.orderNumber} ${o.customerName ?? ""} ${o.customerEmail} ${o.customerPhone ?? ""} ${o.customerPhone ? localPhone(o.customerPhone) : ""} ${Object.values(addresses[o.id] ?? {}).join(" ")} ${o.items.map((i) => `${i.productName} ${i.sku}`).join(" ")} ${o.customerNote ?? ""} ${(promotions[o.id] ?? []).join(" ")}`
         }
         searchPlaceholder="Order, customer, phone, address..."
         filters={mode === "pending" ? pendingFilters : allFilters}

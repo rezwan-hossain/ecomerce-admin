@@ -34,6 +34,7 @@ export interface Order {
   customerEmail: string;
   customerName: string | null;
   customerPhone: string | null;
+  customerNote: string | null; // the list rows carry it too
   status: OrderStatus;
   currency: string;
   subtotalAmount: string;

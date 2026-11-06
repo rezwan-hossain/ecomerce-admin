@@ -426,6 +426,29 @@ export async function patchCampaign(id: string, patch: { isActive?: boolean; isF
   return res
 }
 
+// One promotion's rule, for the order page (money as numbers, like the planner).
+export async function getPromotion(id: string) {
+  return handleRequest(async () => {
+    const { data: p } = await api.get<{ data: ApiPromotion }>(`/promotions/${id}`)
+    const num = (v: string | null) => (v === null ? null : Number(v))
+    return {
+      id: p.id,
+      name: p.name,
+      description: p.description,
+      type: p.type,
+      status: p.status,
+      value: num(p.value),
+      buyQuantity: p.buyQuantity,
+      getQuantity: p.getQuantity,
+      minOrderAmount: num(p.minOrderAmount),
+      maxDiscountAmount: num(p.maxDiscountAmount),
+      startsAt: p.startsAt,
+      endsAt: p.endsAt,
+    }
+  })
+}
+export type PromotionInfo = Extract<Awaited<ReturnType<typeof getPromotion>>, { success: true }>["data"]
+
 export async function patchPromotion(id: string, patch: { isActive?: boolean }) {
   const res = await handleRequest(() => api.patch(`/promotions/${id}`, patch))
   if (res.success) revalidate()

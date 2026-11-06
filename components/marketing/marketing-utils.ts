@@ -357,7 +357,7 @@ export const affectedVariants = (catalog: Catalog, promo: Promotion) =>
   allVariants(catalog).filter(({ p, v }) => isEligible(catalog, promo, p, v.id))
 
 // The short offer printed on tags and ticket stubs: "15% off", "Buy 2 get 1", …
-export function offerText(p: Promotion) {
+export function offerText(p: Pick<Promotion, "type" | "value" | "buyQuantity" | "getQuantity">) {
   if (p.type === "PERCENTAGE") return p.value !== null ? `${p.value}% off` : "% off"
   if (p.type === "FIXED_AMOUNT") return p.value !== null ? `${money(p.value)} off` : "Amount off"
   if (p.type === "FIXED_PRICE") return p.value !== null ? `Now ${money(p.value)}` : "Fixed price"
@@ -366,7 +366,7 @@ export function offerText(p: Promotion) {
   return p.value !== null ? `${money(p.value)} off delivery` : "Delivery discount"
 }
 
-export function offerSentence(p: Promotion) {
+export function offerSentence(p: Pick<Promotion, "type" | "value" | "buyQuantity" | "getQuantity" | "maxDiscountAmount" | "minOrderAmount">) {
   let text = ""
   if (p.type === "PERCENTAGE") {
     text = `${p.value ?? "?"}% off each eligible item`

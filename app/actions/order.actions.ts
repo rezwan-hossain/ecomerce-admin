@@ -28,16 +28,23 @@ export async function getOrder(id: string) {
   return handleRequest(async () => (await api.get<{ data: OrderDetail }>(`/orders/${id}`)).data)
 }
 
-// The list rows have no addresses, so read each order's shipping address from its detail.
-export async function getShippingAddresses(ids: string[]) {
+// The list rows have no addresses or order-level promotions, so read them from each order's detail.
+export async function getListDetails(ids: string[]) {
   const details = await Promise.all(ids.map((id) => getOrder(id)))
   const addresses: Record<string, OrderAddress> = {}
+  const promotions: Record<string, string[]> = {}
   for (const d of details) {
     if (!d.success) continue
     const address = d.data.addresses.find((a) => a.type === "SHIPPING")
     if (address) addresses[d.data.id] = address
+    // Item promotions sit on each line; codes and order-wide offers in `discounts`.
+    const names = new Set([
+      ...d.data.items.flatMap((i) => (i.metadata?.appliedPromotion ? [i.metadata.appliedPromotion.name] : [])),
+      ...d.data.discounts.map((x) => x.promotionName),
+    ])
+    if (names.size > 0) promotions[d.data.id] = [...names]
   }
-  return addresses
+  return { addresses, promotions }
 }
 
 // Every write changes the order page, the lists and (ship, cancel) stock.

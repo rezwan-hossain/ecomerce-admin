@@ -1,6 +1,6 @@
 import { connection } from "next/server"
 
-import { getOrders, getShippingAddresses } from "@/app/actions/order.actions"
+import { getOrders, getListDetails } from "@/app/actions/order.actions"
 import { getProducts } from "@/app/actions/product.actions"
 import { OrdersTable } from "@/components/orders/orders-table"
 import { PageHeader } from "@/components/page-header"
@@ -10,7 +10,7 @@ export default async function OrdersPage() {
   await connection()
 
   const res = await getOrders()
-  const addresses = res.success ? await getShippingAddresses(res.data.map((o) => o.id)) : {}
+  const { addresses, promotions } = res.success ? await getListDetails(res.data.map((o) => o.id)) : { addresses: {}, promotions: {} }
   // Order items are snapshots without images, so show each product's primary image.
   const products = await getProducts()
   const images: Record<string, string> = {}
@@ -23,7 +23,7 @@ export default async function OrdersPage() {
     <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
       <PageHeader title="Orders" description="Track, fulfil and manage every order in your store." />
       {res.success ? (
-        <OrdersTable orders={res.data} addresses={addresses} images={images} />
+        <OrdersTable orders={res.data} addresses={addresses} promotions={promotions} images={images} />
       ) : (
         <p className="px-4 text-muted-foreground lg:px-6">Couldn’t load orders: {res.error}</p>
       )}
