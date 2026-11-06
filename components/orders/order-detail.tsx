@@ -8,7 +8,15 @@ import { z } from "zod"
 import { toast } from "sonner"
 import {
   ArrowLeftIcon,
+  BadgeCheckIcon,
+  BanknoteIcon,
   CheckIcon,
+  CircleCheckIcon,
+  CreditCardIcon,
+  LandmarkIcon,
+  ShoppingCartIcon,
+  SmartphoneIcon,
+  WalletIcon,
   CircleXIcon,
   CopyIcon,
   ExternalLinkIcon,
@@ -73,6 +81,20 @@ import type { PathaoDeliveryType, PathaoItemType, PathaoStore } from "@/types/pa
 // The next step on the happy path, as the backend allows it (ORDER_STATUS_TRANSITIONS).
 const STEPS: OrderStatus[] = ["PENDING", "CONFIRMED", "PROCESSING", "READY_TO_SHIP", "SHIPPED", "DELIVERED", "COMPLETED"]
 const STEP_LABEL: Partial<Record<OrderStatus, string>> = { PENDING: "Placed" }
+const TIMELINE_ICON: Partial<Record<OrderStatus, typeof PackageIcon>> = {
+  PENDING: ShoppingCartIcon,
+  CONFIRMED: CircleCheckIcon,
+  PROCESSING: PackageOpenIcon,
+  READY_TO_SHIP: PackageIcon,
+  SHIPPED: TruckIcon,
+  DELIVERED: PackageCheckIcon,
+  COMPLETED: BadgeCheckIcon,
+  CANCELLED: CircleXIcon,
+  FAILED: CircleXIcon,
+  REFUNDED: Undo2Icon,
+  RETURNED: Undo2Icon,
+  PARTIALLY_RETURNED: Undo2Icon,
+}
 const STOPPED: OrderStatus[] = ["CANCELLED", "FAILED", "REFUNDED", "RETURNED", "PARTIALLY_RETURNED"]
 const OPEN_PAYMENT = ["PENDING", "PROCESSING"]
 // Shipment, payment and refund statuses that finished well or badly; the rest are in progress.
@@ -227,6 +249,18 @@ export function OrderDetailPage({
     row.onOrder = true
     promotionRows.set(key, row)
   }
+
+  const detailRows: { label: string; value: string; hint?: string; copy?: string; mono?: boolean; title?: string }[] = [
+    { label: "Order number", value: order.orderNumber, copy: order.orderNumber, mono: true },
+    { label: "Order ID", value: `${order.id.slice(0, 8)}…${order.id.slice(-4)}`, copy: order.id, mono: true, title: order.id },
+    { label: "Checkout", value: order.userId ? "Customer account" : "Guest checkout" },
+    { label: "Currency", value: `৳ ${order.currency}` },
+    { label: "Placed", value: fmtDateTime(placedAt), hint: rel(placedAt) },
+  ]
+  if (order.completedAt) detailRows.push({ label: "Completed", value: fmtDateTime(order.completedAt), hint: `took ${duration(placedAt, order.completedAt)}` })
+  if (order.cancelledAt) detailRows.push({ label: "Cancelled", value: fmtDateTime(order.cancelledAt), hint: `after ${duration(placedAt, order.cancelledAt)}` })
+  const changes = order.statusLogs.length
+  detailRows.push({ label: "Last change", value: fmtDateTime(order.updatedAt), hint: `${rel(order.updatedAt)} · ${n0(changes)} status ${changes === 1 ? "change" : "changes"}` })
 
   const shippingAddress = order.addresses.find((a) => a.type === "SHIPPING")
   const billing = order.addresses.find((a) => a.type === "BILLING")
@@ -825,26 +859,55 @@ export function OrderDetailPage({
             )}
           </Card>
 
-          <Card title="Timeline">
+          <Card
+            title="Timeline"
+            action={
+              <span className="text-xs text-muted-foreground">
+                {n0(logs.length)} {logs.length === 1 ? "event" : "events"}
+                {logs[0] && ` since ${fmtDate(logs[0].createdAt)}`}
+              </span>
+            }
+          >
             <ol className="flex flex-col px-4 pb-4">
-              {[...logs].reverse().map((log, index) => (
-                <li key={log.id} className="relative flex gap-3 pb-4 last:pb-0">
-                  {index < logs.length - 1 && <span className="absolute top-3 left-[4.5px] h-full w-px bg-border" aria-hidden />}
-                  <span className={cn("relative mt-1.5 size-2.5 shrink-0 rounded-full", index === 0 ? "bg-primary ring-4 ring-primary/15" : "bg-muted-foreground/40")} />
-                  <div className="min-w-0 flex-1 text-sm">
-                    <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                      <span className="font-medium">
-                        {log.fromStatus ? `${ORDER_STATUS_LABEL[log.fromStatus]} → ${ORDER_STATUS_LABEL[log.toStatus]}` : "Order placed"}
-                      </span>
-                      <span className="flex items-center gap-2 text-xs text-muted-foreground">
+              {[...logs].reverse().map((log, index, newestFirst) => {
+                const Icon = TIMELINE_ICON[log.toStatus] ?? CircleCheckIcon
+                const latest = index === 0
+                const previous = newestFirst[index + 1]
+                let tone = "bg-primary/10 text-primary ring-primary/20"
+                if (log.toStatus === "DELIVERED" || log.toStatus === "COMPLETED") tone = "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:ring-emerald-900"
+                if (log.toStatus === "CANCELLED" || log.toStatus === "FAILED") tone = "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-300 dark:ring-red-900"
+                if (log.toStatus === "RETURNED" || log.toStatus === "PARTIALLY_RETURNED" || log.toStatus === "REFUNDED") tone = "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:ring-amber-900"
+                if (!latest) tone = "bg-muted text-muted-foreground ring-border"
+                return (
+                  <li key={log.id} className="relative flex gap-3 pb-5 last:pb-0">
+                    {index < newestFirst.length - 1 && <span className="absolute top-8 bottom-0 left-[15px] w-px bg-border" aria-hidden />}
+                    <span className={cn("relative grid size-8 shrink-0 place-items-center rounded-full ring-1", tone, latest && "ring-4")}>
+                      <Icon className="size-4" />
+                    </span>
+                    <div className="min-w-0 flex-1 pt-0.5 text-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <span className="font-medium">{log.fromStatus ? ORDER_STATUS_LABEL[log.toStatus] : "Order placed"}</span>
+                          {log.fromStatus && <span className="text-xs text-muted-foreground"> from {ORDER_STATUS_LABEL[log.fromStatus].toLowerCase()}</span>}
+                        </div>
+                        {/* How long this step waited on the one before it. */}
+                        {previous && (
+                          <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground tabular-nums">
+                            {new Date(log.createdAt).getTime() - new Date(previous.createdAt).getTime() < 60_000 ? "instantly" : `+${duration(previous.createdAt, log.createdAt)}`}
+                          </span>
+                        )}
+                      </div>
+                      {log.note && log.note !== "Order placed" && <p className="mt-0.5 text-muted-foreground">{log.note}</p>}
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                        <span title={fmtDateTime(log.createdAt)}>
+                          {fmtDateTime(log.createdAt)} · {rel(log.createdAt)}
+                        </span>
                         <SourceBadge source={log.source} courier={log.courier} />
-                        {fmtDateTime(log.createdAt)}
-                      </span>
+                      </div>
                     </div>
-                    {log.note && log.note !== "Order placed" && <p className="text-muted-foreground">{log.note}</p>}
-                  </div>
-                </li>
-              ))}
+                  </li>
+                )
+              })}
             </ol>
           </Card>
         </div>
@@ -930,57 +993,110 @@ export function OrderDetailPage({
             </div>
           </Card>
 
-          <Card title="Payments">
-            {order.payments.length === 0 ? (
-              <p className="px-4 pb-4 text-sm text-muted-foreground">No payment attempts.</p>
-            ) : (
-              <ul className="flex flex-col gap-2 px-4 pb-4">
-                {order.payments.map((p) => (
-                  <li key={p.id} className="flex flex-col gap-2 rounded-xl border px-3 py-2.5 text-sm">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium">
-                        {PROVIDER_LABEL[p.provider]}
-                        {label(p.method) !== PROVIDER_LABEL[p.provider] && <span className="font-normal text-muted-foreground"> · {label(p.method)}</span>}
+          <Card
+            title="Payments"
+            action={
+              <span className="text-xs text-muted-foreground tabular-nums">
+                <span className="font-medium text-foreground">{taka(paid)}</span> of {taka(total)} paid
+              </span>
+            }
+          >
+            <div className="flex flex-col gap-3 px-4 pb-4">
+              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                <div className={cn("h-full rounded-full", paid >= total ? "bg-emerald-500" : "bg-amber-500")} style={{ width: `${Math.min(100, total > 0 ? (paid / total) * 100 : 0)}%` }} />
+              </div>
+              {order.payments.length === 0 && <p className="text-sm text-muted-foreground">No payment attempts.</p>}
+              {order.payments.map((p) => {
+                const open = OPEN_PAYMENT.includes(p.status) && !stopped
+                const dead = p.status === "FAILED" || p.status === "CANCELLED"
+                let Icon = WalletIcon
+                if (p.method === "CASH_ON_DELIVERY") Icon = BanknoteIcon
+                if (p.method === "CARD") Icon = CreditCardIcon
+                if (p.method === "MOBILE_BANKING") Icon = SmartphoneIcon
+                if (p.method === "BANK_TRANSFER") Icon = LandmarkIcon
+                let iconTone = "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:ring-amber-900"
+                if (TONE[p.status] === "green") iconTone = "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:ring-emerald-900"
+                if (dead) iconTone = "bg-muted text-muted-foreground ring-border"
+                // The courier that will collect this cash, if a parcel is out.
+                const collector = p.provider === "COD" && open ? order.shipments.find((s) => !SHIPMENT_DONE.includes(s.status)) : undefined
+                return (
+                  <div key={p.id} className={cn("overflow-hidden rounded-xl border text-sm", dead && "bg-muted/30")}>
+                    <div className="flex items-start gap-3 px-3 py-3">
+                      <span className={cn("grid size-9 shrink-0 place-items-center rounded-lg ring-1", iconTone)}>
+                        <Icon className="size-4" />
                       </span>
-                      <span className="flex items-center gap-1.5">
-                        {p.metadata?.settledBy && (
-                          <SourceBadge source={p.metadata.settledBy} courier={p.metadata.settledByCourier} at={p.metadata.settledAt} userId={p.metadata.settledByUserId} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="min-w-0">
+                            <span className="block truncate font-medium">{PROVIDER_LABEL[p.provider]}</span>
+                            {label(p.method) !== PROVIDER_LABEL[p.provider] && <span className="block text-xs text-muted-foreground">{label(p.method)}</span>}
+                          </span>
+                          <Pill tone={p.status === "CANCELLED" ? "grey" : (TONE[p.status] ?? "amber")}>{PAYMENT_LABEL[p.status]}</Pill>
+                        </div>
+                        <div className={cn("mt-1 text-lg font-semibold tracking-tight tabular-nums", dead && "text-muted-foreground line-through decoration-1")}>
+                          {taka(Number(p.amount), 2)}
+                          {p.status === "PARTIALLY_PAID" && (
+                            <span className="ml-1 text-xs font-normal text-muted-foreground no-underline">collected of {taka(Number(p.metadata?.orderedAmount), 2)}</span>
+                          )}
+                        </div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+                          <span>{p.paidAt ? `Paid ${fmtDateTime(p.paidAt)}` : `Started ${fmtDateTime(p.createdAt)}`}</span>
+                          {p.metadata?.settledBy && (
+                            <SourceBadge source={p.metadata.settledBy} courier={p.metadata.settledByCourier} at={p.metadata.settledAt} userId={p.metadata.settledByUserId} />
+                          )}
+                        </div>
+                        {collector && (
+                          <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <TruckIcon className="size-3.5" />
+                            {CARRIER_LABEL[collector.carrier]} collects this on delivery
+                          </div>
                         )}
-                        <Pill tone={p.status === "CANCELLED" ? "grey" : (TONE[p.status] ?? "amber")}>{PAYMENT_LABEL[p.status]}</Pill>
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                      <span className="text-sm font-semibold text-foreground tabular-nums">
-                        {taka(Number(p.amount), 2)}
-                        {p.status === "PARTIALLY_PAID" && (
-                          <span className="font-normal text-muted-foreground"> collected of {taka(Number(p.metadata?.orderedAmount), 2)}</span>
+                        {p.failureMessage && (
+                          <div className="mt-1.5 flex items-start gap-1.5 text-xs text-destructive">
+                            <CircleXIcon className="mt-px size-3.5 shrink-0" />
+                            {p.failureMessage}
+                          </div>
                         )}
-                      </span>
-                      <span>{p.paidAt ? `Paid ${fmtDateTime(p.paidAt)}` : `Started ${fmtDateTime(p.createdAt)}`}</span>
-                    </div>
-                    {p.provider === "COD" && p.metadata?.settledBy === "MANUAL" && (
-                      <div className="flex items-start gap-1.5 rounded-lg bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-                        <TriangleAlertIcon className="mt-px size-3.5 shrink-0" />
-                        Marked by hand — check against the courier&apos;s payout.
+                        {p.provider === "COD" && p.metadata?.settledBy === "MANUAL" && (
+                          <div className="mt-2 flex items-start gap-1.5 rounded-lg bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                            <TriangleAlertIcon className="mt-px size-3.5 shrink-0" />
+                            Marked by hand — check against the courier&apos;s payout.
+                          </div>
+                        )}
                       </div>
+                    </div>
+                    {(p.transactionId || p.providerReference) && (
+                      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 border-t border-dashed bg-muted/30 px-3 py-2 text-xs">
+                        {p.transactionId && (
+                          <>
+                            <dt className="text-muted-foreground">Transaction</dt>
+                            <dd className="truncate text-right font-mono" title={p.transactionId}>{p.transactionId}</dd>
+                          </>
+                        )}
+                        {p.providerReference && (
+                          <>
+                            <dt className="text-muted-foreground">Reference</dt>
+                            <dd className="truncate text-right font-mono" title={p.providerReference}>{p.providerReference}</dd>
+                          </>
+                        )}
+                      </dl>
                     )}
-                    {p.transactionId && <div className="truncate font-mono text-xs text-muted-foreground">Txn {p.transactionId}</div>}
-                    {p.failureMessage && <div className="text-xs text-destructive">{p.failureMessage}</div>}
-                    {p.providerReference && <div className="truncate font-mono text-xs text-muted-foreground">Ref {p.providerReference}</div>}
-                    {OPEN_PAYMENT.includes(p.status) && !stopped && (
-                      <div className="grid grid-cols-2 gap-2">
-                        <Button size="sm" variant="outline" className="text-destructive" onClick={() => markFailed(p.id)} disabled={busy}>
+                    {open && (
+                      <div className="flex gap-2 border-t bg-muted/30 px-3 py-2">
+                        <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => markFailed(p.id)} disabled={busy}>
+                          <XIcon />
                           Mark failed
                         </Button>
-                        <Button size="sm" variant="outline" onClick={() => markPaid(p.id)} disabled={busy}>
+                        <Button size="sm" className="ml-auto" onClick={() => markPaid(p.id)} disabled={busy}>
+                          <CheckIcon />
                           Mark as paid
                         </Button>
                       </div>
                     )}
-                  </li>
-                ))}
-              </ul>
-            )}
+                  </div>
+                )
+              })}
+            </div>
           </Card>
 
           {(paid > 0 || order.refundRequests.length > 0) && (
@@ -1031,35 +1147,31 @@ export function OrderDetailPage({
           )}
 
           <Card title="Details">
-            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 px-4 pb-4 text-sm">
-              <dt className="text-muted-foreground">Currency</dt>
-              <dd>{order.currency}</dd>
-              <dt className="text-muted-foreground">Created</dt>
-              <dd>{fmtDateTime(order.createdAt)}</dd>
-              <dt className="text-muted-foreground">Updated</dt>
-              <dd>{fmtDateTime(order.updatedAt)}</dd>
-              {order.completedAt && (
-                <>
-                  <dt className="text-muted-foreground">Completed</dt>
-                  <dd>{fmtDateTime(order.completedAt)}</dd>
-                </>
-              )}
-              {order.cancelledAt && (
-                <>
-                  <dt className="text-muted-foreground">Cancelled</dt>
-                  <dd>{fmtDateTime(order.cancelledAt)}</dd>
-                </>
-              )}
-              <dt className="text-muted-foreground">ID</dt>
-              <dd className="flex min-w-0 items-center gap-1">
-                <span className="truncate font-mono text-xs leading-5" title={order.id}>
-                  {order.id}
-                </span>
-                <Button variant="ghost" size="icon-xs" className="shrink-0 text-muted-foreground" onClick={() => navigator.clipboard.writeText(order.id).then(() => toast.success("Order ID copied"))}>
-                  <CopyIcon />
-                  <span className="sr-only">Copy order ID</span>
-                </Button>
-              </dd>
+            <dl className="flex flex-col divide-y divide-border/60 px-4 pb-2 text-sm">
+              {detailRows.map((row) => (
+                  <div key={row.label} className="flex items-start justify-between gap-3 py-2.5">
+                    <dt className="text-muted-foreground">{row.label}</dt>
+                    <dd className="flex min-w-0 items-center gap-1 text-right">
+                      <span className="min-w-0">
+                        <span title={row.title} className={cn("block truncate font-medium", row.mono && "font-mono text-xs leading-5")}>
+                          {row.value}
+                        </span>
+                        {row.hint && <span className="block text-[11px] text-muted-foreground">{row.hint}</span>}
+                      </span>
+                      {row.copy && (
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className="-mr-1 shrink-0 text-muted-foreground"
+                          onClick={() => navigator.clipboard.writeText(row.copy ?? "").then(() => toast.success(`${row.label} copied`))}
+                        >
+                          <CopyIcon />
+                          <span className="sr-only">Copy {row.label.toLowerCase()}</span>
+                        </Button>
+                      )}
+                    </dd>
+                  </div>
+                ))}
             </dl>
           </Card>
         </div>
@@ -1796,6 +1908,21 @@ function RefundDialog({ orderId, max, onClose }: { orderId: string; max: number;
       </DialogContent>
     </Dialog>
   )
+}
+
+// "3 days", "5 hours", "12 minutes": the gap between two times, in its largest whole unit.
+function duration(from: string, to: string) {
+  const minutes = Math.max(0, Math.round((new Date(to).getTime() - new Date(from).getTime()) / 60_000))
+  let n = minutes
+  let unit = "minute"
+  if (minutes >= 60 * 24) {
+    n = Math.round(minutes / (60 * 24))
+    unit = "day"
+  } else if (minutes >= 60) {
+    n = Math.round(minutes / 60)
+    unit = "hour"
+  }
+  return `${n} ${unit}${n === 1 ? "" : "s"}`
 }
 
 function paymentPillText(p: OrderDetail["payments"][number]) {
