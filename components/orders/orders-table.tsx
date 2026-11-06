@@ -698,23 +698,49 @@ function ItemsDialog({ order, images, onClose }: { order: Order; images: Record<
   const payment = order.payments.find((p) => p.status === "PAID") ?? order.payments.at(-1)
   const paid = order.payments.filter((p) => ["PAID", "PARTIALLY_PAID", "REFUNDED", "PARTIALLY_REFUNDED"].includes(p.status)).reduce((sum, p) => sum + Number(p.amount), 0)
   const loading = Object.keys(products).length === 0 && order.items.some((i) => i.productId)
+  const shipment = order.shipments.at(-1)
+
+  // A plain picking list: "2 × Tartan Dress (M) · TARTAN-DRESS-M".
+  function copyList() {
+    const lines = order.items.map((i) => {
+      const variant = i.variantName && i.variantName !== i.sku ? ` (${i.variantName})` : ""
+      return `${i.quantity} × ${i.productName}${variant} · ${i.sku}`
+    })
+    navigator.clipboard.writeText(`${order.orderNumber}\n${lines.join("\n")}`).then(() => toast.success("Item list copied"))
+  }
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="gap-0 p-0 sm:max-w-[38rem]">
+      <DialogContent className="gap-0 p-0 sm:max-w-[42rem]">
         <DialogHeader className="gap-2 border-b px-5 pt-5 pb-4">
           <div className="flex flex-wrap items-center gap-2 pr-8">
             <DialogTitle className="font-mono text-base">{order.orderNumber}</DialogTitle>
             <StatusBadge status={ORDER_STATUS_LABEL[order.status]} />
           </div>
-          <DialogDescription className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          <DialogDescription className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
             <span className="font-medium text-foreground">{order.customerName ?? order.customerEmail}</span>
-            <span>{placedAt(placed(order))}</span>
-            <span>
-              {order.items.length} {order.items.length === 1 ? "item" : "items"} · {n0(units)} {units === 1 ? "unit" : "units"}
-            </span>
+            {order.customerPhone && <span className="font-mono">· {localPhone(order.customerPhone)}</span>}
+            <span>· {placedAt(placed(order))}</span>
           </DialogDescription>
+          {shipment && (
+            <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+              <TruckIcon className="size-3.5" />
+              <span className="font-medium text-foreground">{CARRIER_LABEL[shipment.carrier]}</span>
+              <span>· {label(shipment.status)}</span>
+              {(shipment.consignmentId ?? shipment.trackingNumber) && <span className="font-mono">· {shipment.consignmentId ?? shipment.trackingNumber}</span>}
+            </div>
+          )}
         </DialogHeader>
+
+        <div className="flex items-center justify-between border-b bg-muted/30 px-5 py-2 text-xs text-muted-foreground">
+          <span>
+            {order.items.length} {order.items.length === 1 ? "item" : "items"} · {n0(units)} {units === 1 ? "unit" : "units"}
+          </span>
+          <Button variant="ghost" size="xs" onClick={copyList}>
+            <CopyIcon />
+            Copy list
+          </Button>
+        </div>
 
         <ul className="max-h-[60vh] divide-y overflow-y-auto">
           {order.items.map((item) => {
@@ -733,7 +759,7 @@ function ItemsDialog({ order, images, onClose }: { order: Order; images: Record<
             const full = Number(item.unitPrice) * item.quantity
             const saved = full - Number(item.totalAmount)
             return (
-              <li key={item.id} className={cn("flex gap-4 px-5 py-4", item.returnedQuantity >= item.quantity && "opacity-60")}>
+              <li key={item.id} className={cn("flex items-center gap-4 px-5 py-3.5", item.returnedQuantity >= item.quantity && "opacity-60")}>
                 <span className="relative grid size-20 shrink-0 place-items-center overflow-hidden rounded-xl border bg-muted">
                   {src ? (
                     // eslint-disable-next-line @next/next/no-img-element -- any image host is allowed
@@ -743,11 +769,11 @@ function ItemsDialog({ order, images, onClose }: { order: Order; images: Record<
                   )}
                   {item.quantity > 1 && (
                     <span className="absolute top-1 right-1 grid h-5 min-w-5 place-items-center rounded-full bg-foreground px-1 text-[11px] font-bold text-background tabular-nums">
-                      {item.quantity}
+                      ×{item.quantity}
                     </span>
                   )}
                 </span>
-                <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
                   <div className="min-w-0">
                     {product?.brand && <div className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{product.brand.name}</div>}
                     {item.productId ? (
@@ -761,14 +787,15 @@ function ItemsDialog({ order, images, onClose }: { order: Order; images: Record<
                   {options.length > 0 && (
                     <span className="flex flex-wrap gap-1.5">
                       {options.map((opt) => (
-                        <span key={opt.name} className="inline-flex items-center gap-1 rounded-md border bg-muted/50 px-2 py-0.5 text-xs">
+                        <span key={opt.name} className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-px text-[11px]">
                           <span className="text-muted-foreground">{opt.name}</span>
                           <b className="font-semibold">{opt.value}</b>
                         </span>
                       ))}
                     </span>
                   )}
-                  {loading && options.length === 0 && <span className="h-5 w-24 animate-pulse rounded-md bg-muted" />}
+                  {/* Single-variant items snapshot the SKU as their name, so there's nothing to wait for. */}
+                  {loading && options.length === 0 && item.variantName !== item.sku && <span className="h-4 w-20 animate-pulse rounded-md bg-muted" />}
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
                     <span className="font-mono">{item.sku}</span>
                     {variant && (
@@ -784,9 +811,11 @@ function ItemsDialog({ order, images, onClose }: { order: Order; images: Record<
                 <div className="flex shrink-0 flex-col items-end gap-0.5 text-right tabular-nums">
                   <span className="font-semibold">{taka(Number(item.totalAmount))}</span>
                   {saved > 0 && <span className="text-xs text-muted-foreground line-through">{taka(full)}</span>}
-                  <span className="text-xs text-muted-foreground">
-                    {n0(item.quantity)} × {taka(Number(item.unitPrice))}
-                  </span>
+                  {item.quantity > 1 && (
+                    <span className="text-xs text-muted-foreground">
+                      {n0(item.quantity)} × {taka(Number(item.unitPrice))}
+                    </span>
+                  )}
                   {saved > 0 && <span className="text-[11px] font-medium text-emerald-700 dark:text-emerald-400">−{taka(saved)} off</span>}
                 </div>
               </li>
