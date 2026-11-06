@@ -20,15 +20,18 @@ import { Card, fmtDate, Kpis, label, n0, Pill, rel, taka } from "@/components/in
 import { ListTable, type ListColumn } from "@/components/list-table"
 import {
   ConfirmShipmentDialog,
+  courierFee,
   needsShipmentConfirm,
   PARTLY_DELIVERED,
   PartialDeliveryDialog,
+  PathaoMark,
   SHIPMENT_DONE,
   shipmentStatusOptions,
   TONE,
 } from "@/components/orders/order-detail"
-import { CARRIER_LABEL, ORDER_STATUS_LABEL } from "@/components/orders/orders-table"
+import { CARRIER_LABEL, ORDER_STATUS_LABEL, ShipmentTiming } from "@/components/orders/orders-table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { getReturnState } from "@/lib/orders/return-state"
 import { cn } from "@/lib/utils"
 import type { CourierCarrier, Order, Shipment, ShipmentStatus } from "@/types/order.type"
 
@@ -56,6 +59,30 @@ const isCod = (o: Order) => o.payments.some((p) => p.provider === "COD") && !o.p
 const deliveryDays = (s: Shipment) =>
   s.shippedAt && s.deliveredAt ? (new Date(s.deliveredAt).getTime() - new Date(s.shippedAt).getTime()) / DAY : null
 
+// A failed or returned parcel is dealt with once another parcel went out, the order closed, or every returned item is back.
+const CLOSED: Order["status"][] = ["COMPLETED", "DELIVERED", "REFUNDED", "CANCELLED", "RETURNED", "PARTIALLY_RETURNED"]
+function openProblem({ shipment, order }: Parcel) {
+  if (shipment.status === "RETURNED") return getReturnState(order).kind !== "none"
+  if (shipment.status !== "FAILED") return false
+  const retried = order.shipments.some((x) => x.id !== shipment.id && x.createdAt > shipment.createdAt)
+  return !retried && !CLOSED.includes(order.status)
+}
+
+// Each courier's own colour; Pathao gets its logo.
+const CARRIER_TONE: Record<CourierCarrier, string> = {
+  PATHAO: "bg-white",
+  REDX: "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300",
+  STEADFAST: "bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-300",
+  CARRYBEE: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
+}
+function CarrierMark({ carrier, className }: { carrier: CourierCarrier; className?: string }) {
+  return (
+    <span className={cn("grid size-8 shrink-0 place-items-center overflow-hidden rounded-lg border text-[11px] font-bold", CARRIER_TONE[carrier], className)}>
+      {carrier === "PATHAO" ? <PathaoMark className="size-[70%]" /> : (CARRIER_LABEL[carrier] ?? carrier).slice(0, 2).toUpperCase()}
+    </span>
+  )
+}
+
 function average(values: number[]) {
   if (values.length === 0) return null
   return values.reduce((s, v) => s + v, 0) / values.length
@@ -70,6 +97,7 @@ export function ShippingBoard({ orders, destinations }: { orders: Order[]; desti
   const [busy, setBusy] = useState<string | null>(null)
   const [confirming, setConfirming] = useState<{ parcel: Parcel; status: ShipmentStatus } | null>(null)
   const [partlyDelivering, setPartlyDelivering] = useState<Parcel | null>(null)
+  const [allAttention, setAllAttention] = useState(false)
 
   const waiting = orders.filter((o) => TO_PACK.includes(o.status) || o.status === "READY_TO_SHIP")
   const parcels: Parcel[] = orders
@@ -80,6 +108,7 @@ export function ShippingBoard({ orders, destinations }: { orders: Order[]; desti
   const delivered30 = parcels.filter((p) => p.shipment.deliveredAt && new Date(p.shipment.deliveredAt).getTime() >= since)
   const onTheRoad = parcels.filter((p) => ON_THE_ROAD.includes(p.shipment.status))
   const problems = parcels.filter((p) => PROBLEM.includes(p.shipment.status))
+  const openProblems = problems.filter(openProblem)
   const collecting = parcels.filter((p) => COLLECTING.includes(p.shipment.status) && Number(p.shipment.codAmount) > 0)
   const cashToCollect = collecting.reduce((s, p) => s + Number(p.shipment.codAmount), 0)
   const age = (iso: string) => (Date.now() - new Date(iso).getTime()) / DAY
@@ -94,7 +123,7 @@ export function ShippingBoard({ orders, destinations }: { orders: Order[]; desti
 
   // Shipping money over the last 30 days: what customers paid for delivery and what couriers charged.
   const booked30 = parcels.filter((p) => new Date(p.shipment.createdAt).getTime() >= since)
-  const courierCost = booked30.reduce((s, p) => s + Number(p.shipment.shippingAmount), 0)
+  const courierCost = booked30.reduce((s, p) => s + courierFee(p.shipment), 0)
   const charged = [...new Set(booked30.map((p) => p.order))].reduce((s, o) => s + Number(o.shippingAmount), 0)
 
   const attention: { text: string; detail: string; href: string; tone: "red" | "amber" }[] = [
@@ -110,8 +139,15 @@ export function ShippingBoard({ orders, destinations }: { orders: Order[]; desti
     ...onTheRoad
       .filter((p) => p.shipment.shippedAt && age(p.shipment.shippedAt) > 3)
       .map((p) => ({ text: `${p.order.orderNumber} on the road ${rel(p.shipment.shippedAt!).replace(" ago", "")}`, detail: `${CARRIER_LABEL[p.shipment.carrier]} · ${label(p.shipment.status)}`, href: `/orders/${p.order.id}`, tone: "amber" as const })),
-    ...problems.map((p) => ({ text: `${p.order.orderNumber} ${label(p.shipment.status).toLowerCase()}`, detail: `${CARRIER_LABEL[p.shipment.carrier]} · follow up with the customer`, href: `/orders/${p.order.id}`, tone: "red" as const })),
+    ...openProblems.map((p) => ({
+      text: `${p.order.orderNumber} ${label(p.shipment.status).toLowerCase()}`,
+      detail: p.shipment.status === "RETURNED" ? `${CARRIER_LABEL[p.shipment.carrier]} · receive the items back into stock` : `${CARRIER_LABEL[p.shipment.carrier]} · call the customer, then rebook or cancel`,
+      href: `/orders/${p.order.id}`,
+      tone: "red" as const,
+    })),
   ]
+
+  attention.sort((a, b) => (a.tone === b.tone ? 0 : a.tone === "red" ? -1 : 1))
 
   async function setStatus(p: Parcel, status: ShipmentStatus) {
     setBusy(p.shipment.id)
@@ -165,9 +201,12 @@ export function ShippingBoard({ orders, destinations }: { orders: Order[]; desti
         const s = o.shipments.at(-1)
         if (!s) return <span className="text-muted-foreground">Not booked</span>
         return (
-          <span className="flex flex-col">
-            <span className="font-medium">{CARRIER_LABEL[s.carrier] ?? s.carrier}</span>
-            <span className="font-mono text-[11px] text-muted-foreground">{s.trackingNumber ?? s.consignmentId ?? "No tracking yet"}</span>
+          <span className="flex items-center gap-2">
+            <CarrierMark carrier={s.carrier} className="size-7" />
+            <span className="flex flex-col">
+              <span className="font-medium">{CARRIER_LABEL[s.carrier] ?? s.carrier}</span>
+              <span className="font-mono text-[11px] text-muted-foreground">{s.trackingNumber ?? s.consignmentId ?? "No tracking yet"}</span>
+            </span>
           </span>
         )
       },
@@ -190,13 +229,11 @@ export function ShippingBoard({ orders, destinations }: { orders: Order[]; desti
       header: "Parcel",
       cell: ({ shipment: s }) => (
         <span className="flex items-center gap-2.5">
-          <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-[11px] font-bold text-muted-foreground">
-            {(CARRIER_LABEL[s.carrier] ?? s.carrier).slice(0, 2).toUpperCase()}
-          </span>
+          <CarrierMark carrier={s.carrier} />
           <span className="min-w-0">
             <span className="block font-medium">
               {CARRIER_LABEL[s.carrier] ?? s.carrier}
-              {s.service && <span className="font-normal text-muted-foreground"> · {s.service}</span>}
+              {s.service && <span className="ml-1.5 rounded-md bg-muted px-1.5 text-[11px] font-medium text-muted-foreground">{label(s.service)}</span>}
             </span>
             {s.trackingUrl ? (
               <a href={s.trackingUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-mono text-[11px] text-primary hover:underline">
@@ -250,16 +287,23 @@ export function ShippingBoard({ orders, destinations }: { orders: Order[]; desti
       className: "hidden text-right tabular-nums md:table-cell",
       cell: ({ shipment: s }) => (Number(s.codAmount) > 0 ? taka(Number(s.codAmount)) : <span className="text-muted-foreground">—</span>),
     },
-    { key: "charge", header: "Charge", className: "hidden text-right tabular-nums lg:table-cell", cell: ({ shipment: s }) => <span className="text-muted-foreground">{taka(Number(s.shippingAmount))}</span> },
+    {
+      key: "charge",
+      header: "Fee",
+      className: "hidden text-right tabular-nums lg:table-cell",
+      cell: ({ shipment: s }) => <span className="text-muted-foreground">{courierFee(s) > 0 ? taka(courierFee(s)) : "—"}</span>,
+    },
     {
       key: "dates",
       header: "Timeline",
       className: "hidden whitespace-nowrap xl:table-cell",
       cell: ({ shipment: s }) => (
         <span className="flex flex-col text-xs text-muted-foreground">
-          <span>Booked {fmtDate(s.createdAt)}</span>
-          {s.shippedAt && <span>Shipped {fmtDate(s.shippedAt)}</span>}
-          {s.deliveredAt && <span className="text-emerald-700 dark:text-emerald-400">Delivered {fmtDate(s.deliveredAt)}</span>}
+          <span>
+            Booked {fmtDate(s.createdAt)}
+            {s.deliveredAt && <span className="text-emerald-700 dark:text-emerald-400"> · delivered {fmtDate(s.deliveredAt)}</span>}
+          </span>
+          <ShipmentTiming shipment={s} />
         </span>
       ),
     },
@@ -283,11 +327,12 @@ export function ShippingBoard({ orders, destinations }: { orders: Order[]; desti
           { label: "On the road", value: n0(onTheRoad.length), hint: `${n0(onTheRoad.filter((p) => p.shipment.status === "OUT_FOR_DELIVERY").length)} out for delivery` },
           { label: "Delivered", value: n0(delivered30.length), hint: `last 30 days · avg ${daysText(average(delivered30.flatMap((p) => deliveryDays(p.shipment) ?? [])))}` },
           { label: "Cash to collect", value: taka(cashToCollect), hint: `on ${n0(collecting.length)} ${collecting.length === 1 ? "parcel" : "parcels"}` },
-          { label: "Problems", value: n0(problems.length), hint: "failed or returned", warn: problems.length > 0 },
+          { label: "Problems", value: n0(openProblems.length), hint: `open · ${n0(problems.length)} failed or returned in all`, warn: openProblems.length > 0 },
         ]}
       />
 
-      <section className="mx-4 lg:mx-6">
+      <section className="mx-4 flex flex-col gap-2 lg:mx-6">
+        <h2 className="text-xs font-medium text-muted-foreground">Every parcel by stage</h2>
         {/* The 1px gap over a border-colored background draws the dividers. */}
         <ol className="grid grid-cols-3 gap-px overflow-hidden rounded-2xl border bg-border md:grid-cols-6">
           {PIPELINE.map((stage, index) => {
@@ -305,10 +350,17 @@ export function ShippingBoard({ orders, destinations }: { orders: Order[]; desti
               </li>
             )
           })}
-          <li className="flex items-center gap-3 bg-red-50 px-4 py-3.5 dark:bg-red-950">
+          <li className={cn("flex items-center gap-3 px-4 py-3.5", openProblems.length > 0 ? "bg-red-50 dark:bg-red-950" : "bg-card")}>
             <div>
-              <div className="text-xs text-red-700 dark:text-red-300">Failed or returned</div>
-              <div className={cn("text-xl font-bold tabular-nums", problems.length ? "text-red-700 dark:text-red-300" : "text-muted-foreground/50")}>{n0(problems.length)}</div>
+              <div className={cn("text-xs", openProblems.length > 0 ? "text-red-700 dark:text-red-300" : "text-muted-foreground")}>Failed or returned</div>
+              <div className="flex items-baseline gap-1.5">
+                <span className={cn("text-xl font-bold tabular-nums", problems.length === 0 && "text-muted-foreground/50")}>{n0(problems.length)}</span>
+                {problems.length > 0 && (
+                  <span className={cn("text-[11px]", openProblems.length > 0 ? "font-medium text-red-700 dark:text-red-300" : "text-muted-foreground")}>
+                    {openProblems.length > 0 ? `${n0(openProblems.length)} open` : "all handled"}
+                  </span>
+                )}
+              </div>
             </div>
           </li>
         </ol>
@@ -323,7 +375,7 @@ export function ShippingBoard({ orders, destinations }: { orders: Order[]; desti
             </p>
           ) : (
             <ul className="flex flex-col">
-              {attention.slice(0, 8).map((a) => (
+              {(allAttention ? attention : attention.slice(0, 8)).map((a) => (
                 <li key={a.text}>
                   <Link href={a.href} className="flex items-center gap-3 border-t border-border/60 px-4 py-2.5 text-sm hover:bg-muted/40">
                     <TriangleAlertIcon className={cn("size-4 shrink-0", a.tone === "red" ? "text-destructive" : "text-amber-600")} />
@@ -335,7 +387,13 @@ export function ShippingBoard({ orders, destinations }: { orders: Order[]; desti
                   </Link>
                 </li>
               ))}
-              {attention.length > 8 && <li className="border-t px-4 py-2 text-xs text-muted-foreground">And {n0(attention.length - 8)} more.</li>}
+              {attention.length > 8 && (
+                <li className="border-t">
+                  <button type="button" onClick={() => setAllAttention(!allAttention)} className="w-full px-4 py-2 text-left text-xs font-medium text-primary hover:bg-muted/40">
+                    {allAttention ? "Show fewer" : `Show all ${n0(attention.length)}`}
+                  </button>
+                </li>
+              )}
             </ul>
           )}
         </Card>
@@ -401,21 +459,35 @@ export function ShippingBoard({ orders, destinations }: { orders: Order[]; desti
           const cod = mine.filter((p) => COLLECTING.includes(p.shipment.status)).reduce((s, p) => s + Number(p.shipment.codAmount ?? 0), 0)
           const success = done.length + bad > 0 ? Math.round((done.length / (done.length + bad)) * 100) : null
           return (
-            <div key={carrier} className="flex flex-col gap-3 rounded-2xl border bg-card p-4">
+            <div key={carrier} className={cn("flex flex-col gap-3 rounded-2xl border bg-card p-4", mine.length === 0 && "opacity-60")}>
               <div className="flex items-center gap-2.5">
-                <span className="grid size-9 place-items-center rounded-lg bg-primary/10 text-xs font-bold text-primary">{CARRIER_LABEL[carrier].slice(0, 2).toUpperCase()}</span>
+                <CarrierMark carrier={carrier} className="size-10 rounded-xl text-xs" />
                 <div className="min-w-0 flex-1">
                   <div className="font-semibold">{CARRIER_LABEL[carrier]}</div>
                   <div className="text-xs text-muted-foreground">
-                    {n0(mine.length)} {mine.length === 1 ? "parcel" : "parcels"}
-                    {success !== null && (
-                      <span className={cn("font-medium", success >= 90 ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")}>
-                        {" "}· {success}% delivered
-                      </span>
-                    )}
+                    {mine.length === 0 ? "No parcels yet" : `${n0(mine.length)} ${mine.length === 1 ? "parcel" : "parcels"}`}
                   </div>
                 </div>
+                {success !== null && (
+                  <span
+                    className={cn(
+                      "text-lg font-bold tabular-nums",
+                      success >= 90 && "text-emerald-700 dark:text-emerald-400",
+                      success < 90 && success >= 70 && "text-amber-700 dark:text-amber-400",
+                      success < 70 && "text-destructive"
+                    )}
+                    title={`${n0(done.length)} delivered of ${n0(done.length + bad)} that finished`}
+                  >
+                    {success}%
+                  </span>
+                )}
               </div>
+              {success !== null && (
+                <div className="flex h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden>
+                  <span className="bg-emerald-500" style={{ width: `${success}%` }} />
+                  <span className="bg-red-400" style={{ width: `${100 - success}%` }} />
+                </div>
+              )}
               <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
                 <div>
                   <dt className="text-xs text-muted-foreground">On the road</dt>
@@ -486,7 +558,8 @@ export function ShippingBoard({ orders, destinations }: { orders: Order[]; desti
           filters={[
             { label: "Active", value: "active", match: (p) => !SHIPMENT_DONE.includes(p.shipment.status) && p.shipment.status !== "FAILED" },
             { label: "Delivered", value: "delivered", match: (p) => p.shipment.status === "DELIVERED" },
-            { label: "Problems", value: "problems", match: (p) => PROBLEM.includes(p.shipment.status) },
+            { label: "Needs follow-up", value: "problems", match: openProblem },
+            { label: "Failed or returned", value: "failed", match: (p) => PROBLEM.includes(p.shipment.status) },
             { label: "All", value: "all", match: () => true },
           ]}
           emptyText="No parcels here. Book one from an order's Shipments card."

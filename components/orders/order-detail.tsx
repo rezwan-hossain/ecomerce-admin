@@ -866,10 +866,7 @@ export function OrderDetailPage({
                       <div>
                         <dt className="text-muted-foreground">Courier charge</dt>
                         <dd className="tabular-nums">
-                          {/* Pathao's fee is kept in metadata; the shipment's own charge stays 0. */}
-                          {Number(s.shippingAmount) === 0 && s.metadata?.pathaoDeliveryFee !== undefined
-                            ? taka(s.metadata.pathaoDeliveryFee, 2)
-                            : taka(Number(s.shippingAmount), 2)}
+                          {taka(courierFee(s), 2)}
                         </dd>
                       </div>
                     </dl>
@@ -1346,13 +1343,16 @@ export function OrderDetailPage({
 }
 
 // "order.at-the-sorting-hub", "At_the_Sorting_HUB" or "Pending" → "At the sorting hub"
-const pathaoText = (status: string) => {
+// What the courier charges us: Pathao reports its own fee; the shipment's amount may just copy the customer's delivery charge.
+export const courierFee = (s: Shipment) => s.metadata?.pathaoDeliveryFee ?? Number(s.shippingAmount)
+
+export const pathaoText = (status: string) => {
   const words = status.replace(/^order\./, "").replace(/[-_\s]+/g, " ").trim().toLowerCase()
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
 
 // Pathao's logo (public/couriers/pathao.png, from their GitHub avatar); the round crop hides its black corners.
-function PathaoMark({ className }: { className?: string }) {
+export function PathaoMark({ className }: { className?: string }) {
   return (
     <span aria-hidden className={cn("size-4 shrink-0 overflow-hidden rounded-full bg-white", className)}>
       {/* eslint-disable-next-line @next/next/no-img-element -- a 16px static icon */}

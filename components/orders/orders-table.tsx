@@ -309,7 +309,7 @@ const days = (from: string, to = Date.now()) => Math.max(0, Math.round((to - new
 const dayText = (n: number) => (n === 0 ? "same day" : `${n} ${n === 1 ? "day" : "days"}`)
 
 // How long the parcel took, or how long it has been out; over 3 days on the road needs a look.
-function ShipmentTiming({ shipment }: { shipment: Order["shipments"][number] }) {
+export function ShipmentTiming({ shipment }: { shipment: Order["shipments"][number] }) {
   if (shipment.status === "DELIVERED" && shipment.deliveredAt) {
     const took = days(shipment.shippedAt ?? shipment.createdAt, new Date(shipment.deliveredAt).getTime())
     return <span className="text-[11px] text-muted-foreground">{took === 0 ? "Same day" : `Took ${dayText(took)}`}</span>
