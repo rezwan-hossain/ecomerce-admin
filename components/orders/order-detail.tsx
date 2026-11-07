@@ -59,7 +59,7 @@ import {
 } from "@/app/actions/order.actions"
 import { type PromotionInfo } from "@/app/actions/marketing.actions"
 import { bookPathaoShipment, syncPathaoShipment } from "@/app/actions/pathao.actions"
-import { chip, PATHAO_DEFAULTS, PathaoMark, PathaoOptions, pathaoOptionsBody, pathaoOptionsSchema } from "@/components/courier/pathao-bulk-dialog"
+import { chip, PATHAO_DEFAULTS, PathaoMark, pathaoTip, PathaoOptions, pathaoOptionsBody, pathaoOptionsSchema } from "@/components/courier/pathao-bulk-dialog"
 import { Card, fmtDate, fmtDateTime, Kpis, label, n0, Pill, RackTag, rel, taka, type Tone, WarehouseTag } from "@/components/inventory/inventory-ui"
 import { MovementQuantity, MovementTag, movementRacks } from "@/components/inventory/movements-table"
 import { CANCELLABLE, cancelBlockedBy, hasOpenPathao, CourierLogo, liveShipment, CancelDialog, CARRIER_LABEL, FINISHED, followsShipment, localPhone, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL, PROVIDER_LABEL, RefreshButton, SourceBadge, whatsApp } from "@/components/orders/orders-table"
@@ -1438,15 +1438,6 @@ export const courierFee = (s: Shipment) => s.metadata?.pathaoDeliveryFee ?? Numb
 export const pathaoText = (status: string) => {
   const words = status.replace(/^order\./, "").replace(/[-_\s]+/g, " ").trim().toLowerCase()
   return words.charAt(0).toUpperCase() + words.slice(1)
-}
-
-// Plain-words help for the booking errors we know; anything else shows the API's own message.
-function pathaoTip(message: string) {
-  if (/storeId|PATHAO_STORE_ID/i.test(message)) return "No pickup store. Pick one with the pencil, or set PATHAO_STORE_ID in the backend's .env."
-  if (/not configured|log in to Pathao/i.test(message)) return "The backend can't sign in to Pathao. Check the PATHAO_* settings, or try later if Pathao is down."
-  if (/mobile|phone/i.test(message)) return "Fix the phone on the shipping address: Pathao needs an 11-digit number like 01712345678."
-  if (/address/i.test(message)) return "The shipping address is too short for Pathao (at least 10 characters)."
-  return null
 }
 
 // One booking attempt, logged like an SMS gateway entry: outcome, recipient, what was sent and the raw reply.
