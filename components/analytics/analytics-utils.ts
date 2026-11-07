@@ -30,7 +30,14 @@ export type SaleOrder = {
   promotions: string[]
   cod: boolean
   deliveryDays: number | null // placed → parcel delivered
+  received: number // money in: paid, partly paid or later refunded (refunds are a separate decision)
+  carrier: string | null // the latest parcel's courier
+  parcel: string | null // the latest parcel's status
+  courierFee: number // what couriers charged us for this order's parcels
 }
+
+// Same rule as the backend: these payments brought money in.
+const RECEIVED = ["PAID", "PARTIALLY_PAID", "REFUNDED", "PARTIALLY_REFUNDED"]
 
 export type SaleLine = {
   orderId: string
@@ -121,6 +128,11 @@ export function buildSalesData(
       city: details.addresses?.[o.id]?.city || null,
       promotions: details.promotions?.[o.id] ?? [],
       cod: o.payments.some((p) => p.provider === "COD"),
+      received: o.payments.filter((p) => RECEIVED.includes(p.status)).reduce((sum, p) => sum + Number(p.amount), 0),
+      carrier: o.shipments.at(-1)?.carrier ?? null,
+      parcel: o.shipments.at(-1)?.status ?? null,
+      // Pathao reports its own fee; the shipment's amount may just copy the customer's delivery charge.
+      courierFee: o.shipments.reduce((sum, sh) => sum + (sh.metadata?.pathaoDeliveryFee ?? Number(sh.shippingAmount)), 0),
       deliveryDays: deliveredAfter(o, at),
     })
   }

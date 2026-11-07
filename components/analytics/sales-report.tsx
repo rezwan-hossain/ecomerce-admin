@@ -22,6 +22,7 @@ import {
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts"
 
 import { buckets, change, periodRange, PERIODS, type Period, type SalesData, within } from "@/components/analytics/analytics-utils"
+import { SalesDetails } from "@/components/analytics/sales-details"
 import { Card, n0, taka } from "@/components/inventory/inventory-ui"
 import { PROVIDER_LABEL } from "@/components/orders/orders-table"
 import { Button } from "@/components/ui/button"
@@ -672,6 +673,8 @@ export function SalesReport({ data }: { data: SalesData }) {
           )}
         </Card>
       </div>
+
+      <SalesDetails data={data} inPeriod={inPeriod} sold={sold} lines={lines} start={start} end={end} />
 
       <Card title={`Sales by ${now.size}`} className="mx-4 lg:mx-6" action={<span className="text-xs text-muted-foreground">newest first</span>}>
         <div className="max-h-[440px] overflow-auto">
