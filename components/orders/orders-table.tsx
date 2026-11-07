@@ -7,7 +7,9 @@ import { toast } from "sonner"
 import {
   ArrowRightIcon,
   BanknoteIcon,
+  ChevronDownIcon,
   CopyIcon,
+  DownloadIcon,
   EllipsisVerticalIcon,
   EyeIcon,
   HandIcon,
@@ -30,6 +32,7 @@ import { ListTable, type ListColumn, type ListFilter } from "@/components/list-t
 import { cancelOrder, markPaymentPaid, updateOrderStatus } from "@/app/actions/order.actions"
 import { getProduct } from "@/app/actions/product.actions"
 import { StatusBadge } from "@/components/status-badge"
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import {
@@ -387,6 +390,8 @@ export function OrdersTable({
   const [sort, setSort] = useState("newest")
   const [viewing, setViewing] = useState<Order | null>(null)
   const [cancelling, setCancelling] = useState<Order | null>(null)
+  const [selected, setSelected] = useState<string[]>([])
+  const [job, setJob] = useState<BulkJob | null>(null)
 
   async function advance(o: Order) {
     const next = NEXT[o.status]!
@@ -474,7 +479,7 @@ export function OrdersTable({
         if (rate !== null && rate < 80) rateTone = "text-amber-700 dark:text-amber-400"
         if (rate !== null && rate < 50) rateTone = "text-destructive"
         return (
-          <div className="flex w-52 flex-col gap-0.5 whitespace-normal">
+          <div className="flex w-48 flex-col gap-0.5 whitespace-normal">
             <span className="flex items-center gap-1.5">
               <span className="truncate font-medium">{o.customerName ?? o.customerEmail}</span>
               <span className="shrink-0 rounded bg-muted px-1 text-[10px] font-semibold text-muted-foreground uppercase">{o.userId ? "Account" : "Guest"}</span>
@@ -521,7 +526,7 @@ export function OrdersTable({
         const first = o.items[0]
         if (!first) return <span className="text-muted-foreground">No items</span>
         return (
-          <span className="flex max-w-48 items-center gap-3 xl:max-w-[12.5rem]">
+          <span className="flex max-w-48 items-center gap-3 xl:max-w-[11.5rem]">
             <button
               type="button"
               onClick={() => setViewing(o)}
@@ -633,6 +638,137 @@ export function OrdersTable({
     },
   ]
 
+  // Bulk actions only touch the selected orders they apply to; the rest are counted as skipped.
+  const chosen = sorted.filter((o) => selected.includes(o.id))
+  const openPayment = (o: Order) => (STOPPED.includes(o.status) ? undefined : o.payments.find((p) => p.status === "PENDING" || p.status === "PROCESSING"))
+  // Next steps in workflow order, each with the selected orders it applies to.
+  const steps = Object.values(NEXT)
+    .map((next) => ({ ...next, orders: chosen.filter((o) => NEXT[o.status]?.status === next.status && !followsShipment(o, next.status)) }))
+    .filter((step) => step.orders.length > 0)
+  const payable = chosen.filter((o) => openPayment(o))
+  const cancellable = chosen.filter((o) => CANCELLABLE.includes(o.status) && !cancelBlockedBy(o))
+
+  function stepJob({ status, text, orders: list }: (typeof steps)[number]) {
+    setJob({
+      title: `${text} for ${n0(list.length)} ${list.length === 1 ? "order" : "orders"}?`,
+      description: `Each one moves to ${ORDER_STATUS_LABEL[status].toLowerCase()}.`,
+      button: text,
+      done: `moved to ${ORDER_STATUS_LABEL[status].toLowerCase()}`,
+      orders: list,
+      skipped: chosen.length - list.length,
+      run: (o) => updateOrderStatus(o.id, status),
+    })
+  }
+
+  function exportCsv() {
+    const cell = (v: string | number) => `"${String(v).replaceAll('"', '""')}"`
+    const header = ["Order", "Placed", "Customer", "Phone", "Email", "Address", "Items", "Units", "Total", "Status", "Payment"]
+    const rows = chosen.map((o) => [
+      o.orderNumber,
+      placed(o),
+      o.customerName ?? "",
+      o.customerPhone ?? "",
+      o.customerEmail,
+      addresses[o.id] ? formatAddress(addresses[o.id]) : "",
+      o.items.map((i) => `${i.quantity} × ${i.productName}`).join("; "),
+      itemCount(o),
+      Number(o.totalAmount),
+      ORDER_STATUS_LABEL[o.status],
+      o.payments.at(-1) ? PAYMENT_LABEL[o.payments.at(-1)!.status] : "",
+    ])
+    const csv = [header, ...rows].map((r) => r.map(cell).join(",")).join("\n")
+    const link = document.createElement("a")
+    link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }))
+    link.download = `orders-${new Date().toISOString().slice(0, 10)}.csv`
+    link.click()
+    URL.revokeObjectURL(link.href)
+  }
+
+  const bulkActions = (
+    <>
+      {steps.length > 0 && (
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button variant="outline" size="xs" className="bg-card" />}>
+            <StepForwardIcon />
+            Next step
+            <ChevronDownIcon />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            {steps.map((step) => (
+              <DropdownMenuItem key={step.status} onClick={() => stepJob(step)}>
+                <StepForwardIcon />
+                {step.text}
+                <span className="ml-auto text-xs text-muted-foreground tabular-nums">{n0(step.orders.length)}</span>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+      {payable.length > 0 && (
+        <Button
+          variant="outline"
+          size="xs"
+          className="bg-card"
+          onClick={() =>
+            setJob({
+              title: `Mark ${n0(payable.length)} ${payable.length === 1 ? "order" : "orders"} as paid?`,
+              description: `${taka(payable.reduce((s, o) => s + Number(openPayment(o)!.amount), 0))} in all. Check the money is in first; for cash on delivery that's the courier's payout.`,
+              button: "Mark as paid",
+              done: "marked as paid",
+              orders: payable,
+              skipped: chosen.length - payable.length,
+              run: (o) => markPaymentPaid(o.id, openPayment(o)!.id),
+            })
+          }
+        >
+          <BanknoteIcon />
+          Mark paid
+          <span className="text-muted-foreground tabular-nums">{n0(payable.length)}</span>
+        </Button>
+      )}
+      {cancellable.length > 0 && (
+        <Button
+          variant="outline"
+          size="xs"
+          className="bg-card text-destructive hover:text-destructive"
+          onClick={() =>
+            setJob({
+              title: `Cancel ${n0(cancellable.length)} ${cancellable.length === 1 ? "order" : "orders"}?`,
+              description: "Their reserved stock is released and pending cash-on-delivery payments are cancelled. This can't be undone.",
+              button: "Cancel orders",
+              done: "cancelled",
+              orders: cancellable,
+              skipped: chosen.length - cancellable.length,
+              reason: true,
+              destructive: true,
+              run: (o, reason) => cancelOrder(o.id, reason),
+            })
+          }
+        >
+          <XCircleIcon />
+          Cancel
+          <span className="tabular-nums opacity-70">{n0(cancellable.length)}</span>
+        </Button>
+      )}
+      <DropdownMenu>
+        <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" className="text-muted-foreground data-open:bg-muted" />}>
+          <EllipsisVerticalIcon />
+          <span className="sr-only">More for the selected orders</span>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-52">
+          <DropdownMenuItem onClick={() => copy(chosen.map((o) => o.orderNumber).join("\n"))}>
+            <CopyIcon />
+            Copy order numbers
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={exportCsv}>
+            <DownloadIcon />
+            Export CSV
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
+  )
+
   const kept = orders.filter((o) => !STOPPED.includes(o.status))
   const revenue = orders.filter(isPaid).reduce((sum, o) => sum + Number(o.totalAmount), 0)
   const unpaid = orders.filter(awaitingPayment)
@@ -681,6 +817,9 @@ export function OrdersTable({
         rows={sorted}
         columns={columns}
         getRowId={(o) => o.id}
+        selected={selected}
+        onSelectedChange={setSelected}
+        bulkActions={bulkActions}
         searchText={(o) =>
           `${o.orderNumber} ${o.customerName ?? ""} ${o.customerEmail} ${o.customerPhone ?? ""} ${o.customerPhone ? localPhone(o.customerPhone) : ""} ${Object.values(addresses[o.id] ?? {}).join(" ")} ${o.items.map((i) => `${i.productName} ${i.sku}`).join(" ")} ${o.customerNote ?? ""} ${(promotions[o.id] ?? []).join(" ")}`
         }
@@ -700,9 +839,89 @@ export function OrdersTable({
           </>
         }
       />
+      {job && (
+        <BulkDialog
+          job={job}
+          onClose={() => setJob(null)}
+          onDone={() => {
+            setJob(null)
+            setSelected([])
+          }}
+        />
+      )}
       {cancelling && <CancelDialog orderId={cancelling.id} orderNumber={cancelling.orderNumber} onClose={() => setCancelling(null)} />}
       {viewing && <ItemsDialog key={viewing.id} order={viewing} images={images} onClose={() => setViewing(null)} />}
     </>
+  )
+}
+
+type BulkJob = {
+  title: string
+  description: string
+  button: string
+  done: string // "{n} orders {done}"
+  orders: Order[]
+  skipped: number // selected orders this action doesn't apply to
+  reason?: boolean
+  destructive?: boolean
+  run: (o: Order, reason: string) => Promise<{ success: boolean; error?: string }>
+}
+
+// There's no bulk endpoint, so orders go one at a time; a failure doesn't stop the rest.
+function BulkDialog({ job, onClose, onDone }: { job: BulkJob; onClose: () => void; onDone: () => void }) {
+  const [reason, setReason] = useState("")
+  const [at, setAt] = useState<number | null>(null)
+  const busy = at !== null
+  const total = job.orders.length
+
+  async function start() {
+    const failed: string[] = []
+    for (const [index, o] of job.orders.entries()) {
+      setAt(index)
+      const res = await job.run(o, reason.trim())
+      if (!res.success) failed.push(`${o.orderNumber}: ${res.error}`)
+    }
+    const ok = total - failed.length
+    if (!failed.length) toast.success(`${n0(ok)} ${ok === 1 ? "order" : "orders"} ${job.done}`)
+    else {
+      const more = failed.length > 3 ? ` · +${failed.length - 3} more` : ""
+      toast.error(`${n0(ok)} of ${n0(total)} ${job.done}`, { description: failed.slice(0, 3).join(" · ") + more })
+    }
+    onDone()
+  }
+
+  return (
+    <AlertDialog open onOpenChange={(open) => !open && !busy && onClose()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{job.title}</AlertDialogTitle>
+          <AlertDialogDescription>{job.description}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="flex flex-wrap gap-1">
+          {job.orders.slice(0, 8).map((o) => (
+            <span key={o.id} className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[11px]">{o.orderNumber}</span>
+          ))}
+          {total > 8 && <span className="px-1 py-0.5 text-[11px] text-muted-foreground">+{n0(total - 8)} more</span>}
+        </div>
+        {job.skipped > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {n0(job.skipped)} of the selected {job.skipped === 1 ? "order doesn't" : "orders don't"} qualify and {job.skipped === 1 ? "is" : "are"} left out.
+          </p>
+        )}
+        {job.reason && (
+          <Field>
+            <FieldLabel htmlFor="bulk-reason">Reason</FieldLabel>
+            <Textarea id="bulk-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Shown on each order's timeline" disabled={busy} />
+          </Field>
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={busy}>Not now</AlertDialogCancel>
+          <Button variant={job.destructive ? "destructive" : "default"} onClick={start} disabled={busy || (job.reason && !reason.trim())}>
+            {busy ? `${job.button} · ${n0(at + 1)} of ${n0(total)}…` : `${job.button} (${n0(total)})`}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 

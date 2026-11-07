@@ -9,6 +9,7 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import {
   Table,
@@ -46,6 +47,9 @@ export function ListTable<T>({
   pageSize = 10,
   emptyText = "No results.",
   className = "px-4 lg:px-6",
+  selected,
+  onSelectedChange,
+  bulkActions,
 }: {
   rows: T[]
   columns: ListColumn<T>[]
@@ -57,6 +61,10 @@ export function ListTable<T>({
   pageSize?: number
   emptyText?: string
   className?: string
+  // Row selection: pass both to get a checkbox column; bulkActions replace the header while rows are selected.
+  selected?: string[]
+  onSelectedChange?: (ids: string[]) => void
+  bulkActions?: React.ReactNode
 }) {
   const [query, setQuery] = React.useState("")
   const [filter, setFilter] = React.useState(filters?.[0]?.value ?? "")
@@ -77,6 +85,30 @@ export function ListTable<T>({
     (currentPage + 1) * pageSize
   )
 
+  const selectable = !!(selected && onSelectedChange)
+  const picked = new Set(selected)
+  const pageIds = visible.map(getRowId)
+  const pagePicked = pageIds.filter((id) => picked.has(id)).length
+  const allPicked = filtered.length > 0 && filtered.every((row) => picked.has(getRowId(row)))
+
+  // Selection follows what's on screen, so changing the tab or the search starts over.
+  function clearSelection() {
+    if (selected?.length) onSelectedChange?.([])
+  }
+
+  function togglePage() {
+    if (pagePicked === pageIds.length) {
+      onSelectedChange?.(selected!.filter((id) => !pageIds.includes(id)))
+    } else {
+      onSelectedChange?.([...new Set([...selected!, ...pageIds])])
+    }
+  }
+
+  function toggleRow(id: string) {
+    if (picked.has(id)) onSelectedChange?.(selected!.filter((x) => x !== id))
+    else onSelectedChange?.([...selected!, id])
+  }
+
   return (
     <div className={`flex flex-col gap-4 ${className}`}>
       {/* Wraps instead of widening the page when the tabs and the search don't fit on one line. */}
@@ -88,6 +120,7 @@ export function ListTable<T>({
             onValueChange={(value) => {
               setFilter(value as string)
               setPage(0)
+              clearSelection()
             }}
           >
             <TabsList className="h-8 max-w-full gap-0.5 overflow-x-auto overflow-y-hidden rounded-lg p-0.5">
@@ -123,6 +156,7 @@ export function ListTable<T>({
                 onChange={(e) => {
                   setQuery(e.target.value)
                   setPage(0)
+                  clearSelection()
                 }}
                 placeholder={searchPlaceholder}
                 className="h-8 pr-8 pl-8"
@@ -134,6 +168,7 @@ export function ListTable<T>({
                   onClick={() => {
                     setQuery("")
                     setPage(0)
+                    clearSelection()
                   }}
                   className="absolute top-1/2 right-1.5 grid size-5 -translate-y-1/2 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
                 >
@@ -150,20 +185,69 @@ export function ListTable<T>({
         <Table>
           <TableHeader className="bg-muted/50">
             <TableRow className="hover:bg-transparent">
-              {columns.map((column) => (
+              {selectable && (
+                <TableHead className="w-9 pr-0 pl-4">
+                  <Checkbox
+                    checked={pageIds.length > 0 && pagePicked === pageIds.length}
+                    indeterminate={pagePicked > 0 && pagePicked < pageIds.length}
+                    onCheckedChange={togglePage}
+                    disabled={!pageIds.length}
+                    aria-label="Select this page"
+                  />
+                </TableHead>
+              )}
+              {selectable && selected!.length > 0 ? (
+                <TableHead colSpan={columns.length} className="px-3 pr-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-foreground tabular-nums">{selected!.length} selected</span>
+                    {!allPicked && pagePicked === pageIds.length && (
+                      <button
+                        type="button"
+                        onClick={() => onSelectedChange!(filtered.map(getRowId))}
+                        className="text-xs font-medium text-primary hover:underline"
+                      >
+                        Select all {filtered.length}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => onSelectedChange!([])}
+                      className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+                    >
+                      Clear
+                    </button>
+                    <div className="ml-auto flex items-center gap-1.5">{bulkActions}</div>
+                  </div>
+                </TableHead>
+              ) : (
+                columns.map((column) => (
                 <TableHead
                   key={column.key}
                   className={cn("px-3 text-xs text-muted-foreground first:pl-4 last:pr-4", column.className)}
                 >
                   {column.header}
                 </TableHead>
-              ))}
+                ))
+              )}
             </TableRow>
           </TableHeader>
           <TableBody>
             {visible.length ? (
               visible.map((row) => (
-                <TableRow key={getRowId(row)} className="border-border/60 hover:bg-muted/40">
+                <TableRow
+                  key={getRowId(row)}
+                  data-state={picked.has(getRowId(row)) ? "selected" : undefined}
+                  className="border-border/60 hover:bg-muted/40 data-[state=selected]:bg-primary/[.04]"
+                >
+                  {selectable && (
+                    <TableCell className="w-9 pr-0 pl-4">
+                      <Checkbox
+                        checked={picked.has(getRowId(row))}
+                        onCheckedChange={() => toggleRow(getRowId(row))}
+                        aria-label="Select row"
+                      />
+                    </TableCell>
+                  )}
                   {columns.map((column) => (
                     <TableCell
                       key={column.key}
@@ -177,7 +261,7 @@ export function ListTable<T>({
             ) : (
               <TableRow>
                 <TableCell
-                  colSpan={columns.length}
+                  colSpan={columns.length + (selectable ? 1 : 0)}
                   className="h-24 text-center text-muted-foreground"
                 >
                   {emptyText}
