@@ -3,7 +3,8 @@
 import Link from "next/link"
 import { useState } from "react"
 import { toast } from "sonner"
-import { ArchiveIcon, ArrowLeftIcon, BadgeCheckIcon, BoxesIcon, CheckIcon, CircleDashedIcon, PackageIcon, PencilIcon, SendIcon, StarIcon } from "lucide-react"
+import { ArchiveIcon, ArrowLeftIcon, BadgeCheckIcon, BoxesIcon, CheckIcon, ChevronDownIcon, CircleDashedIcon, CopyIcon, PackageIcon, PencilIcon, SendIcon, StarIcon } from "lucide-react"
+import { Bar, BarChart, CartesianGrid, XAxis } from "recharts"
 
 import { changeProductStatus } from "@/app/actions/product.actions"
 import { moderateReview } from "@/app/actions/review.actions"
@@ -13,6 +14,7 @@ import { HEALTH_DOT, isSellable, shelfTotals, variantHealth } from "@/components
 import { ORDER_STATUS_LABEL } from "@/components/orders/orders-table"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
+import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
 import { cn } from "@/lib/utils"
 import type { LedgerMovement, VariantStock } from "@/types/inventory.type"
 import type { Order } from "@/types/order.type"
@@ -23,6 +25,18 @@ const STATUS_LABEL = { ACTIVE: "Active", DRAFT: "Draft", ARCHIVED: "Archived" } 
 const REVIEW_TONE: Record<Review["status"], Tone> = { APPROVED: "green", PENDING: "amber", REJECTED: "red" }
 // These orders never took the stock, so they don't count as sold.
 const NOT_SOLD = ["CANCELLED", "FAILED", "REFUNDED", "RETURNED"]
+
+const WEEKS = 12
+const DAY = 86_400_000
+const chartConfig = { units: { label: "Units sold", color: "var(--chart-1)" } } satisfies ChartConfig
+
+// Monday 00:00 of the week holding this date.
+function weekStart(date: Date) {
+  const d = new Date(date)
+  d.setHours(0, 0, 0, 0)
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7))
+  return d
+}
 
 const th = "px-3 py-2 font-medium first:pl-4 last:pr-4"
 const td = "px-3 py-2.5 first:pl-4 last:pr-4"
@@ -73,6 +87,38 @@ export function ProductDetailPage({
   const sold = orderLines.filter((l) => !NOT_SOLD.includes(l.order.status))
   const unitsSold = sold.reduce((s, l) => s + l.quantity, 0)
   const revenue = sold.reduce((s, l) => s + l.total, 0)
+
+  // Units per week for the chart, and the last 30 days against the 30 before for the pace.
+  const thisWeek = weekStart(new Date())
+  const weeks = Array.from({ length: WEEKS }, (_, i) => {
+    const start = new Date(thisWeek)
+    start.setDate(start.getDate() - (WEEKS - 1 - i) * 7)
+    return { start: start.getTime(), week: start.toLocaleDateString("en-GB", { day: "numeric", month: "short" }), units: 0, revenue: 0 }
+  })
+  const now = Date.now()
+  let units30 = 0
+  let revenue30 = 0
+  let unitsBefore = 0
+  for (const l of sold) {
+    const at = new Date(l.order.placedAt ?? l.order.createdAt)
+    const week = weeks.find((w) => w.start === weekStart(at).getTime())
+    if (week) {
+      week.units += l.quantity
+      week.revenue += l.total
+    }
+    const age = now - at.getTime()
+    if (age <= 30 * DAY) {
+      units30 += l.quantity
+      revenue30 += l.total
+    } else if (age <= 60 * DAY) {
+      unitsBefore += l.quantity
+    }
+  }
+  const daysOfCover = units30 > 0 ? Math.round(totals.available / (units30 / 30)) : null
+
+  const [allMovements, setAllMovements] = useState(false)
+  const [allReviews, setAllReviews] = useState(false)
+  const [allOrders, setAllOrders] = useState(false)
 
   const approved = reviews.filter((r) => r.status === "APPROVED")
   const pending = reviews.filter((r) => r.status === "PENDING").length
@@ -235,6 +281,51 @@ export function ProductDetailPage({
 
       <div className="grid gap-4 px-4 md:gap-6 lg:px-6 xl:grid-cols-3">
         <div className="flex min-w-0 flex-col gap-4 md:gap-6 xl:col-span-2">
+          <Card title="Sales" action={<span className="text-xs text-muted-foreground">Units sold per week · last {WEEKS} weeks</span>}>
+            <div className="grid gap-4 px-4 pb-4 sm:grid-cols-[12rem_1fr]">
+              <dl className="grid grid-cols-3 gap-3 text-sm sm:grid-cols-1 sm:content-start">
+                <div>
+                  <dt className="text-xs text-muted-foreground">Last 30 days</dt>
+                  <dd className="text-xl font-bold tracking-tight tabular-nums">
+                    {n0(units30)} <span className="text-sm font-medium text-muted-foreground">{units30 === 1 ? "unit" : "units"}</span>
+                  </dd>
+                  <dd className="text-xs text-muted-foreground">
+                    {n0(unitsBefore)} in the 30 days before
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">Revenue, 30 days</dt>
+                  <dd className="text-xl font-bold tracking-tight tabular-nums">{taka(revenue30)}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">Stock lasts</dt>
+                  <dd className={cn("text-xl font-bold tracking-tight tabular-nums", daysOfCover !== null && daysOfCover < 14 && "text-amber-700 dark:text-amber-400")}>
+                    {daysOfCover === null && "—"}
+                    {daysOfCover !== null && daysOfCover > 365 && "Over a year"}
+                    {daysOfCover !== null && daysOfCover <= 365 && `${n0(daysOfCover)} days`}
+                  </dd>
+                  <dd className="text-xs text-muted-foreground">{daysOfCover === null ? "no sales in 30 days" : "at the last 30 days' pace"}</dd>
+                </div>
+              </dl>
+              <ChartContainer config={chartConfig} className="aspect-auto h-44 w-full">
+                <BarChart data={weeks} margin={{ top: 4, left: 0, right: 0, bottom: 0 }}>
+                  <CartesianGrid vertical={false} />
+                  <XAxis dataKey="week" tickLine={false} axisLine={false} tickMargin={8} interval="preserveStartEnd" minTickGap={16} fontSize={11} />
+                  <ChartTooltip
+                    cursor={{ fill: "var(--muted)" }}
+                    content={
+                      <ChartTooltipContent
+                        labelFormatter={(week) => `Week of ${week}`}
+                        formatter={(value, _name, item) => `${n0(Number(value))} units · ${taka(item.payload.revenue)}`}
+                      />
+                    }
+                  />
+                  <Bar dataKey="units" fill="var(--color-units)" radius={4} maxBarSize={24} />
+                </BarChart>
+              </ChartContainer>
+            </div>
+          </Card>
+
           <Card title="Variants" action={<span className="text-xs text-muted-foreground">Price after promotion · stock in sellable warehouses</span>}>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -279,7 +370,16 @@ export function ProductDetailPage({
                         </td>
                         <td className={cn(td, "text-right text-muted-foreground tabular-nums")}>{n0(s?.onHand ?? 0)}</td>
                         <td className={cn(td, "hidden text-right text-muted-foreground tabular-nums sm:table-cell")}>{n0(s?.reserved ?? 0)}</td>
-                        <td className={cn(td, "text-right font-semibold tabular-nums")}>{n0(s?.stock ?? 0)}</td>
+                        <td
+                          className={cn(
+                            td,
+                            "text-right font-semibold tabular-nums",
+                            (s?.stock ?? 0) <= 0 && "text-destructive",
+                            (s?.stock ?? 0) > 0 && (s?.stock ?? 0) <= v.lowStockThreshold && "text-amber-700 dark:text-amber-400"
+                          )}
+                        >
+                          {n0(s?.stock ?? 0)}
+                        </td>
                         <td className={cn(td, "hidden text-right text-muted-foreground tabular-nums md:table-cell")}>{n0(v.lowStockThreshold)}</td>
                         <td className={cn(td, "hidden text-right text-muted-foreground tabular-nums lg:table-cell")}>
                           {unitCost > 0 ? taka(unitCost, 2) : "—"}
@@ -326,16 +426,23 @@ export function ProductDetailPage({
                           </div>
                         </td>
                         <td className={cn(td, "hidden md:table-cell")}>
-                          <div className="flex flex-wrap gap-1">
-                            {[...w.racks.entries()].map(([code, qty]) => (
-                              <RackTag key={code} code={code} title={`${n0(qty)} units`} />
-                            ))}
+                          <div className="flex flex-wrap items-center gap-1">
+                            {[...w.racks.entries()].map(([code, qty]) =>
+                              // UNASSIGNED is the system catch-all for stock whose rack isn't known.
+                              code === "UNASSIGNED" ? (
+                                <span key={code} className="text-xs text-muted-foreground">
+                                  {n0(qty)} not on a rack
+                                </span>
+                              ) : (
+                                <RackTag key={code} code={code} title={`${n0(qty)} units`} />
+                              )
+                            )}
                           </div>
                         </td>
                         <td className={cn(td, "text-right text-muted-foreground tabular-nums")}>{n0(w.onHand)}</td>
                         <td className={cn(td, "hidden text-right text-muted-foreground tabular-nums sm:table-cell")}>{n0(w.reserved)}</td>
                         <td className={cn(td, "text-right font-semibold tabular-nums")}>{n0(w.available)}</td>
-                        <td className={cn(td, "hidden text-right text-muted-foreground tabular-nums sm:table-cell")}>{taka(w.value)}</td>
+                        <td className={cn(td, "hidden text-right text-muted-foreground tabular-nums sm:table-cell")}>{w.value > 0 ? taka(w.value) : "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -360,10 +467,12 @@ export function ProductDetailPage({
                     </tr>
                   </thead>
                   <tbody>
-                    {orderLines.slice(0, 10).map(({ order, items, total }) => (
+                    {orderLines.slice(0, allOrders ? undefined : 8).map(({ order, items, total }) => (
                       <tr key={order.id} className="border-t border-border/60">
                         <td className={td}>
-                          <div className="font-medium whitespace-nowrap">{order.orderNumber}</div>
+                          <Link href={`/orders/${order.id}`} className="font-medium whitespace-nowrap hover:text-primary hover:underline">
+                            {order.orderNumber}
+                          </Link>
                           <div className="text-xs text-muted-foreground">{fmtDate(order.placedAt ?? order.createdAt)}</div>
                         </td>
                         <td className={cn(td, "hidden max-w-56 md:table-cell")}>
@@ -385,6 +494,7 @@ export function ProductDetailPage({
                     ))}
                   </tbody>
                 </table>
+                <ShowAll open={allOrders} total={orders.length} shown={8} onToggle={() => setAllOrders(!allOrders)} />
               </div>
             )}
           </Card>
@@ -413,7 +523,7 @@ export function ProductDetailPage({
                     </tr>
                   </thead>
                   <tbody>
-                    {movements.map((m) => {
+                    {movements.slice(0, allMovements ? undefined : 8).map((m) => {
                       const change = m.onHandAfter - m.onHandBefore
                       return (
                         <tr key={m.id} className="border-t border-border/60">
@@ -424,7 +534,9 @@ export function ProductDetailPage({
                             <MovementTag movement={m} />
                           </td>
                           <td className={cn(td, "hidden font-mono text-xs text-muted-foreground md:table-cell")}>{m.inventoryLevel.variant.sku}</td>
-                          <td className={cn(td, "hidden text-muted-foreground sm:table-cell")}>{m.inventoryLevel.warehouse.code}</td>
+                          <td className={cn(td, "hidden sm:table-cell")}>
+                            <WarehouseTag code={m.inventoryLevel.warehouse.code} />
+                          </td>
                           <td
                             className={cn(
                               td,
@@ -443,9 +555,11 @@ export function ProductDetailPage({
                     })}
                   </tbody>
                 </table>
+                <ShowAll open={allMovements} total={movements.length} shown={8} onToggle={() => setAllMovements(!allMovements)} />
               </div>
             )}
           </Card>
+
           <Card title="Reviews" action={pending > 0 && <Pill tone="amber">{pending} pending</Pill>}>
             {reviews.length === 0 ? (
               <p className="px-4 pb-4 text-sm text-muted-foreground">No reviews yet.</p>
@@ -454,7 +568,8 @@ export function ProductDetailPage({
                 <div className="flex items-center gap-4">
                   <div className="text-center">
                     <div className="text-3xl font-bold tracking-tight">{approved.length ? rating.toFixed(1) : "—"}</div>
-                    <div className="text-xs text-muted-foreground">{approved.length} approved</div>
+                    <Stars rating={Math.round(rating)} />
+                    <div className="mt-0.5 text-xs text-muted-foreground">{approved.length} live</div>
                   </div>
                   <div className="flex flex-1 flex-col gap-1">
                     {[5, 4, 3, 2, 1].map((star) => {
@@ -475,19 +590,29 @@ export function ProductDetailPage({
                   {[...reviews]
                     // Pending ones first: they need a decision.
                     .sort((a, b) => Number(b.status === "PENDING") - Number(a.status === "PENDING") || b.createdAt.localeCompare(a.createdAt))
-                    .slice(0, 6)
-                    .map((r) => (
-                      <li key={r.id} className="flex flex-col gap-1 py-3 first:pt-0 last:pb-0">
-                        <div className="flex items-center gap-2">
-                          <span className="flex text-amber-500" aria-label={`${r.rating} of 5 stars`}>
-                            {[1, 2, 3, 4, 5].map((star) => (
-                              <StarIcon key={star} className={cn("size-3.5", star <= r.rating ? "fill-current" : "text-muted-foreground/40")} />
-                            ))}
-                          </span>
-                          {r.status !== "APPROVED" && <Pill tone={REVIEW_TONE[r.status]}>{r.status === "PENDING" ? "Pending" : "Rejected"}</Pill>}
+                    .slice(0, allReviews ? undefined : 4)
+                    .map((r) => {
+                      const author = [r.user?.firstName, r.user?.lastName].filter(Boolean).join(" ") || "Anonymous"
+                      return (
+                      <li key={r.id} className={cn("flex gap-3 py-3 first:pt-0 last:pb-0", r.status === "PENDING" && "-mx-2 rounded-lg bg-amber-500/[.06] px-2 first:pt-3")}>
+                        <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-xs font-semibold text-muted-foreground uppercase">
+                          {author.split(" ").map((w) => w[0]).join("").slice(0, 2)}
+                        </span>
+                        <div className="flex min-w-0 flex-1 flex-col gap-1">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span className="text-sm font-medium">{author}</span>
+                          {r.isVerifiedPurchase && (
+                            <span className="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400">
+                              <BadgeCheckIcon className="size-3.5" /> Verified buyer
+                            </span>
+                          )}
+                          {r.status !== "APPROVED" && <Pill tone={REVIEW_TONE[r.status]}>{r.status === "PENDING" ? "Pending" : "Hidden"}</Pill>}
                           <span className="ml-auto text-xs text-muted-foreground">{fmtDate(r.createdAt)}</span>
                         </div>
-                        {r.title && <p className="text-sm font-medium">{r.title}</p>}
+                        <div className="flex items-center gap-2">
+                          <Stars rating={r.rating} />
+                          {r.title && <p className="text-sm font-medium">{r.title}</p>}
+                        </div>
                         {r.body && <p className="text-sm text-muted-foreground">{r.body}</p>}
                         {r.status === "PENDING" && (
                           <div className="mt-1 flex gap-2">
@@ -500,23 +625,49 @@ export function ProductDetailPage({
                             </Button>
                           </div>
                         )}
-                        <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                          {[r.user?.firstName, r.user?.lastName].filter(Boolean).join(" ") || "Anonymous"}
-                          {r.isVerifiedPurchase && (
-                            <>
-                              <BadgeCheckIcon className="size-3.5 text-emerald-600" /> Verified purchase
-                            </>
-                          )}
-                        </p>
+                        </div>
                       </li>
-                    ))}
+                      )
+                    })}
                 </ul>
+                <ShowAll open={allReviews} total={reviews.length} shown={4} onToggle={() => setAllReviews(!allReviews)} />
               </div>
             )}
           </Card>
         </div>
 
         <div className="flex min-w-0 flex-col gap-4 md:gap-6">
+          <Card title="Media" action={<span className="text-xs text-muted-foreground">{imageIndex + 1} of {images.length}{image?.isPrimary && " · main"}</span>}>
+            <div className="flex flex-col gap-2 px-4 pb-4">
+              <div className="grid aspect-square place-items-center overflow-hidden rounded-xl bg-muted/60 text-muted-foreground">
+                {image ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- any image host is allowed
+                  <img src={image.url} alt={image.altText ?? ""} className="size-full object-contain" />
+                ) : (
+                  <PackageIcon className="size-8" />
+                )}
+              </div>
+              {images.length > 1 && (
+                <div className="grid grid-cols-6 gap-2">
+                  {images.map((img, index) => (
+                    <button
+                      key={img.id}
+                      type="button"
+                      onClick={() => setImageIndex(index)}
+                      className={cn(
+                        "aspect-square overflow-hidden rounded-lg border bg-muted/60",
+                        index === imageIndex && "ring-2 ring-primary ring-offset-1 ring-offset-card"
+                      )}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element -- any image host is allowed */}
+                      <img src={img.url} alt={img.altText ?? ""} className="size-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Card>
+
           <Card title="Listing health" action={<Pill tone={passed === checks.length ? "green" : "amber"}>{passed} of {checks.length}</Pill>}>
             <div className="px-4 pb-4">
               <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-muted">
@@ -545,37 +696,6 @@ export function ProductDetailPage({
                   <PencilIcon />
                   Fix in Edit product
                 </Button>
-              )}
-            </div>
-          </Card>
-
-          <Card title="Media" action={<span className="text-xs text-muted-foreground">{images.length} images</span>}>
-            <div className="flex flex-col gap-2 px-4 pb-4">
-              <div className="grid aspect-square place-items-center overflow-hidden rounded-xl border bg-muted/60 text-muted-foreground">
-                {image ? (
-                  // eslint-disable-next-line @next/next/no-img-element -- any image host is allowed
-                  <img src={image.url} alt={image.altText ?? ""} className="size-full object-contain" />
-                ) : (
-                  <PackageIcon className="size-8" />
-                )}
-              </div>
-              {images.length > 1 && (
-                <div className="grid grid-cols-5 gap-2">
-                  {images.map((img, index) => (
-                    <button
-                      key={img.id}
-                      type="button"
-                      onClick={() => setImageIndex(index)}
-                      className={cn(
-                        "aspect-square overflow-hidden rounded-lg border bg-muted/60",
-                        index === imageIndex && "ring-2 ring-primary ring-offset-1 ring-offset-card"
-                      )}
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element -- any image host is allowed */}
-                      <img src={img.url} alt={img.altText ?? ""} className="size-full object-cover" />
-                    </button>
-                  ))}
-                </div>
               )}
             </div>
           </Card>
@@ -681,7 +801,10 @@ export function ProductDetailPage({
           <Card title="Details">
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 px-4 pb-4 text-sm">
               <dt className="text-muted-foreground">Slug</dt>
-              <dd className="truncate font-mono text-xs leading-5">{product.slug}</dd>
+              <dd className="flex min-w-0 items-center gap-1">
+                <span className="truncate font-mono text-xs leading-5">{product.slug}</span>
+                <CopyButton text={product.slug} what="Slug" />
+              </dd>
               <dt className="text-muted-foreground">Storefront</dt>
               <dd>{product.isActive && product.status === "ACTIVE" ? "Visible" : "Hidden"}</dd>
               <dt className="text-muted-foreground">Created</dt>
@@ -695,13 +818,55 @@ export function ProductDetailPage({
               <dt className="text-muted-foreground">Last review</dt>
               <dd>{lastReview ? fmtDate(lastReview) : "None"}</dd>
               <dt className="text-muted-foreground">ID</dt>
-              <dd className="truncate font-mono text-xs leading-5" title={product.id}>
-                {product.id}
+              <dd className="flex min-w-0 items-center gap-1">
+                <span className="truncate font-mono text-xs leading-5" title={product.id}>
+                  {product.id}
+                </span>
+                <CopyButton text={product.id} what="Product ID" />
               </dd>
             </dl>
           </Card>
         </div>
       </div>
     </div>
+  )
+}
+
+function Stars({ rating }: { rating: number }) {
+  return (
+    <span className="flex text-amber-500" aria-label={`${rating} of 5 stars`}>
+      {[1, 2, 3, 4, 5].map((star) => (
+        <StarIcon key={star} className={cn("size-3.5", star <= rating ? "fill-current" : "text-muted-foreground/40")} />
+      ))}
+    </span>
+  )
+}
+
+// The footer of a capped list.
+function ShowAll({ open, total, shown, onToggle }: { open: boolean; total: number; shown: number; onToggle: () => void }) {
+  if (total <= shown) return null
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="flex w-full items-center justify-center gap-1 border-t border-border/60 py-2.5 text-xs font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+    >
+      {open ? "Show less" : `Show all ${n0(total)}`}
+      <ChevronDownIcon className={cn("size-3.5 transition-transform", open && "rotate-180")} />
+    </button>
+  )
+}
+
+function CopyButton({ text, what }: { text: string; what: string }) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      className="size-5 shrink-0 text-muted-foreground"
+      onClick={() => navigator.clipboard.writeText(text).then(() => toast.success(`${what} copied`))}
+      aria-label={`Copy ${what.toLowerCase()}`}
+    >
+      <CopyIcon className="size-3" />
+    </Button>
   )
 }
