@@ -23,6 +23,7 @@ import {
   CopyIcon,
   ExternalLinkIcon,
   FileTextIcon,
+  LockIcon,
   MailIcon,
   MinusIcon,
   MapPinIcon,
@@ -62,7 +63,7 @@ import { type PromotionInfo } from "@/app/actions/marketing.actions"
 import { bookPathaoShipment, getPathaoStores, syncPathaoShipment } from "@/app/actions/pathao.actions"
 import { Card, fmtDate, fmtDateTime, Kpis, label, n0, Pill, RackTag, rel, taka, type Tone, WarehouseTag } from "@/components/inventory/inventory-ui"
 import { MovementQuantity, MovementTag, movementRacks } from "@/components/inventory/movements-table"
-import { CANCELLABLE, cancelBlockedBy, CancelDialog, CARRIER_LABEL, FINISHED, followsShipment, localPhone, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL, PROVIDER_LABEL, RefreshButton, SourceBadge, whatsApp } from "@/components/orders/orders-table"
+import { CANCELLABLE, cancelBlockedBy, liveShipment, CancelDialog, CARRIER_LABEL, FINISHED, followsShipment, localPhone, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL, PROVIDER_LABEL, RefreshButton, SourceBadge, whatsApp } from "@/components/orders/orders-table"
 import { offerSentence, offerText } from "@/components/marketing/marketing-utils"
 import { PrintInvoice } from "@/components/orders/print-invoice"
 import { StatusBadge } from "@/components/status-badge"
@@ -245,6 +246,8 @@ export function OrderDetailPage({
   const [confirming, setConfirming] = useState<{ shipmentId: string; status: ShipmentStatus } | null>(null)
   const [partlyDelivering, setPartlyDelivering] = useState<string | null>(null)
   const [markingCancelled, setMarkingCancelled] = useState<Shipment | null>(null)
+  const [editingAddress, setEditingAddress] = useState<OrderAddress | null>(null)
+  const [readdressed, setReaddressed] = useState(false)
 
   const next = NEXT[order.status]
   const stopped = STOPPED.includes(order.status)
@@ -273,6 +276,12 @@ export function OrderDetailPage({
   const reachedAt = new Map(logs.map((l) => [l.toStatus, l.createdAt]))
   const lastLog = logs.at(-1)
   const canShip = ["CONFIRMED", "PROCESSING", "READY_TO_SHIP"].includes(order.status)
+  // Addresses can change until the order ships; the shipping one not while a courier holds the parcel with the old one.
+  const addressEditable = CANCELLABLE.includes(order.status)
+  const booked = liveShipment(order)
+  const shippingLocked = booked
+    ? `Booked with ${CARRIER_LABEL[booked.carrier]}${booked.consignmentId ? ` (${booked.consignmentId})` : ""}. Cancel the parcel first, then change the address and book again.`
+    : undefined
   // The backend refuses a second Pathao parcel while one is still on the way.
   const hasOpenPathao = order.shipments.some((s) => s.carrier === "PATHAO" && !SHIPMENT_DONE.includes(s.status) && s.status !== "FAILED")
   const payment = order.payments.find((p) => p.status === "PAID") ?? order.payments.at(-1)
@@ -1085,17 +1094,53 @@ export function OrderDetailPage({
           <Card title="Addresses">
             <div className="flex flex-col gap-3 px-4 pb-4">
               <div className="rounded-xl border p-3">
-                <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                  <TruckIcon className="size-3.5" />
-                  Ship to
+                <div className="mb-2 flex items-center justify-between gap-1.5 text-xs font-medium text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
+                    <TruckIcon className="size-3.5" />
+                    Ship to
+                  </span>
+                  {shippingAddress && addressEditable && (
+                    // A disabled button gets no hover, so the hint sits on the wrapper.
+                    <span title={shippingLocked}>
+                      <Button size="xs" variant="ghost" className="text-primary hover:text-primary" onClick={() => setEditingAddress(shippingAddress)} disabled={!!shippingLocked}>
+                        <PencilIcon />
+                        Edit
+                      </Button>
+                    </span>
+                  )}
                 </div>
                 {shippingAddress ? <Address address={shippingAddress} customerPhone={order.customerPhone} shipping /> : <p className="text-sm text-muted-foreground">None given.</p>}
+                {shippingLocked && addressEditable && (
+                  <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-muted/60 px-2 py-1.5 text-[11px] text-muted-foreground">
+                    <LockIcon className="mt-px size-3 shrink-0" />
+                    {shippingLocked}
+                  </p>
+                )}
+                {readdressed && canShip && !hasOpenPathao && !liveShipment(order) && (
+                  <div className="mt-2 flex items-center gap-2 rounded-lg bg-primary/10 px-2.5 py-2 text-xs">
+                    <CircleCheckIcon className="size-3.5 shrink-0 text-primary" />
+                    <span className="flex-1">Address changed. Book with Pathao again?</span>
+                    <Button size="xs" onClick={() => setBookingPathao(true)}>
+                      <PathaoMark />
+                      Book
+                    </Button>
+                  </div>
+                )}
               </div>
               {billingAddress ? (
                 <div className="rounded-xl border p-3">
-                  <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                    <ReceiptIcon className="size-3.5" />
-                    Bill to
+                  <div className="mb-2 flex items-center justify-between gap-1.5 text-xs font-medium text-muted-foreground">
+                    <span className="flex items-center gap-1.5">
+                      <ReceiptIcon className="size-3.5" />
+                      Bill to
+                    </span>
+                    {/* The courier never sees billing, so a live parcel doesn't lock it. */}
+                    {addressEditable && (
+                      <Button size="xs" variant="ghost" className="text-primary hover:text-primary" onClick={() => setEditingAddress(billingAddress)}>
+                        <PencilIcon />
+                        Edit
+                      </Button>
+                    )}
                   </div>
                   <Address address={billingAddress} customerPhone={order.customerPhone} />
                 </div>
@@ -1294,6 +1339,17 @@ export function OrderDetailPage({
 
       <PrintInvoice order={order} />
       {cancelling && <CancelDialog orderId={order.id} orderNumber={order.orderNumber} onClose={() => setCancelling(false)} />}
+      {editingAddress && (
+        <AddressDialog
+          orderId={order.id}
+          address={editingAddress}
+          onClose={() => setEditingAddress(null)}
+          onSaved={() => {
+            // Only worth rebooking when an earlier parcel was cancelled for the old address.
+            if (editingAddress.type === "SHIPPING" && order.shipments.some((s) => s.status === "CANCELLED")) setReaddressed(true)
+          }}
+        />
+      )}
       {bookingPathao && <PathaoDialog order={order} due={Math.max(0, due)} onClose={() => setBookingPathao(false)} />}
       {shipping && (
         <ShipmentDialog orderId={order.id} orderNumber={order.orderNumber} codAmount={codOpen ? due : 0} onClose={() => setShipping(false)} />
@@ -1518,6 +1574,81 @@ const sameAs = (value: string) => (value === ALL ? undefined : Number(value))
 
 type AddressForm = { fullName: string; phone: string; city: string; thana: string; fullAddress: string }
 
+// Edits a shipping or billing address; only changed fields are sent.
+function AddressDialog({ orderId, address, onClose, onSaved }: { orderId: string; address: OrderAddress; onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState<AddressForm>({ fullName: address.fullName, phone: address.phone, city: address.city, thana: address.thana, fullAddress: address.fullAddress })
+  const [error, setError] = useState("")
+  const [saving, setSaving] = useState(false)
+  const shipping = address.type === "SHIPPING"
+
+  async function save() {
+    const next = Object.fromEntries(Object.entries(form).map(([k, v]) => [k, v.trim()])) as AddressForm
+    if (!next.fullName || !next.phone || !next.city || !next.thana) return setError("Full name, phone, district and thana are required.")
+    if (next.fullAddress.length < 10) return setError("The full address needs at least 10 characters.")
+    const changes: Partial<OrderAddressBody> = {}
+    for (const key of ["fullName", "phone", "city", "thana", "fullAddress"] as const) {
+      if (next[key] !== address[key]) changes[key] = next[key]
+    }
+    if (Object.keys(changes).length === 0) return onClose()
+    setSaving(true)
+    const res = await updateOrderAddress(orderId, address.type, changes)
+    setSaving(false)
+    if (!res.success) {
+      // Refused (e.g. a parcel was booked from another tab): keep the dialog and what was typed.
+      toast.error("Address not changed", { description: res.error })
+      return setError(res.error)
+    }
+    toast.success(shipping ? "Shipping address updated" : "Billing address updated")
+    onSaved()
+    onClose()
+  }
+
+  const field = (key: keyof AddressForm) => ({ value: form[key], onChange: (e: { target: { value: string } }) => setForm({ ...form, [key]: e.target.value }) })
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{shipping ? "Edit shipping address" : "Edit billing address"}</DialogTitle>
+          <DialogDescription>{shipping ? "Where the courier delivers. A new booking carries this address." : "Printed on the invoice; couriers never see it."}</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field>
+            <FieldLabel htmlFor="ad-name">Full name</FieldLabel>
+            <Input id="ad-name" maxLength={200} {...field("fullName")} />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="ad-phone">Phone</FieldLabel>
+            <Input id="ad-phone" maxLength={30} inputMode="tel" placeholder="01712345678" className="font-mono" {...field("phone")} />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="ad-city">District</FieldLabel>
+            <Input id="ad-city" maxLength={100} placeholder="Dhaka" {...field("city")} />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="ad-thana">Thana</FieldLabel>
+            <Input id="ad-thana" maxLength={100} placeholder="Mirpur 6" {...field("thana")} />
+          </Field>
+          <Field className="sm:col-span-2">
+            <FieldLabel htmlFor="ad-full">Full address</FieldLabel>
+            <Textarea id="ad-full" maxLength={255} placeholder="House 32, Road 8, Block H, Mirpur 2" className="min-h-16" {...field("fullAddress")} />
+            <span className="text-right text-[11px] text-muted-foreground tabular-nums">{form.fullAddress.length}/255</span>
+          </Field>
+        </div>
+        {shipping && <p className="text-xs text-muted-foreground">Pathao gets: {pathaoAddress(form) || "—"}</p>}
+        <DialogFooter className="items-center">
+          {error && <p className="mr-auto text-sm text-destructive">{error}</p>}
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={saving}>
+            {saving ? "Saving..." : "Save address"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // The checks Pathao runs before taking a parcel (backend pathao-recipient.ts), so problems show before booking.
 function pathaoProblems(a: AddressForm, customerName: string | null, customerPhone: string | null) {
   const problems: string[] = []
@@ -1581,7 +1712,11 @@ function PathaoDialog({ order, due, onClose }: { order: OrderDetail; due: number
     // The order page reloads with the saved address, which this dialog then shows.
     const res = await updateOrderAddress(order.id, "SHIPPING", changes)
     setSavingAddress(false)
-    if (!res.success) return setAddressError(res.error)
+    if (!res.success) {
+      // A 409 means a parcel was booked meanwhile (another tab); keep the form so nothing typed is lost.
+      toast.error("Address not changed", { description: res.error })
+      return setAddressError(res.error)
+    }
     toast.success("Shipping address updated")
     setAddressForm(null)
   }
@@ -1747,7 +1882,7 @@ function PathaoDialog({ order, due, onClose }: { order: OrderDetail; due: number
                     <p key={p} className="mt-1 text-xs text-amber-700 dark:text-amber-400">{p}</p>
                   ))}
                 </div>
-                <Button size="sm" variant="ghost" className="shrink-0 text-primary hover:text-primary" onClick={editAddress}>
+                <Button size="sm" variant="ghost" className="shrink-0 text-primary hover:text-primary" onClick={editAddress} disabled={!!liveShipment(order)} title={liveShipment(order) ? "Cancel the booked parcel first" : undefined}>
                   <PencilIcon />
                   Edit
                 </Button>

@@ -145,8 +145,10 @@ export const followsShipment = (o: Pick<Order, "shipments">, status: OrderStatus
 export const CANCELLABLE: OrderStatus[] = ["PENDING", "CONFIRMED", "PROCESSING", "READY_TO_SHIP"]
 // A parcel still with the courier; the backend won't cancel the order until it's cancelled there.
 const LIVE_SHIPMENT: ShipmentStatus[] = ["PENDING", "PROCESSING", "SHIPPED", "IN_TRANSIT", "OUT_FOR_DELIVERY"]
+// The parcel the courier still has; while there is one, the order can't be cancelled or re-addressed.
+export const liveShipment = (o: Pick<Order, "shipments">) => o.shipments.find((x) => LIVE_SHIPMENT.includes(x.status))
 export function cancelBlockedBy(o: Pick<Order, "shipments">) {
-  const s = o.shipments.find((x) => LIVE_SHIPMENT.includes(x.status))
+  const s = liveShipment(o)
   if (!s) return undefined
   return `Cancel the ${CARRIER_LABEL[s.carrier]} parcel ${s.consignmentId ?? s.trackingNumber ?? ""} first`.replace(/\s+first$/, " first")
 }
