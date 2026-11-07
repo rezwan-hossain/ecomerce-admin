@@ -8,6 +8,10 @@ import {
   BanknoteIcon,
   CalendarIcon,
   CrownIcon,
+  WalletIcon,
+  Undo2Icon,
+  ListChecksIcon,
+  CoinsIcon,
   DownloadIcon,
   MapPinIcon,
   MinusIcon,
@@ -31,6 +35,13 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+// Parts of the day over the heatmap's hours: [from, to).
+const DAY_PARTS = [
+  { label: "Night", from: 0, to: 6 },
+  { label: "Morning", from: 6, to: 12 },
+  { label: "Afternoon", from: 12, to: 17 },
+  { label: "Evening", from: 17, to: 24 },
+]
 const WEEKDAY_NAMES = ["Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays", "Sundays"]
 
 // "৳1.2L" style for axis ticks and tight spots; full amounts everywhere else.
@@ -149,6 +160,7 @@ const ordersConfig = { orders: { label: "Orders", color: "var(--chart-1)" } } sa
 export function SalesReport({ data }: { data: SalesData }) {
   const [period, setPeriod] = useState<Period>("90d")
   const [metric, setMetric] = useState<Metric>("net")
+  const [heatBy, setHeatBy] = useState<"orders" | "sales">("orders")
   const firstAt = data.orders.reduce<string | undefined>((first, o) => (!first || o.at < first ? o.at : first), undefined)
   const { start, end, previousStart } = periodRange(period, firstAt)
   const periodLabel = PERIODS.find((p) => p.value === period)!.label.toLowerCase()
@@ -268,9 +280,11 @@ export function SalesReport({ data }: { data: SalesData }) {
 
   // ── When people order: weekday × hour ────────────────
   const heat = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0))
+  const heatSales = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0))
   for (const o of sold) {
     const d = new Date(o.at)
     heat[(d.getDay() + 6) % 7][d.getHours()] += 1
+    heatSales[(d.getDay() + 6) % 7][d.getHours()] += netOf(o)
   }
   const heatMax = Math.max(1, ...heat.flat())
   const weekdayTotals = heat.map((row) => row.reduce((s, v) => s + v, 0))
@@ -278,6 +292,17 @@ export function SalesReport({ data }: { data: SalesData }) {
   const hourTotals = Array.from({ length: 24 }, (_, h) => heat.reduce((s, row) => s + row[h], 0))
   const busiestHour = hourTotals.indexOf(Math.max(...hourTotals))
   const hourText = (h: number) => `${h % 12 === 0 ? 12 : h % 12}${h < 12 ? "am" : "pm"}`
+  // The grid shows orders or sales; the same totals feed the row and column edges.
+  const shown = heatBy === "orders" ? heat : heatSales
+  const shownMax = Math.max(1, ...shown.flat())
+  const shownRows = shown.map((row) => row.reduce((s, v) => s + v, 0))
+  const shownHours = Array.from({ length: 24 }, (_, h) => shown.reduce((s, row) => s + row[h], 0))
+  const shownTotal = shownRows.reduce((s, v) => s + v, 0)
+  const shownText = (v: number) => (heatBy === "orders" ? n0(v) : short(v))
+  let peak = { d: 0, h: 0, v: 0 }
+  shown.forEach((row, d) => row.forEach((v, h) => v > peak.v && (peak = { d, h, v })))
+  const bands = DAY_PARTS.map((b) => ({ ...b, value: shownHours.slice(b.from, b.to).reduce((s, v) => s + v, 0) }))
+  const bestBand = bands.reduce((best, b) => (b.value > best.value ? b : best), bands[0])
   const heatColor = (share: number) => `color-mix(in oklab, var(--chart-1) ${Math.round(20 + share * 80)}%, transparent)`
 
   // ── Breakdowns ─────────────────────────────────
@@ -483,57 +508,106 @@ export function SalesReport({ data }: { data: SalesData }) {
       </div>
 
       <div className="grid items-start gap-4 px-4 md:gap-6 lg:px-6 xl:grid-cols-3">
-        <Card title="From gross to net" className="xl:col-span-2" action={<span className="text-xs text-muted-foreground">where every taka went</span>}>
-          <div className="flex flex-col gap-2.5 px-4 pb-4">
-            {[
-              { label: "Gross sales", value: gross, offset: 0, tone: "bg-chart-1", sign: "" },
-              { label: "Discounts", value: discounts, offset: gross - discounts, tone: "bg-amber-400", sign: "−" },
-              { label: "Returns", value: returns, offset: gross - discounts - returns, tone: "bg-red-400", sign: "−" },
-              { label: "Net sales", value: net, offset: 0, tone: "bg-emerald-500", sign: "" },
-            ].map((step) => (
-              <div key={step.label} className="grid grid-cols-[6.5rem_1fr_8.5rem] items-center gap-3 text-sm">
-                <span className={cn("text-muted-foreground", step.label === "Net sales" && "font-semibold text-foreground")}>{step.label}</span>
-                {/* Waterfall: each deduction hangs from where the running total ends. */}
-                <span className="relative h-6 rounded-md bg-muted/50">
-                  <span
-                    className={cn("absolute inset-y-0 rounded-md", step.tone)}
-                    style={{ left: `${gross ? (step.offset / gross) * 100 : 0}%`, width: `${gross ? Math.max((step.value / gross) * 100, step.value > 0 ? 0.6 : 0) : 0}%` }}
-                  />
+        <Card title="From gross to net" className="xl:col-span-2" action={<span className="text-xs text-muted-foreground">where every taka of the period went</span>}>
+          <div className="flex flex-col gap-4 px-4 pb-4">
+            <ol className="flex flex-col gap-1">
+              {[
+                { label: "Gross sales", detail: `list price × ${n0(sold.reduce((s, o) => s + o.units, 0))} units`, value: gross, from: 0, tone: "bg-chart-1", icon: ReceiptIcon, sign: "" },
+                { label: "Discounts", detail: `on ${n0(sold.filter((o) => o.discount > 0).length)} orders`, value: discounts, from: gross - discounts, tone: "bg-amber-500", icon: TagIcon, sign: "−" },
+                { label: "Returns", detail: `${n0(sold.filter((o) => o.returned > 0).length)} orders sent items back`, value: returns, from: gross - discounts - returns, tone: "bg-red-500", icon: Undo2Icon, sign: "−" },
+              ].map((step) => (
+                <li key={step.label} className="grid grid-cols-[1.75rem_9.5rem_1fr_9rem] items-center gap-3 rounded-lg px-1 py-1.5">
+                  <span className="grid size-7 place-items-center rounded-md bg-muted text-muted-foreground">
+                    <step.icon className="size-3.5" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">{step.label}</span>
+                    <span className="block truncate text-[11px] text-muted-foreground">{step.detail}</span>
+                  </span>
+                  {/* Waterfall: a deduction sits where the running total ends; the faint bar is the total before it. */}
+                  <span className="relative h-2.5 rounded-full bg-muted">
+                    {step.from > 0 && <span className="absolute inset-y-0 left-0 rounded-full bg-muted-foreground/15" style={{ width: `${pct(step.from + step.value, gross)}%` }} />}
+                    <span
+                      className={cn("absolute inset-y-0 rounded-full", step.tone)}
+                      style={{ left: `${gross ? (step.from / gross) * 100 : 0}%`, width: `${gross ? (step.value / gross) * 100 : 0}%`, minWidth: step.value > 0 ? 6 : 0 }}
+                    />
+                  </span>
+                  <span className="text-right tabular-nums">
+                    <span className="text-sm font-medium">
+                      {step.sign}
+                      {taka(step.value)}
+                    </span>
+                    <span className="block text-[11px] text-muted-foreground">{step.label === "Gross sales" ? "100%" : `${((step.value / (gross || 1)) * 100).toFixed(1)}% of gross`}</span>
+                  </span>
+                </li>
+              ))}
+              <li className="mt-1 grid grid-cols-[1.75rem_9.5rem_1fr_9rem] items-center gap-3 rounded-xl bg-emerald-50 px-1 py-2 ring-1 ring-emerald-200 dark:bg-emerald-950/50 dark:ring-emerald-900">
+                <span className="grid size-7 place-items-center rounded-md bg-emerald-500 text-white">
+                  <WalletIcon className="size-3.5" />
                 </span>
-                <span className={cn("text-right tabular-nums", step.label === "Net sales" ? "font-semibold" : "font-medium")}>
-                  {step.sign}
-                  {taka(step.value)}
-                  <span className="ml-1 text-[11px] font-normal text-muted-foreground">{pct(step.value, gross)}%</span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold">Net sales</span>
+                  <span className="block truncate text-[11px] text-muted-foreground">what the store kept</span>
+                </span>
+                <span className="relative h-2.5 rounded-full bg-emerald-100 dark:bg-emerald-900">
+                  <span className="absolute inset-y-0 left-0 rounded-full bg-emerald-500" style={{ width: `${pct(net, gross)}%` }} />
+                </span>
+                <span className="pr-2 text-right tabular-nums">
+                  <span className="text-base font-bold">{taka(net)}</span>
+                  <span className="block text-[11px] text-muted-foreground">{pct(net, gross)}% of gross</span>
+                </span>
+              </li>
+            </ol>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="flex flex-col gap-1 rounded-xl border bg-muted/30 p-3">
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <TruckIcon className="size-3.5" />
+                  Delivery charged
+                </span>
+                <span className="text-lg font-bold tabular-nums">{taka(delivery)}</span>
+                <span className="text-[11px] text-muted-foreground">
+                  on top of net sales · {n0(sold.filter((o) => o.shipping > 0).length)} orders paid for delivery
                 </span>
               </div>
-            ))}
-            <div className="mt-1 grid gap-4 border-t pt-3 text-sm sm:grid-cols-3">
-              <div>
-                <div className="text-xs text-muted-foreground">Delivery charged on top</div>
-                <div className="font-semibold tabular-nums">{taka(delivery)}</div>
-                <div className="text-[11px] text-muted-foreground">not part of net sales</div>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground">Gross profit</div>
-                <div className="font-semibold tabular-nums">
+              <div className="flex flex-col gap-1 rounded-xl border bg-muted/30 p-3">
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <CoinsIcon className="size-3.5" />
+                  Gross profit
+                </span>
+                <span className="text-lg font-bold tabular-nums">
                   {costedRevenue > 0 ? taka(costedRevenue - cost) : "—"}
-                  {costedRevenue > 0 && <span className="ml-1 text-xs font-normal text-muted-foreground">{pct(costedRevenue - cost, costedRevenue)}% margin</span>}
-                </div>
-                <div className="text-[11px] text-muted-foreground">unit cost known for {pct(costedRevenue, revenueAll)}% of sales</div>
+                  {costedRevenue > 0 && <span className="ml-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">{pct(costedRevenue - cost, costedRevenue)}% margin</span>}
+                </span>
+                <span className="mt-auto flex items-center gap-2 text-[11px] text-muted-foreground">
+                  <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                    <span className="block h-full rounded-full bg-chart-1" style={{ width: `${pct(costedRevenue, revenueAll)}%` }} />
+                  </span>
+                  cost known for {pct(costedRevenue, revenueAll)}% of sales
+                </span>
               </div>
-              <div>
-                <div className="text-xs text-muted-foreground">How orders ended up</div>
-                <div className="mt-1.5 flex h-2 overflow-hidden rounded-full bg-muted">
-                  {outcomes.map((o) => (
-                    <span key={o.label} className={o.tone} style={{ width: `${pct(o.count, inPeriod.length)}%` }} title={`${o.label}: ${o.count}`} />
-                  ))}
+              <div className="flex flex-col gap-1.5 rounded-xl border bg-muted/30 p-3">
+                <span className="flex items-center justify-between gap-1.5 text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
+                    <ListChecksIcon className="size-3.5" />
+                    How orders ended up
+                  </span>
+                  <span className="tabular-nums">{n0(inPeriod.length)}</span>
+                </span>
+                <div className="flex h-2 gap-0.5 overflow-hidden rounded-full">
+                  {outcomes
+                    .filter((o) => o.count > 0)
+                    .map((o) => (
+                      <span key={o.label} className={cn("rounded-full", o.tone)} style={{ width: `${pct(o.count, inPeriod.length)}%` }} title={`${o.label}: ${o.count}`} />
+                    ))}
                 </div>
-                <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-0.5">
+                <div className="flex flex-col gap-0.5">
                   {outcomes.map((o) => (
-                    <span key={o.label} className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                      <span className={cn("size-1.5 shrink-0 rounded-full", o.tone)} />
+                    <span key={o.label} className="flex items-center gap-1.5 text-[11px] whitespace-nowrap text-muted-foreground">
+                      <span className={cn("size-2 shrink-0 rounded-full", o.tone)} />
                       {o.label}
-                      <span className="ml-auto font-medium text-foreground tabular-nums">{n0(o.count)}</span>
+                      <span className="ml-auto font-semibold text-foreground tabular-nums">{n0(o.count)}</span>
+                      <span className="w-7 text-right tabular-nums">{pct(o.count, inPeriod.length)}%</span>
                     </span>
                   ))}
                 </div>
@@ -591,36 +665,108 @@ export function SalesReport({ data }: { data: SalesData }) {
       </div>
 
       <div className="grid items-start gap-4 px-4 md:gap-6 lg:px-6 xl:grid-cols-3">
-        <Card title="When customers order" className="xl:col-span-2" action={<span className="text-xs text-muted-foreground">orders by weekday and hour</span>}>
-          <div className="overflow-x-auto px-4 pb-4">
-            {/* minmax(0, 1fr) keeps the hour labels from widening their column. */}
-            <div className="grid min-w-[560px] grid-cols-[2.25rem_repeat(24,minmax(0,1fr))] gap-[3px] text-[10px] text-muted-foreground">
-              <span />
-              {Array.from({ length: 24 }, (_, h) => (
-                <span key={h} className="overflow-visible text-left whitespace-nowrap">
-                  {h % 3 === 0 ? hourText(h) : ""}
-                </span>
-              ))}
-              {heat.map((row, d) => (
-                <div key={d} className="contents">
-                  <span className="self-center">{WEEKDAYS[d]}</span>
-                  {row.map((count, h) => (
-                    <span
-                      key={h}
-                      title={`${WEEKDAYS[d]} ${hourText(h)}: ${count} ${count === 1 ? "order" : "orders"}`}
-                      className="aspect-square rounded-[3px] border border-border/40"
-                      style={{ background: count ? heatColor(count / heatMax) : undefined }}
-                    />
-                  ))}
+        <Card
+          title="When customers order"
+          className="xl:col-span-2"
+          action={
+            <ToggleGroup multiple={false} value={[heatBy]} onValueChange={(v) => v[0] && setHeatBy(v[0] as "orders" | "sales")} variant="outline" size="sm" spacing={0} aria-label="Heatmap shows">
+              <ToggleGroupItem value="orders" className="h-7 px-2.5 text-xs data-pressed:bg-muted data-pressed:font-semibold">
+                Orders
+              </ToggleGroupItem>
+              <ToggleGroupItem value="sales" className="h-7 px-2.5 text-xs data-pressed:bg-muted data-pressed:font-semibold">
+                Sales
+              </ToggleGroupItem>
+            </ToggleGroup>
+          }
+        >
+          <div className="flex flex-col gap-4 px-4 pb-4">
+            <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border bg-border">
+              {[
+                { label: "Peak hour", value: peak.v ? `${WEEKDAYS[peak.d]} ${hourText(peak.h)}` : "—", hint: peak.v ? `${shownText(peak.v)}${heatBy === "orders" ? ` ${peak.v === 1 ? "order" : "orders"}` : " in sales"}` : "no orders yet" },
+                { label: "Busiest day", value: shownTotal ? WEEKDAY_NAMES[shownRows.indexOf(Math.max(...shownRows))] : "—", hint: `${pct(Math.max(...shownRows), shownTotal)}% of the week` },
+                { label: "Best part of the day", value: shownTotal ? bestBand.label : "—", hint: `${pct(bestBand.value, shownTotal)}% · ${hourText(bestBand.from)}–${hourText(bestBand.to % 24)}` },
+              ].map((f) => (
+                <div key={f.label} className="bg-card px-3 py-2">
+                  <div className="text-[11px] text-muted-foreground">{f.label}</div>
+                  <div className="truncate text-sm font-semibold">{f.value}</div>
+                  <div className="truncate text-[11px] text-muted-foreground tabular-nums">{f.hint}</div>
                 </div>
               ))}
             </div>
-            <div className="mt-3 flex items-center justify-end gap-1.5 text-[10px] text-muted-foreground">
-              Fewer
-              {[0, 0.25, 0.5, 0.75, 1].map((step) => (
-                <span key={step} className="size-3 rounded-[3px] border border-border/40" style={{ background: step ? heatColor(step) : undefined }} />
-              ))}
-              More
+
+            <div className="overflow-x-auto">
+              {/* minmax(0, 1fr) keeps the hour labels from widening their column. */}
+              <div className="grid min-w-[600px] grid-cols-[2.25rem_repeat(24,minmax(0,1fr))_5.5rem] gap-[3px] text-[10px] text-muted-foreground">
+                <span />
+                {bands.map((b) => (
+                  <span
+                    key={b.label}
+                    style={{ gridColumn: `span ${b.to - b.from}` }}
+                    className="mb-0.5 flex items-center justify-between rounded-md bg-muted/60 px-1.5 py-0.5 font-medium text-muted-foreground"
+                  >
+                    {b.label}
+                    <span className="tabular-nums">{pct(b.value, shownTotal)}%</span>
+                  </span>
+                ))}
+                <span />
+
+                <span />
+                {Array.from({ length: 24 }, (_, h) => (
+                  <span key={h} className="overflow-visible whitespace-nowrap">
+                    {h % 3 === 0 ? hourText(h) : ""}
+                  </span>
+                ))}
+                <span className="text-right">Total</span>
+
+                {shown.map((row, d) => (
+                  <div key={d} className="contents">
+                    <span className="self-center font-medium">{WEEKDAYS[d]}</span>
+                    {row.map((v, h) => {
+                      const share = v / shownMax
+                      return (
+                        <span
+                          key={h}
+                          title={`${WEEKDAY_NAMES[d].slice(0, -1)} ${hourText(h)}–${hourText((h + 1) % 24)}: ${n0(heat[d][h])} ${heat[d][h] === 1 ? "order" : "orders"} · ${taka(heatSales[d][h])}`}
+                          className={cn(
+                            "grid aspect-square place-items-center rounded-[4px] text-[9px] font-semibold tabular-nums transition-transform hover:z-10 hover:scale-125 hover:ring-2 hover:ring-primary/40",
+                            !v && "bg-muted/50",
+                            share > 0.55 ? "text-white" : "text-foreground/70"
+                          )}
+                          style={{ background: v ? heatColor(share) : undefined }}
+                        >
+                          {heatBy === "orders" && v > 0 ? v : ""}
+                        </span>
+                      )
+                    })}
+                    <span className="flex items-center gap-1.5 pl-1">
+                      <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                        <span className="block h-full rounded-full bg-chart-1" style={{ width: `${pct(shownRows[d], Math.max(...shownRows))}%` }} />
+                      </span>
+                      <span className="w-11 text-right font-medium text-foreground tabular-nums">{shownText(shownRows[d])}</span>
+                    </span>
+                  </div>
+                ))}
+
+                {/* How the hours add up across the week. */}
+                <span className="self-end">All</span>
+                {shownHours.map((v, h) => (
+                  <span key={h} className="flex h-8 items-end" title={`${hourText(h)}: ${shownText(v)}`}>
+                    <span className="w-full rounded-t-[3px] bg-chart-1/70" style={{ height: `${v ? Math.max(10, (v / Math.max(...shownHours)) * 100) : 0}%` }} />
+                  </span>
+                ))}
+                <span className="self-end text-right font-semibold text-foreground tabular-nums">{shownText(shownTotal)}</span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
+              <span>Times are in your timezone. Hover a square for its orders and sales.</span>
+              <span className="flex items-center gap-1.5">
+                {heatBy === "orders" ? "0" : "৳0"}
+                {[0, 0.25, 0.5, 0.75, 1].map((step) => (
+                  <span key={step} className={cn("size-3 rounded-[3px]", !step && "bg-muted/50")} style={{ background: step ? heatColor(step) : undefined }} />
+                ))}
+                {shownText(shownMax)}
+              </span>
             </div>
           </div>
         </Card>
