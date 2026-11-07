@@ -2,13 +2,25 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { EllipsisVerticalIcon, PackageIcon, PlusIcon, StarIcon } from "lucide-react"
+import {
+  BanknoteIcon,
+  BoxesIcon,
+  EllipsisVerticalIcon,
+  EyeOffIcon,
+  ImageOffIcon,
+  PackageIcon,
+  PlusIcon,
+  ShoppingBagIcon,
+  StarIcon,
+  TriangleAlertIcon,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import { changeProductStatus, deleteProduct, getProducts } from "@/app/actions/product.actions"
-import { Kpis, n0, rel } from "@/components/inventory/inventory-ui"
+import { short } from "@/components/analytics/sales-report"
+import { n0, rel } from "@/components/inventory/inventory-ui"
 import { HEALTH_DOT, type Health, shelfTotals } from "@/components/inventory/product-shelf"
-import { ListTable, type ListColumn } from "@/components/list-table"
+import { ListTable, type ListColumn, type ListFilter } from "@/components/list-table"
 import { StatusBadge } from "@/components/status-badge"
 import {
   AlertDialog,
@@ -47,8 +59,23 @@ const EMPTY: ProductInsight = { variants: [], sold30: 0, revenue30: 0, lastSoldA
 
 const STATUS_LABEL = { ACTIVE: "Active", DRAFT: "Draft", ARCHIVED: "Archived" } as const
 
-const taka = (n: number) => `৳${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
+// Whole taka; paisa only clutter a list of prices.
+const taka = (n: number) => `৳${Math.round(n).toLocaleString("en-IN")}`
 
+function Tile({ icon: Icon, label, value, hint, warn }: { icon: typeof PackageIcon; label: string; value: string; hint: string; warn?: boolean }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1 rounded-2xl border bg-card p-4">
+      <div className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
+        <span className={cn("grid size-6 place-items-center rounded-md", warn ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" : "bg-primary/10 text-primary")}>
+          <Icon className="size-3.5" />
+        </span>
+        {label}
+      </div>
+      <strong className={cn("truncate text-2xl font-bold tracking-tight tabular-nums", warn && "text-amber-700 dark:text-amber-400")}>{value}</strong>
+      <span className="text-[11px] leading-snug text-muted-foreground">{hint}</span>
+    </div>
+  )
+}
 
 function priceRange(p: Product) {
   const prices = p.variants.map((v) => Number(v.price))
@@ -77,6 +104,10 @@ export function ProductsTable({ initialProducts, insights }: { initialProducts: 
   const totals = (p: Product) => shelfTotals(info(p).variants)
   const rating = (p: Product) => (info(p).ratingCount ? info(p).ratingSum / info(p).ratingCount : 0)
   const maxPrice = (p: Product) => Math.max(...p.variants.map((v) => Number(v.price)))
+
+  // What a listing still lacks before it sells well.
+  const missing = (p: Product) =>
+    [p.images.length === 0 && "image", !p.brand && "brand", p.categories.length === 0 && "category"].filter((x): x is string => !!x)
 
   const all = products.map(totals)
   const sellable = all.reduce((s, t) => s + t.available, 0)
@@ -147,14 +178,32 @@ export function ProductsTable({ initialProducts, insights }: { initialProducts: 
               )}
             </div>
             <div className="flex min-w-0 flex-col">
-              <Link href={`/products/${p.id}`} className="truncate font-medium hover:text-primary hover:underline">
-                {p.name}
-              </Link>
-              <span className="truncate text-xs text-muted-foreground">
-                {[p.brand?.name ?? "No brand", (p.categories.find((c) => c.isPrimary) ?? p.categories[0])?.category.name ?? "Uncategorised"].join(" · ")}
+              <span className="flex min-w-0 items-center gap-1.5">
+                <Link href={`/products/${p.id}`} className="truncate font-medium hover:text-primary hover:underline">
+                  {p.name}
+                </Link>
+                {p.status === "ACTIVE" && !p.isActive && (
+                  <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-muted px-1 text-[10px] font-medium text-muted-foreground" title="Published but hidden from the store">
+                    <EyeOffIcon className="size-3" />
+                    Hidden
+                  </span>
+                )}
               </span>
-              <span className="truncate font-mono text-[11px] text-muted-foreground/80">
-                {p.variants.length === 1 ? p.variants[0].sku : `${p.variants.length} variants`}
+              <span className="truncate text-xs text-muted-foreground">
+                <span className={cn(!p.brand && "text-amber-700 dark:text-amber-400")}>{p.brand?.name ?? "No brand"}</span>
+                {" · "}
+                <span className={cn(p.categories.length === 0 && "text-amber-700 dark:text-amber-400")}>
+                  {(p.categories.find((c) => c.isPrimary) ?? p.categories[0])?.category.name ?? "Uncategorised"}
+                </span>
+              </span>
+              <span className="flex min-w-0 items-center gap-1.5 text-[11px]">
+                <span className="truncate font-mono text-muted-foreground/80">{p.variants.length === 1 ? p.variants[0].sku : `${p.variants.length} variants`}</span>
+                {p.images.length === 0 && (
+                  <span className="inline-flex shrink-0 items-center gap-0.5 font-medium text-amber-700 dark:text-amber-400">
+                    <ImageOffIcon className="size-3" />
+                    no image
+                  </span>
+                )}
               </span>
             </div>
           </div>
@@ -168,7 +217,7 @@ export function ProductsTable({ initialProducts, insights }: { initialProducts: 
       cell: (p) => (
         <span className="flex flex-col items-start gap-1">
           <StatusBadge status={STATUS_LABEL[p.status]} />
-          {p.status === "ACTIVE" && !p.isActive && <span className="text-[11px] text-muted-foreground">Hidden</span>}
+          {p.status !== "ACTIVE" && <span className="text-[11px] text-muted-foreground">{p.status === "DRAFT" ? "not on sale yet" : "off the store"}</span>}
         </span>
       ),
     },
@@ -180,15 +229,16 @@ export function ProductsTable({ initialProducts, insights }: { initialProducts: 
         const variants = info(p).variants
         if (variants.length === 0) return <span className="text-muted-foreground">Not tracked</span>
         let health: Health = "ok"
-        if (t.out === variants.length) health = "out"
+        // Nothing to sell is out of stock, whatever each variant's own flag says.
+        if (t.available <= 0 || t.out === variants.length) health = "out"
         else if (t.low + t.out > 0) health = "low"
         return (
           <span className="flex flex-col">
-            <span className="flex items-center gap-1.5 font-medium tabular-nums">
+            <span className={cn("flex items-center gap-1.5 font-medium tabular-nums", health === "out" && "text-destructive")}>
               <span className={cn("size-2 rounded-full", HEALTH_DOT[health])} aria-hidden />
-              {n0(t.available)} sellable
+              {health === "out" ? "Out of stock" : `${n0(t.available)} sellable`}
             </span>
-            {t.low + t.out > 0 && (
+            {health !== "out" && t.low + t.out > 0 && (
               <span className="text-[11px] text-amber-700 dark:text-amber-400">
                 {[t.out && `${t.out} out`, t.low && `${t.low} low`].filter(Boolean).join(" · ")}
               </span>
@@ -247,8 +297,8 @@ export function ProductsTable({ initialProducts, insights }: { initialProducts: 
       className: "text-right tabular-nums",
       cell: (p) => (
         <span className="flex flex-col items-end">
-          <span className="font-medium">{priceRange(p)}</span>
-          {p.variants.length > 1 && <span className="text-[11px] text-muted-foreground">{p.variants.length} variants</span>}
+          <span className="font-semibold">{priceRange(p)}</span>
+          {p.variants.length > 1 && <span className="text-[11px] text-muted-foreground">across {p.variants.length} variants</span>}
         </span>
       ),
     },
@@ -288,24 +338,30 @@ export function ProductsTable({ initialProducts, insights }: { initialProducts: 
 
   return (
     <>
-      <Kpis
-        items={[
-          {
-            label: "Products",
-            value: n0(products.length),
-            hint: `${n0(products.filter((p) => p.status === "ACTIVE").length)} active · ${n0(products.filter((p) => p.status === "DRAFT").length)} draft`,
-          },
-          { label: "Sellable units", value: n0(sellable), hint: `worth ${taka(retailValue)} at retail` },
-          { label: "Stock value", value: taka(costValue), hint: costValue === 0 && sellable > 0 ? "no unit cost recorded" : "at unit cost", warn: costValue === 0 && sellable > 0 },
-          { label: "Needs restock", value: n0(restock.length), hint: `${n0(soldOut.length)} with a variant out of stock`, warn: restock.length > 0 },
-          { label: "Sold (30 days)", value: n0(units30), hint: `${taka(revenue30)} revenue` },
-          {
-            label: "Rating",
-            value: ratingCount ? `${(ratingSum / ratingCount).toFixed(1)} ★` : "—",
-            hint: `${n0(ratingCount)} reviews${pending ? ` · ${n0(pending)} pending` : ""}`,
-          },
-        ]}
-      />
+      <section className="grid grid-cols-2 gap-3 px-4 md:grid-cols-3 lg:px-6 xl:grid-cols-6">
+        <Tile
+          icon={PackageIcon}
+          label="Products"
+          value={n0(products.length)}
+          hint={`${n0(products.filter((p) => p.status === "ACTIVE").length)} active · ${n0(products.filter((p) => p.status === "DRAFT").length)} draft · ${n0(products.filter((p) => p.status === "ARCHIVED").length)} archived`}
+        />
+        <Tile icon={BoxesIcon} label="Sellable units" value={n0(sellable)} hint={`worth ${short(retailValue)} at retail`} />
+        <Tile
+          icon={BanknoteIcon}
+          label="Stock value"
+          value={short(costValue)}
+          hint={costValue === 0 && sellable > 0 ? "no unit cost recorded" : `at unit cost · ${taka(costValue)}`}
+          warn={costValue === 0 && sellable > 0}
+        />
+        <Tile icon={TriangleAlertIcon} label="Needs restock" value={n0(restock.length)} hint={`${n0(soldOut.length)} with a variant out of stock`} warn={restock.length > 0} />
+        <Tile icon={ShoppingBagIcon} label="Sold (30 days)" value={`${n0(units30)} units`} hint={`${short(revenue30)} revenue · ${n0(products.filter((p) => info(p).sold30 > 0).length)} products sold`} />
+        <Tile
+          icon={StarIcon}
+          label="Rating"
+          value={ratingCount ? `${(ratingSum / ratingCount).toFixed(1)} ★` : "—"}
+          hint={`${n0(ratingCount)} reviews${pending ? ` · ${n0(pending)} pending` : ""}`}
+        />
+      </section>
 
       <ListTable
         rows={sorted}
@@ -315,14 +371,15 @@ export function ProductsTable({ initialProducts, insights }: { initialProducts: 
           `${p.name} ${p.variants.map((v) => v.sku).join(" ")} ${p.brand?.name ?? ""} ${p.categories.map((c) => c.category.name).join(" ")} ${p.tags.map((t) => t.tag.name).join(" ")}`
         }
         searchPlaceholder="Search products..."
-        filters={[
+        filters={([
           { label: "All", value: "all", match: () => true },
           { label: "Active", value: "active", match: (p) => p.status === "ACTIVE" },
           { label: "Draft", value: "draft", match: (p) => p.status === "DRAFT" },
           { label: "Archived", value: "archived", match: (p) => p.status === "ARCHIVED" },
           { label: "Needs restock", value: "restock", match: (p) => totals(p).low + totals(p).out > 0 },
           { label: "No sales", value: "no-sales", match: (p) => info(p).sold30 === 0 },
-        ]}
+          { label: "Missing info", value: "missing", match: (p) => missing(p).length > 0 },
+        ] as ListFilter<Product>[]).filter((f, index) => index === 0 || products.some(f.match))}
         emptyText={products.length === 0 ? "No products yet. Add your first one." : "No products match your search."}
         toolbar={
           <>
