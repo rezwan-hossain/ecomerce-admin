@@ -76,6 +76,26 @@ export async function cancelOrder(id: string, reason: string) {
   return res
 }
 
+// Adds a payment for what's still owed (backend refuses more than the balance); it starts PENDING.
+// With `received`, it's marked paid straight away, e.g. cash the courier handed over late.
+export async function recordPayment(
+  id: string,
+  dto: { provider: Order["payments"][number]["provider"]; method: string; amount: number },
+  received?: { transactionId?: string }
+) {
+  const res = await handleRequest(async () => (await api.post<{ data: { id: string } }>(`/orders/${id}/payments`, dto)).data)
+  if (!res.success) return res
+  if (received) {
+    const paid = await handleRequest(() => api.patch(`/orders/${id}/payments/${res.data.id}/paid`, { transactionId: received.transactionId }))
+    refresh(id)
+    // The payment exists either way; say so if only the second step failed.
+    if (!paid.success) return { ...paid, error: `Payment added but not marked paid: ${paid.error}` }
+    return paid
+  }
+  refresh(id)
+  return res
+}
+
 export async function markPaymentPaid(id: string, paymentId: string, transactionId?: string) {
   const res = await handleRequest(() => api.patch(`/orders/${id}/payments/${paymentId}/paid`, { transactionId }))
   if (res.success) refresh(id)

@@ -242,7 +242,17 @@ function Amount({ order, promotions = [] }: { order: Order; promotions?: string[
           {taka(Number(payment.amount))} of {taka(Number(payment.metadata?.orderedAmount))}
         </span>
       )}
-      {payment?.status === "FAILED" && payment.failureMessage && <span className="max-w-28 text-right text-[11px] leading-tight whitespace-normal text-destructive">{payment.failureMessage}</span>}
+      {payment?.status === "FAILED" && payment.failureMessage === "Courier collected nothing" && (
+        <span
+          title={`Delivered, but the courier collected ৳0 of ${taka(Number(payment.metadata?.orderedAmount ?? payment.amount))}; it's still owed`}
+          className="rounded bg-red-50 px-1 text-[11px] font-semibold whitespace-nowrap text-red-700 dark:bg-red-950 dark:text-red-300"
+        >
+          No cash collected
+        </span>
+      )}
+      {payment?.status === "FAILED" && payment.failureMessage && payment.failureMessage !== "Courier collected nothing" && (
+        <span className="max-w-28 text-right text-[11px] leading-tight whitespace-normal text-destructive">{payment.failureMessage}</span>
+      )}
     </span>
   )
 }
@@ -674,7 +684,7 @@ export function OrdersTable({
         searchText={(o) =>
           `${o.orderNumber} ${o.customerName ?? ""} ${o.customerEmail} ${o.customerPhone ?? ""} ${o.customerPhone ? localPhone(o.customerPhone) : ""} ${Object.values(addresses[o.id] ?? {}).join(" ")} ${o.items.map((i) => `${i.productName} ${i.sku}`).join(" ")} ${o.customerNote ?? ""} ${(promotions[o.id] ?? []).join(" ")}`
         }
-        searchPlaceholder="Search orders…"
+        searchPlaceholder="ORD-100001, email or name…"
         // Empty tabs only add noise; "All" always stays.
         filters={(mode === "pending" ? pendingFilters : allFilters).filter((f, index) => index === 0 || sorted.some(f.match))}
         emptyText={mode === "pending" ? "All caught up — no pending orders." : "No orders yet."}

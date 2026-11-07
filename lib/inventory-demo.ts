@@ -261,12 +261,12 @@ export type DemoReservation = DemoItem & {
 }
 
 export const DEMO_RESERVATIONS: DemoReservation[] = [
-  { ...item("NEW-DELL-XPS-13-9300-LAPTOP-16GB"), id: "r-1", orderNumber: "ORD-10284", warehouse: "MAIN", quantity: 2, status: "ACTIVE", reservedAt: at(0, 7), expiresAt: at(1, 7) },
-  { ...item("GRAY-DRESS-XS"), id: "r-2", orderNumber: "ORD-10285", warehouse: "MAIN", quantity: 1, status: "ACTIVE", reservedAt: at(0, 8), expiresAt: at(1, 8) },
-  { ...item("OPPO-F19-PRO-PLUS-128GB"), id: "r-3", orderNumber: "ORD-10279", warehouse: "CTG-STORE", quantity: 1, status: "ACTIVE", reservedAt: at(-2, 15), expiresAt: at(-1, 15) },
-  { ...item("PAMPI-SHOES-39"), id: "r-4", orderNumber: "ORD-10270", warehouse: "MAIN", quantity: 1, status: "COMMITTED", reservedAt: at(-3, 11), expiresAt: at(-2, 11) },
-  { ...item("BLUE-FROCK-L"), id: "r-5", orderNumber: "ORD-10266", warehouse: "MAIN", quantity: 1, status: "EXPIRED", reservedAt: at(-4, 13), expiresAt: at(-4, 14) },
-  { ...item("CALVIN-KLEIN-HEEL-SHOES-37"), id: "r-6", orderNumber: "ORD-10261", warehouse: "CTG-STORE", quantity: 2, status: "RELEASED", reservedAt: at(-5, 10), expiresAt: at(-4, 10) },
+  { ...item("NEW-DELL-XPS-13-9300-LAPTOP-16GB"), id: "r-1", orderNumber: "ORD-100084", warehouse: "MAIN", quantity: 2, status: "ACTIVE", reservedAt: at(0, 7), expiresAt: at(1, 7) },
+  { ...item("GRAY-DRESS-XS"), id: "r-2", orderNumber: "ORD-100085", warehouse: "MAIN", quantity: 1, status: "ACTIVE", reservedAt: at(0, 8), expiresAt: at(1, 8) },
+  { ...item("OPPO-F19-PRO-PLUS-128GB"), id: "r-3", orderNumber: "ORD-100079", warehouse: "CTG-STORE", quantity: 1, status: "ACTIVE", reservedAt: at(-2, 15), expiresAt: at(-1, 15) },
+  { ...item("PAMPI-SHOES-39"), id: "r-4", orderNumber: "ORD-100070", warehouse: "MAIN", quantity: 1, status: "COMMITTED", reservedAt: at(-3, 11), expiresAt: at(-2, 11) },
+  { ...item("BLUE-FROCK-L"), id: "r-5", orderNumber: "ORD-100266", warehouse: "MAIN", quantity: 1, status: "EXPIRED", reservedAt: at(-4, 13), expiresAt: at(-4, 14) },
+  { ...item("CALVIN-KLEIN-HEEL-SHOES-37"), id: "r-6", orderNumber: "ORD-100261", warehouse: "CTG-STORE", quantity: 2, status: "RELEASED", reservedAt: at(-5, 10), expiresAt: at(-4, 10) },
 ]
 
 /* ---------- Alerts and reorder rules ---------- */

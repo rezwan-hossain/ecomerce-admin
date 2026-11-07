@@ -127,7 +127,7 @@ export function Reservations({ initialReservations }: { initialReservations: Dem
       />
       {reserving && (
         <ReserveDialog
-          nextOrder={`ORD-${Math.max(0, ...reservations.map((r) => Number(r.orderNumber.split("-")[1]))) + 1}`}
+          nextOrder={`ORD-${100100 + reservations.length}`}
           onReserve={(r) => {
             setReservations((current) => [r, ...current])
             setReserving(false)

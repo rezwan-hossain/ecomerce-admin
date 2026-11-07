@@ -68,7 +68,7 @@ export function ListTable<T>({
       (!activeFilter || activeFilter.match(row)) &&
       (!query ||
         !searchText ||
-        searchText(row).toLowerCase().includes(query.toLowerCase()))
+        searchText(row).toLowerCase().includes(query.trim().toLowerCase()))
   )
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
   const currentPage = Math.min(page, pageCount - 1)

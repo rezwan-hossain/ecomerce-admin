@@ -53,6 +53,7 @@ import {
   createShipment,
   updateOrderAddress,
   markPaymentFailed,
+  recordPayment,
   markPaymentPaid,
   receiveReturnedItems,
   reviewRefund,
@@ -70,6 +71,7 @@ import { StatusBadge } from "@/components/status-badge"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -242,6 +244,7 @@ export function OrderDetailPage({
   const [bookingPathao, setBookingPathao] = useState(false)
   const [pathaoLog, setPathaoLog] = useState<{ ok: boolean; reply: unknown; at: string } | null>(null)
   const [refunding, setRefunding] = useState(false)
+  const [addingPayment, setAddingPayment] = useState(false)
   const [receiving, setReceiving] = useState(false)
   const [confirming, setConfirming] = useState<{ shipmentId: string; status: ShipmentStatus } | null>(null)
   const [partlyDelivering, setPartlyDelivering] = useState<string | null>(null)
@@ -268,6 +271,8 @@ export function OrderDetailPage({
   let paidHint = "nothing due"
   if (due > 0 && !stopped) paidHint = `${taka(due)} still due`
   else if (refunded > 0) paidHint = `${taka(refunded)} refunded`
+  // Delivered, but the courier handed over nothing of what was owed; the amount is still due.
+  const noCash = order.payments.find((p) => p.provider === "COD" && p.failureMessage === "Courier collected nothing")
   const codOpen = order.payments.some((p) => p.method === "CASH_ON_DELIVERY" && OPEN_PAYMENT.includes(p.status))
   // A partial delivery only makes sense while the courier still has cash to collect.
   const codPending = order.payments.find((p) => p.provider === "COD" && p.status === "PENDING")
@@ -821,6 +826,7 @@ export function OrderDetailPage({
                             {s.metadata.pathaoStatusAt && ` · ${rel(s.metadata.pathaoStatusAt)}`}
                           </div>
                         )}
+                        {s.metadata?.pathaoReason && <div className="text-xs text-muted-foreground">Pathao: {s.metadata.pathaoReason}</div>}
                       </div>
                       {CANCELLABLE.includes(order.status) && !SHIPMENT_DONE.includes(s.status) && (
                         <Button size="sm" variant="ghost" className="text-destructive" onClick={() => parcelCancelled(s)} disabled={busy} title="Cancelled it in the courier's panel? Record it here">
@@ -1151,11 +1157,37 @@ export function OrderDetailPage({
             </div>
           </Card>
 
+          {noCash && (
+            <Alert variant="destructive" className="rounded-2xl border-red-300 bg-red-50 px-4 py-3 dark:border-red-900 dark:bg-red-950/60">
+              <BanknoteIcon />
+              <AlertTitle className="font-semibold">Courier collected no cash</AlertTitle>
+              <AlertDescription>
+                The courier delivered but collected {taka(0)} of {taka(Number(noCash.metadata?.orderedAmount ?? noCash.amount))}. {taka(Math.max(0, due))} is still owed. Check
+                with {noCash.metadata?.settledByCourier ? CARRIER_LABEL[noCash.metadata.settledByCourier] : "the courier"} or the customer, then record the payment.
+                {/* Under the text: the card is narrow, so a corner button would run into the title. */}
+                {due > 0 && !stopped && (
+                  <Button size="sm" variant="destructive" className="mt-2" onClick={() => setAddingPayment(true)}>
+                    <PlusIcon />
+                    Record payment
+                  </Button>
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
+
           <Card
             title="Payments"
             action={
-              <span className="text-xs text-muted-foreground tabular-nums">
-                <span className="font-medium text-foreground">{taka(paid)}</span> of {taka(total)} paid
+              <span className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  <span className="font-medium text-foreground">{taka(paid)}</span> of {taka(total)} paid
+                </span>
+                {due > 0 && !stopped && (
+                  <Button size="xs" variant="outline" onClick={() => setAddingPayment(true)}>
+                    <PlusIcon />
+                    Add
+                  </Button>
+                )}
               </span>
             }
           >
@@ -1212,7 +1244,12 @@ export function OrderDetailPage({
                         {p.failureMessage && (
                           <div className="mt-1.5 flex items-start gap-1.5 text-xs text-destructive">
                             <CircleXIcon className="mt-px size-3.5 shrink-0" />
-                            {p.failureMessage}
+                            <span>
+                              {p.failureMessage}
+                              {p.metadata?.collectedAmount === "0" && (
+                                <span className="text-muted-foreground"> · {taka(0)} of {taka(Number(p.metadata.orderedAmount ?? p.amount))}</span>
+                              )}
+                            </span>
                           </div>
                         )}
                         {p.provider === "COD" && p.metadata?.settledBy === "MANUAL" && (
@@ -1391,6 +1428,7 @@ export function OrderDetailPage({
         <ConfirmShipmentDialog status={confirming.status} onConfirm={() => setShipmentStatus(confirming.shipmentId, confirming.status)} onClose={() => setConfirming(null)} />
       )}
       {receiving && <ReceiveReturnsDialog order={order} images={images} stock={stock} movements={movements} fullReturn={returnState.kind === "returned"} onClose={() => setReceiving(false)} />}
+      {addingPayment && <AddPaymentDialog orderId={order.id} due={Math.max(0, due)} onClose={() => setAddingPayment(false)} />}
       {refunding && <RefundDialog orderId={order.id} max={refundable} onClose={() => setRefunding(false)} />}
     </div>
   )
@@ -2181,6 +2219,92 @@ function statusDot(status: OrderStatus) {
   if (status === "CANCELLED" || status === "FAILED") return "bg-red-500"
   if (status === "RETURNED" || status === "PARTIALLY_RETURNED" || status === "REFUNDED") return "bg-amber-500"
   return "bg-primary"
+}
+
+// How the money came in; each maps to the backend's provider and method.
+const PAYMENT_WAYS = [
+  { value: "cash", label: "Cash (from the courier or customer)", provider: "COD", method: "CASH_ON_DELIVERY" },
+  { value: "bkash", label: "bKash", provider: "BKASH", method: "MOBILE_BANKING" },
+  { value: "nagad", label: "Nagad", provider: "NAGAD", method: "MOBILE_BANKING" },
+  { value: "bank", label: "Bank transfer", provider: "OTHER", method: "BANK_TRANSFER" },
+  { value: "card", label: "Card (SSLCommerz)", provider: "SSLCOMMERZ", method: "CARD" },
+  { value: "other", label: "Other", provider: "OTHER", method: "OTHER" },
+] as const
+
+// Records money for what's still owed, e.g. after the courier collected nothing.
+function AddPaymentDialog({ orderId, due, onClose }: { orderId: string; due: number; onClose: () => void }) {
+  const [way, setWay] = useState<string>("cash")
+  const [amount, setAmount] = useState(String(due))
+  const [received, setReceived] = useState(true)
+  const [transactionId, setTransactionId] = useState("")
+  const [error, setError] = useState("")
+  const [saving, setSaving] = useState(false)
+
+  async function save() {
+    const value = Number(amount)
+    if (!(value > 0) || value > due) return setError(`Enter an amount from ৳0.01 to ${taka(due, 2)}.`)
+    const chosen = PAYMENT_WAYS.find((w) => w.value === way)!
+    setSaving(true)
+    const res = await recordPayment(orderId, { provider: chosen.provider, method: chosen.method, amount: value }, received ? { transactionId: transactionId.trim() || undefined } : undefined)
+    setSaving(false)
+    if (!res.success) return setError(res.error)
+    toast.success(received ? `${taka(value)} recorded as paid` : `${taka(value)} added as a pending payment`)
+    onClose()
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Record a payment</DialogTitle>
+          <DialogDescription>{taka(due, 2)} is still owed on this order.</DialogDescription>
+        </DialogHeader>
+        <Field>
+          <FieldLabel>Paid by</FieldLabel>
+          <Select value={way} items={PAYMENT_WAYS.map((w) => ({ label: w.label, value: w.value }))} onValueChange={(v) => setWay(v as string)}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PAYMENT_WAYS.map((w) => (
+                <SelectItem key={w.value} value={w.value}>
+                  {w.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="pay-amount">Amount (৳)</FieldLabel>
+          <Input id="pay-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} className="tabular-nums" />
+        </Field>
+        <label className="flex items-start gap-2 text-sm">
+          <Checkbox checked={received} onCheckedChange={(v) => setReceived(v === true)} className="mt-0.5" />
+          <span>
+            The money is already in
+            <span className="block text-xs text-muted-foreground">Marks it paid now. Untick to add it as pending and mark it paid later.</span>
+          </span>
+        </label>
+        {received && (
+          <Field>
+            <FieldLabel htmlFor="pay-txn">
+              Transaction or receipt ID <span className="font-normal text-muted-foreground">(optional)</span>
+            </FieldLabel>
+            <Input id="pay-txn" maxLength={150} value={transactionId} onChange={(e) => setTransactionId(e.target.value)} className="font-mono" placeholder="e.g. 9BX4K2L1QZ" />
+          </Field>
+        )}
+        <DialogFooter className="items-center">
+          {error && <p className="mr-auto text-sm text-destructive">{error}</p>}
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={saving}>
+            {saving ? "Saving..." : "Record payment"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
 }
 
 function paymentPillText(p: OrderDetail["payments"][number]) {

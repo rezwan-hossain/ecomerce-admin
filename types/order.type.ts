@@ -106,6 +106,7 @@ export interface Shipment {
   // Pathao parcels keep Pathao's last status and its delivery fee here.
   metadata?: {
     pathaoStatus?: string;
+    pathaoReason?: string; // why, from Pathao (e.g. what the customer didn't take on a partial delivery)
     pathaoStatusAt?: string;
     pathaoDeliveryFee?: number;
     // The last status change and who made it (missing on older shipments).
