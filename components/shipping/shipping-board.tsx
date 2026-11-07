@@ -24,12 +24,11 @@ import {
   needsShipmentConfirm,
   PARTLY_DELIVERED,
   PartialDeliveryDialog,
-  PathaoMark,
   SHIPMENT_DONE,
   shipmentStatusOptions,
   TONE,
 } from "@/components/orders/order-detail"
-import { CARRIER_LABEL, ORDER_STATUS_LABEL, ShipmentTiming } from "@/components/orders/orders-table"
+import { CARRIER_LABEL, CourierLogo, ORDER_STATUS_LABEL, ShipmentTiming } from "@/components/orders/orders-table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { getReturnState } from "@/lib/orders/return-state"
 import { cn } from "@/lib/utils"
@@ -68,17 +67,11 @@ function openProblem({ shipment, order }: Parcel) {
   return !retried && !CLOSED.includes(order.status)
 }
 
-// Each courier's own colour; Pathao gets its logo.
-const CARRIER_TONE: Record<CourierCarrier, string> = {
-  PATHAO: "bg-white",
-  REDX: "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300",
-  STEADFAST: "bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-300",
-  CARRYBEE: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
-}
+// The courier's logo on a white tile, sized by the caller.
 function CarrierMark({ carrier, className }: { carrier: CourierCarrier; className?: string }) {
   return (
-    <span className={cn("grid size-8 shrink-0 place-items-center overflow-hidden rounded-lg border text-[11px] font-bold", CARRIER_TONE[carrier], className)}>
-      {carrier === "PATHAO" ? <PathaoMark className="size-[70%]" /> : (CARRIER_LABEL[carrier] ?? carrier).slice(0, 2).toUpperCase()}
+    <span className={cn("grid size-8 shrink-0 place-items-center overflow-hidden rounded-lg border bg-white", className)}>
+      <CourierLogo carrier={carrier} className="size-[80%] ring-0" />
     </span>
   )
 }

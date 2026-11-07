@@ -75,6 +75,20 @@ export const PAYMENT_LABEL: Record<PaymentStatus, string> = {
 }
 
 export const CARRIER_LABEL: Record<CourierCarrier, string> = { PATHAO: "Pathao", REDX: "RedX", STEADFAST: "Steadfast", CARRYBEE: "CarryBee" }
+
+// Each courier's mark, from their own site (public/couriers/). Pathao's is round, so its black corners are cropped.
+export function CourierLogo({ carrier, className }: { carrier: CourierCarrier; className?: string }) {
+  return (
+    <span
+      aria-hidden
+      title={CARRIER_LABEL[carrier]}
+      className={cn("inline-block size-4 shrink-0 overflow-hidden bg-white", carrier === "PATHAO" ? "rounded-full" : "rounded-[22%] ring-1 ring-black/5", className)}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element -- small static icons */}
+      <img src={`/couriers/${carrier.toLowerCase()}.png`} alt="" className={cn("size-full object-cover", carrier === "PATHAO" && "scale-[1.12]")} />
+    </span>
+  )
+}
 // Who made a change, as the backend recorded it. Manual stands out: by hand means nobody else confirmed it.
 export function SourceBadge({ source, courier, at, userId }: { source: ChangeSource; courier?: CourierCarrier | null; at?: string; userId?: string }) {
   const name = courier ? CARRIER_LABEL[courier] : "Courier"
@@ -90,12 +104,12 @@ export function SourceBadge({ source, courier, at, userId }: { source: ChangeSou
   } else if (source === "COURIER_WEBHOOK") {
     text = name
     tip = `Reported by ${name}`
-    icon = <TruckIcon />
+    icon = courier ? <CourierLogo carrier={courier} className="size-3" /> : <TruckIcon />
     tone = "border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300"
   } else if (source === "COURIER_SYNC") {
     text = `${name} (sync)`
     tip = `Fetched from ${name} when an admin pressed Sync`
-    icon = <RefreshCwIcon />
+    icon = courier ? <CourierLogo carrier={courier} className="size-3" /> : <RefreshCwIcon />
     tone = "border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300"
   } else if (source === "CHECKOUT") {
     text = "Checkout"
@@ -292,7 +306,10 @@ function Fulfilment({ order }: { order: Order }) {
   if (shipment) {
     return (
       <span className="flex flex-col">
-        <span className="font-medium">{CARRIER_LABEL[shipment.carrier] ?? shipment.carrier}</span>
+        <span className="flex items-center gap-1.5 font-medium">
+          <CourierLogo carrier={shipment.carrier} />
+          {CARRIER_LABEL[shipment.carrier] ?? shipment.carrier}
+        </span>
         <span className="text-[11px] text-muted-foreground">{label(shipment.status)}</span>
         <ShipmentTiming shipment={shipment} />
         <TrackingId shipment={shipment} />
@@ -727,7 +744,7 @@ function ItemsDialog({ order, images, onClose }: { order: Order; images: Record<
           </DialogDescription>
           {shipment && (
             <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-              <TruckIcon className="size-3.5" />
+              <CourierLogo carrier={shipment.carrier} className="size-3.5" />
               <span className="font-medium text-foreground">{CARRIER_LABEL[shipment.carrier]}</span>
               <span>· {label(shipment.status)}</span>
               {(shipment.consignmentId ?? shipment.trackingNumber) && <span className="font-mono">· {shipment.consignmentId ?? shipment.trackingNumber}</span>}

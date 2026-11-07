@@ -63,7 +63,7 @@ import { type PromotionInfo } from "@/app/actions/marketing.actions"
 import { bookPathaoShipment, getPathaoStores, syncPathaoShipment } from "@/app/actions/pathao.actions"
 import { Card, fmtDate, fmtDateTime, Kpis, label, n0, Pill, RackTag, rel, taka, type Tone, WarehouseTag } from "@/components/inventory/inventory-ui"
 import { MovementQuantity, MovementTag, movementRacks } from "@/components/inventory/movements-table"
-import { CANCELLABLE, cancelBlockedBy, liveShipment, CancelDialog, CARRIER_LABEL, FINISHED, followsShipment, localPhone, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL, PROVIDER_LABEL, RefreshButton, SourceBadge, whatsApp } from "@/components/orders/orders-table"
+import { CANCELLABLE, cancelBlockedBy, CourierLogo, liveShipment, CancelDialog, CARRIER_LABEL, FINISHED, followsShipment, localPhone, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL, PROVIDER_LABEL, RefreshButton, SourceBadge, whatsApp } from "@/components/orders/orders-table"
 import { offerSentence, offerText } from "@/components/marketing/marketing-utils"
 import { PrintInvoice } from "@/components/orders/print-invoice"
 import { StatusBadge } from "@/components/status-badge"
@@ -800,9 +800,7 @@ export function OrderDetailPage({
                 {order.shipments.map((s) => (
                   <li key={s.id} className="flex flex-col gap-3 border-t border-border/60 px-4 py-3 text-sm">
                     <div className="flex flex-wrap items-center gap-3">
-                      <span className="grid size-9 place-items-center rounded-lg bg-muted text-muted-foreground">
-                        <TruckIcon className="size-4" />
-                      </span>
+                      <CourierLogo carrier={s.carrier} className="size-9 rounded-lg" />
                       <div className="min-w-0 flex-1">
                         <div className="font-medium">{[CARRIER_LABEL[s.carrier] ?? s.carrier, s.service].filter(Boolean).join(" · ")}</div>
                         <div className="text-xs text-muted-foreground">
@@ -1207,7 +1205,7 @@ export function OrderDetailPage({
                         </div>
                         {collector && (
                           <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <TruckIcon className="size-3.5" />
+                            <CourierLogo carrier={collector.carrier} className="size-3.5" />
                             {CARRIER_LABEL[collector.carrier]} collects this on delivery
                           </div>
                         )}

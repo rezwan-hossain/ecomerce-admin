@@ -7,7 +7,7 @@ import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import type { SaleLine, SaleOrder, SalesData } from "@/components/analytics/analytics-utils"
 import { ShareBars, short } from "@/components/analytics/sales-report"
 import { Card, n0, taka } from "@/components/inventory/inventory-ui"
-import { CARRIER_LABEL } from "@/components/orders/orders-table"
+import { CARRIER_LABEL, CourierLogo } from "@/components/orders/orders-table"
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
 import { cn } from "@/lib/utils"
 
@@ -332,7 +332,12 @@ export function SalesDetails({
                 if (c.rate !== null && c.rate < 70) tone = "text-destructive"
                 return (
                   <tr key={c.carrier} className="border-t border-border/60 [&>td]:px-3 [&>td]:py-2 [&>td:first-child]:pl-4 [&>td:last-child]:pr-4">
-                    <td className="font-medium">{CARRIER_LABEL[c.carrier as keyof typeof CARRIER_LABEL]}</td>
+                    <td className="font-medium">
+                      <span className="flex items-center gap-2">
+                        <CourierLogo carrier={c.carrier as keyof typeof CARRIER_LABEL} className="size-5" />
+                        {CARRIER_LABEL[c.carrier as keyof typeof CARRIER_LABEL]}
+                      </span>
+                    </td>
                     <td className="text-right">{n0(c.parcels)}</td>
                     <td className={cn("text-right font-medium", c.rate !== null && tone)}>{c.rate === null ? "—" : `${c.rate}%`}</td>
                     <td className="hidden text-right sm:table-cell">{c.days === null ? "—" : c.days.toFixed(1)}</td>
