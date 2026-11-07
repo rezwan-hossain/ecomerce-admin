@@ -22,7 +22,6 @@ import {
   CircleXIcon,
   CopyIcon,
   ExternalLinkIcon,
-  FileTextIcon,
   LockIcon,
   MailIcon,
   MinusIcon,
@@ -38,14 +37,12 @@ import {
   ReceiptIcon,
   RefreshCwIcon,
   StickyNoteIcon,
-  StoreIcon,
   TagIcon,
   TriangleAlertIcon,
   TruckIcon,
   Undo2Icon,
   UserIcon,
   XIcon,
-  ZapIcon,
 } from "lucide-react"
 
 import {
@@ -61,10 +58,11 @@ import {
   updateShipmentStatus,
 } from "@/app/actions/order.actions"
 import { type PromotionInfo } from "@/app/actions/marketing.actions"
-import { bookPathaoShipment, getPathaoStores, syncPathaoShipment } from "@/app/actions/pathao.actions"
+import { bookPathaoShipment, syncPathaoShipment } from "@/app/actions/pathao.actions"
+import { chip, PATHAO_DEFAULTS, PathaoMark, PathaoOptions, pathaoOptionsBody, pathaoOptionsSchema } from "@/components/courier/pathao-bulk-dialog"
 import { Card, fmtDate, fmtDateTime, Kpis, label, n0, Pill, RackTag, rel, taka, type Tone, WarehouseTag } from "@/components/inventory/inventory-ui"
 import { MovementQuantity, MovementTag, movementRacks } from "@/components/inventory/movements-table"
-import { CANCELLABLE, cancelBlockedBy, CourierLogo, liveShipment, CancelDialog, CARRIER_LABEL, FINISHED, followsShipment, localPhone, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL, PROVIDER_LABEL, RefreshButton, SourceBadge, whatsApp } from "@/components/orders/orders-table"
+import { CANCELLABLE, cancelBlockedBy, hasOpenPathao, CourierLogo, liveShipment, CancelDialog, CARRIER_LABEL, FINISHED, followsShipment, localPhone, NEXT, ORDER_STATUS_LABEL, PAYMENT_LABEL, PROVIDER_LABEL, RefreshButton, SourceBadge, whatsApp } from "@/components/orders/orders-table"
 import { offerSentence, offerText } from "@/components/marketing/marketing-utils"
 import { PrintInvoice } from "@/components/orders/print-invoice"
 import { StatusBadge } from "@/components/status-badge"
@@ -82,7 +80,6 @@ import { getReturnState } from "@/lib/orders/return-state"
 import { cn } from "@/lib/utils"
 import type { LedgerMovement, StockLevel, VariantStockDetail } from "@/types/inventory.type"
 import { formatAddress, pathaoAddress, type CourierCarrier, type Order, type OrderAddress, type OrderAddressBody, type OrderDetail, type OrderStatus, type PaymentStatus, type Shipment, type ShipmentStatus } from "@/types/order.type"
-import type { PathaoDeliveryType, PathaoItemType, PathaoStore } from "@/types/pathao.type"
 
 // The next step on the happy path, as the backend allows it (ORDER_STATUS_TRANSITIONS).
 const STEPS: OrderStatus[] = ["PENDING", "CONFIRMED", "PROCESSING", "READY_TO_SHIP", "SHIPPED", "DELIVERED", "COMPLETED"]
@@ -288,7 +285,7 @@ export function OrderDetailPage({
     ? `Booked with ${CARRIER_LABEL[booked.carrier]}${booked.consignmentId ? ` (${booked.consignmentId})` : ""}. Cancel the parcel first, then change the address and book again.`
     : undefined
   // The backend refuses a second Pathao parcel while one is still on the way.
-  const hasOpenPathao = order.shipments.some((s) => s.carrier === "PATHAO" && !SHIPMENT_DONE.includes(s.status) && s.status !== "FAILED")
+  const openPathao = hasOpenPathao(order)
   const payment = order.payments.find((p) => p.status === "PAID") ?? order.payments.at(-1)
   const placedAt = order.placedAt ?? order.createdAt
   // Item promotions live on each line; order-level discounts (codes) in `discounts`.
@@ -765,8 +762,8 @@ export function OrderDetailPage({
                     <TruckIcon />
                     Add shipment
                   </Button>
-                  <span className="flex" title={hasOpenPathao ? "This order already has a Pathao parcel on the way" : undefined}>
-                    <Button size="sm" className="rounded-r-none" onClick={bookPathao} disabled={busy || hasOpenPathao}>
+                  <span className="flex" title={openPathao ? "This order already has a Pathao parcel on the way" : undefined}>
+                    <Button size="sm" className="rounded-r-none" onClick={bookPathao} disabled={busy || openPathao}>
                       <PathaoMark />
                       {busy ? "Booking..." : "Book with Pathao"}
                     </Button>
@@ -774,7 +771,7 @@ export function OrderDetailPage({
                       size="icon-sm"
                       className="rounded-l-none border-l border-primary-foreground/25"
                       onClick={() => setBookingPathao(true)}
-                      disabled={busy || hasOpenPathao}
+                      disabled={busy || openPathao}
                       aria-label="Book with Pathao, choose the settings"
                       title="Choose store, weight, cash to collect..."
                     >
@@ -1120,7 +1117,7 @@ export function OrderDetailPage({
                     {shippingLocked}
                   </p>
                 )}
-                {readdressed && canShip && !hasOpenPathao && !liveShipment(order) && (
+                {readdressed && canShip && !openPathao && !liveShipment(order) && (
                   <div className="mt-2 flex items-center gap-2 rounded-lg bg-primary/10 px-2.5 py-2 text-xs">
                     <CircleCheckIcon className="size-3.5 shrink-0 text-primary" />
                     <span className="flex-1">Address changed. Book with Pathao again?</span>
@@ -1443,16 +1440,6 @@ export const pathaoText = (status: string) => {
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
 
-// Pathao's logo (public/couriers/pathao.png, from their GitHub avatar); the round crop hides its black corners.
-export function PathaoMark({ className }: { className?: string }) {
-  return (
-    <span aria-hidden className={cn("size-4 shrink-0 overflow-hidden rounded-full bg-white", className)}>
-      {/* eslint-disable-next-line @next/next/no-img-element -- a 16px static icon */}
-      <img src="/couriers/pathao.png" alt="" className="size-full scale-[1.12] object-cover" />
-    </span>
-  )
-}
-
 // Plain-words help for the booking errors we know; anything else shows the API's own message.
 function pathaoTip(message: string) {
   if (/storeId|PATHAO_STORE_ID/i.test(message)) return "No pickup store. Pick one with the pencil, or set PATHAO_STORE_ID in the backend's .env."
@@ -1605,9 +1592,6 @@ function ApiReply({ reply }: { reply: unknown }) {
   )
 }
 
-const ALL = "all"
-const sameAs = (value: string) => (value === ALL ? undefined : Number(value))
-
 type AddressForm = { fullName: string; phone: string; city: string; thana: string; fullAddress: string }
 
 // Edits a shipping or billing address; only changed fields are sent.
@@ -1707,19 +1691,15 @@ function PathaoDialog({ order, due, onClose }: { order: OrderDetail; due: number
   const address = order.addresses.find((a) => a.type === "SHIPPING")
   // Pathao gets 11 digits ("01712345678"); the address phone wins over the customer's.
   const phone = address?.phone ?? order.customerPhone
-  const [stores, setStores] = useState<PathaoStore[] | null>(null)
-  const [storeId, setStoreId] = useState(ALL)
-  const [deliveryType, setDeliveryType] = useState<PathaoDeliveryType>("NORMAL")
-  const [itemType, setItemType] = useState<PathaoItemType>("PARCEL")
-  const [weight, setWeight] = useState("0.5")
+  const [options, setOptions] = useState({
+    ...PATHAO_DEFAULTS,
+    description: order.items.map((i) => `${i.quantity} × ${i.productName}`).join(", ").slice(0, 255),
+  })
   const [quantity, setQuantity] = useState(String(order.items.reduce((s, i) => s + i.quantity, 0)))
   const [collect, setCollect] = useState(String(Math.round(due)))
-  const [description, setDescription] = useState(order.items.map((i) => `${i.quantity} × ${i.productName}`).join(", ").slice(0, 255))
-  const [instruction, setInstruction] = useState("")
   const [error, setError] = useState("")
   const [saving, setSaving] = useState(false)
   const [reply, setReply] = useState<{ ok: boolean; body: unknown; at: string } | null>(null)
-  const [storeError, setStoreError] = useState("")
   const [addressForm, setAddressForm] = useState<AddressForm | null>(null)
   const [addressError, setAddressError] = useState("")
   const [savingAddress, setSavingAddress] = useState(false)
@@ -1757,30 +1737,15 @@ function PathaoDialog({ order, due, onClose }: { order: OrderDetail; due: number
     setAddressForm(null)
   }
 
-  useEffect(() => {
-    getPathaoStores().then((res) => {
-      if (res.success) setStores(res.data.filter((st) => st.is_active))
-      else {
-        setStores([])
-        setStoreError(res.error)
-      }
-    })
-  }, [])
-
   async function book() {
-    const kg = Number(weight)
-    if (!(kg >= 0.5 && kg <= 10)) return setError("Weight must be between 0.5 and 10 kg.")
+    const parsed = pathaoOptionsSchema.safeParse(options)
+    if (!parsed.success) return setError(parsed.error.issues[0].message)
     if (!/^\d+$/.test(quantity) || Number(quantity) < 1) return setError("Quantity must be a whole number, at least 1.")
     if (!/^\d+$/.test(collect)) return setError("Cash to collect must be whole taka, 0 or more.")
     setSaving(true)
     const res = await bookPathaoShipment(order.id, {
-      storeId: sameAs(storeId),
-      deliveryType,
-      itemType,
-      itemWeight: kg,
+      ...pathaoOptionsBody(options),
       itemQuantity: Number(quantity),
-      itemDescription: description.trim() || undefined,
-      specialInstruction: instruction.trim() || undefined,
       amountToCollect: Number(collect),
     })
     setSaving(false)
@@ -1791,34 +1756,10 @@ function PathaoDialog({ order, due, onClose }: { order: OrderDetail; due: number
     toast.success(`${order.orderNumber} booked with Pathao`, { description: "The rider will pick it up from your store." })
   }
 
-  const storeItems = [{ value: ALL, label: "Default pickup store" }, ...(stores ?? []).map((st) => ({ value: String(st.store_id), label: st.store_name }))]
-  const store = stores?.find((st) => String(st.store_id) === storeId)
-  const kg = Number(weight)
+  const { deliveryType, itemType, weight } = options
   const name = address?.fullName || order.customerName
-  const pick = (text: string, value: string, items: { value: string; label: string }[], onChange: (v: string) => void, disabled = false) => (
-    <Field>
-      <FieldLabel>{text}</FieldLabel>
-      <Select value={value} items={items} onValueChange={(v) => onChange(v as string)} disabled={disabled}>
-        <SelectTrigger aria-label={text} className="w-full"><SelectValue /></SelectTrigger>
-        <SelectContent>
-          {items.map((i) => <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>)}
-        </SelectContent>
-      </Select>
-    </Field>
-  )
-  const toggle = (value: string, options: { value: string; label: string; icon: React.ElementType }[], onChange: (v: string) => void) => (
-    <ToggleGroup multiple={false} value={[value]} onValueChange={(v) => v[0] && onChange(v[0])} variant="outline" spacing={0} className="w-full">
-      {options.map((o) => (
-        <ToggleGroupItem key={o.value} value={o.value} className="flex-1 gap-1.5 px-3! data-pressed:bg-primary/10 data-pressed:font-medium data-pressed:text-primary">
-          <o.icon className="size-3.5" />
-          {o.label}
-        </ToggleGroupItem>
-      ))}
-    </ToggleGroup>
-  )
   const section = "flex flex-col gap-3 border-t px-6 py-4 first:border-t-0"
   const sectionTitle = "flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase [&_svg]:size-3.5"
-  const chip = (active: boolean) => cn("rounded-md border px-2 py-0.5 text-xs tabular-nums transition-colors hover:bg-muted", active && "border-primary bg-primary/10 text-primary hover:bg-primary/10")
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -1928,106 +1869,43 @@ function PathaoDialog({ order, due, onClose }: { order: OrderDetail; due: number
             )}
           </div>
 
-          <div className={section}>
-            <h3 className={sectionTitle}><StoreIcon />Pickup & service</h3>
-            <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto]">
-              {pick("Pickup store", storeId, storeItems, setStoreId, stores === null)}
-              <Field>
-                <FieldLabel>Delivery</FieldLabel>
-                {toggle(deliveryType, [{ value: "NORMAL", label: "Normal", icon: TruckIcon }, { value: "ON_DEMAND", label: "On demand", icon: ZapIcon }], (v) => setDeliveryType(v as PathaoDeliveryType))}
-              </Field>
-              <Field>
-                <FieldLabel>Item type</FieldLabel>
-                {toggle(itemType, [{ value: "PARCEL", label: "Parcel", icon: PackageIcon }, { value: "DOCUMENT", label: "Document", icon: FileTextIcon }], (v) => setItemType(v as PathaoItemType))}
-              </Field>
-            </div>
-            {stores === null && <p className="-mt-1 text-xs text-muted-foreground">Loading your Pathao stores...</p>}
-            {store && <p className="-mt-1 text-xs text-muted-foreground">Picked up from {store.store_address}</p>}
-            {storeError && <p className="-mt-1 text-xs text-amber-700 dark:text-amber-400">Couldn’t load your stores ({storeError}). The default store from the backend is used.</p>}
-          </div>
-
-          <div className={section}>
-            <h3 className={sectionTitle}><PackageIcon />Parcel</h3>
-            <div className="grid gap-3 sm:grid-cols-[1.4fr_0.6fr_1fr]">
-              <Field>
-                <FieldLabel htmlFor="pathao-weight">Weight</FieldLabel>
-                <div className="flex items-center gap-1">
-                  <Button size="icon" variant="outline" aria-label="Half a kilo less" onClick={() => setWeight(String(Math.max(0.5, kg - 0.5)))} disabled={!(kg > 0.5)}>
-                    −
-                  </Button>
-                  <div className="relative flex-1">
-                    <Input id="pathao-weight" inputMode="decimal" value={weight} onChange={(e) => setWeight(e.target.value)} className="pr-8 text-center tabular-nums" />
-                    <span className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-xs text-muted-foreground">kg</span>
+          <PathaoOptions
+            value={options}
+            onChange={setOptions}
+            extra={
+              <>
+                <Field>
+                  <FieldLabel htmlFor="pathao-qty">Items</FieldLabel>
+                  <div className="flex items-center gap-1">
+                    <Button size="icon" variant="outline" aria-label="One item less" onClick={() => setQuantity(String(Math.max(1, Number(quantity) - 1)))} disabled={!(Number(quantity) > 1)}>
+                      −
+                    </Button>
+                    <Input id="pathao-qty" inputMode="numeric" value={quantity} onChange={(e) => setQuantity(e.target.value)} className="text-center tabular-nums" />
+                    <Button size="icon" variant="outline" aria-label="One item more" onClick={() => setQuantity(String((Number(quantity) || 0) + 1))}>
+                      +
+                    </Button>
                   </div>
-                  <Button size="icon" variant="outline" aria-label="Half a kilo more" onClick={() => setWeight(String(Math.min(10, (kg || 0) + 0.5)))} disabled={kg >= 10}>
-                    +
-                  </Button>
-                </div>
-                <span className="flex gap-1">
-                  {[0.5, 1, 2, 5].map((w) => (
-                    <button key={w} type="button" onClick={() => setWeight(String(w))} className={chip(kg === w)}>
-                      {w} kg
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="pathao-cod">Cash to collect</FieldLabel>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-sm text-muted-foreground">৳</span>
+                    <Input id="pathao-cod" inputMode="numeric" value={collect} onChange={(e) => setCollect(e.target.value)} className="pl-7 tabular-nums" />
+                  </div>
+                  <span className="flex gap-1">
+                    {due > 0 && (
+                      <button type="button" onClick={() => setCollect(String(Math.round(due)))} className={chip(collect === String(Math.round(due)))}>
+                        Balance due
+                      </button>
+                    )}
+                    <button type="button" onClick={() => setCollect("0")} className={chip(collect === "0")}>
+                      Nothing
                     </button>
-                  ))}
-                </span>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="pathao-qty">Items</FieldLabel>
-                <div className="flex items-center gap-1">
-                  <Button size="icon" variant="outline" aria-label="One item less" onClick={() => setQuantity(String(Math.max(1, Number(quantity) - 1)))} disabled={!(Number(quantity) > 1)}>
-                    −
-                  </Button>
-                  <Input id="pathao-qty" inputMode="numeric" value={quantity} onChange={(e) => setQuantity(e.target.value)} className="text-center tabular-nums" />
-                  <Button size="icon" variant="outline" aria-label="One item more" onClick={() => setQuantity(String((Number(quantity) || 0) + 1))}>
-                    +
-                  </Button>
-                </div>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="pathao-cod">Cash to collect</FieldLabel>
-                <div className="relative">
-                  <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-sm text-muted-foreground">৳</span>
-                  <Input id="pathao-cod" inputMode="numeric" value={collect} onChange={(e) => setCollect(e.target.value)} className="pl-7 tabular-nums" />
-                </div>
-                <span className="flex gap-1">
-                  {due > 0 && (
-                    <button type="button" onClick={() => setCollect(String(Math.round(due)))} className={chip(collect === String(Math.round(due)))}>
-                      Balance due
-                    </button>
-                  )}
-                  <button type="button" onClick={() => setCollect("0")} className={chip(collect === "0")}>
-                    Nothing
-                  </button>
-                </span>
-              </Field>
-            </div>
-            <Field>
-              <FieldLabel htmlFor="pathao-desc">What’s inside</FieldLabel>
-              <Input id="pathao-desc" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={255} />
-            </Field>
-          </div>
-
-          <div className={section}>
-            <div className="flex items-baseline justify-between gap-2">
-              <h3 className={sectionTitle}><StickyNoteIcon />Note for the rider</h3>
-              <span className="text-xs text-muted-foreground tabular-nums">{instruction.length}/255</span>
-            </div>
-            <Textarea id="pathao-note" value={instruction} onChange={(e) => setInstruction(e.target.value)} maxLength={255} placeholder="Call before delivery" className="min-h-16" aria-label="Note for the rider" />
-            <span className="-mt-1 flex flex-wrap gap-1">
-              {["Call before delivery", "Handle with care", "Fragile"].map((t) => {
-                const on = instruction.includes(t)
-                // A second click takes the phrase back out of the note.
-                const next = on
-                  ? instruction.replace(t, "").replace(/^[.\s]+|[.\s]+$/g, "").replace(/(\.\s*){2,}/g, ". ")
-                  : [instruction.trim(), t].filter(Boolean).join(". ")
-                return (
-                  <button key={t} type="button" aria-pressed={on} onClick={() => setInstruction(next.slice(0, 255))} className={chip(on)}>
-                    {on ? "✓" : "+"} {t}
-                  </button>
-                )
-              })}
-            </span>
-          </div>
+                  </span>
+                </Field>
+              </>
+            }
+          />
 
           {reply && (
             <div className="border-t px-6 py-4">

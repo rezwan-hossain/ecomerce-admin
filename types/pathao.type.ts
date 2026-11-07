@@ -36,3 +36,23 @@ export interface PathaoSyncResult {
   updated: boolean;
   status: ShipmentStatus;
 }
+
+// POST /courier/pathao/shipments/bulk: one set of parcel options for many orders.
+// Item count and cash to collect come from each order on the backend.
+export interface BulkBookBody {
+  orderIds: string[]; // 1–50, no repeats
+  storeId?: number;
+  deliveryType?: PathaoDeliveryType;
+  itemType?: PathaoItemType;
+  itemWeight?: number;
+  itemDescription?: string;
+  specialInstruction?: string;
+}
+
+// Always 200 when the request is valid, with no { data } wrapper; lists keep the order the ids were sent in.
+// `skipped` = not tried because Pathao stopped working (the order that hit it is in `failed`).
+export interface BulkBookResult {
+  booked: { orderId: string; orderNumber: string | null; consignmentId: string; amountToCollect: number }[];
+  failed: { orderId: string; orderNumber: string | null; status: number; error: string }[];
+  skipped: { orderId: string; orderNumber: string | null }[];
+}

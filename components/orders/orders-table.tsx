@@ -31,6 +31,7 @@ import { fmtDateTime, Kpis, label, n0, Pill, rel, taka, type Tone } from "@/comp
 import { ListTable, type ListColumn, type ListFilter } from "@/components/list-table"
 import { cancelOrder, markPaymentPaid, updateOrderStatus } from "@/app/actions/order.actions"
 import { getProduct } from "@/app/actions/product.actions"
+import { PathaoBulkDialog, PathaoMark } from "@/components/courier/pathao-bulk-dialog"
 import { StatusBadge } from "@/components/status-badge"
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
@@ -175,6 +176,12 @@ const RETURNS: OrderStatus[] = ["RETURNED", "PARTIALLY_RETURNED"]
 // Same rule as the backend: refunded payments still count as received.
 const RECEIVED: PaymentStatus[] = ["PAID", "PARTIALLY_PAID", "REFUNDED", "PARTIALLY_REFUNDED"]
 const isPaid = (o: Order) => o.payments.some((p) => RECEIVED.includes(p.status))
+export const paidSoFar = (o: Pick<Order, "payments">) => o.payments.filter((p) => RECEIVED.includes(p.status)).reduce((s, p) => s + Number(p.amount), 0)
+// The backend refuses a second Pathao parcel while one is still on the way.
+export const hasOpenPathao = (o: Pick<Order, "shipments">) =>
+  o.shipments.some((s) => s.carrier === "PATHAO" && !["DELIVERED", "CANCELLED", "RETURNED", "FAILED"].includes(s.status))
+// What "Book with Pathao" (one order) and "Send with Pathao" (many) both accept.
+export const canBookPathao = (o: Pick<Order, "status" | "shipments">) => ["CONFIRMED", "PROCESSING", "READY_TO_SHIP"].includes(o.status) && !hasOpenPathao(o)
 const placed = (o: Order) => o.placedAt ?? o.createdAt
 const age = (o: Order) => (Date.now() - new Date(placed(o)).getTime()) / DAY
 const itemCount = (o: Order) => o.items.reduce((sum, item) => sum + item.quantity, 0)
@@ -392,6 +399,7 @@ export function OrdersTable({
   const [cancelling, setCancelling] = useState<Order | null>(null)
   const [selected, setSelected] = useState<string[]>([])
   const [job, setJob] = useState<BulkJob | null>(null)
+  const [sendingPathao, setSendingPathao] = useState(false)
 
   async function advance(o: Order) {
     const next = NEXT[o.status]!
@@ -647,6 +655,7 @@ export function OrdersTable({
     .filter((step) => step.orders.length > 0)
   const payable = chosen.filter((o) => openPayment(o))
   const cancellable = chosen.filter((o) => CANCELLABLE.includes(o.status) && !cancelBlockedBy(o))
+  const bookable = chosen.filter(canBookPathao)
 
   function stepJob({ status, text, orders: list }: (typeof steps)[number]) {
     setJob({
@@ -686,6 +695,16 @@ export function OrdersTable({
 
   const bulkActions = (
     <>
+      {chosen.length > bookable.length && (
+        <span className="text-[11px] font-normal text-muted-foreground">
+          {n0(chosen.length - bookable.length)} can’t be sent (already shipped or booked)
+        </span>
+      )}
+      <Button size="xs" onClick={() => setSendingPathao(true)} disabled={!bookable.length}>
+        <PathaoMark className="size-3.5" />
+        Send with Pathao
+        {bookable.length > 0 && <span className="tabular-nums opacity-80">{n0(bookable.length)}</span>}
+      </Button>
       {steps.length > 0 && (
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant="outline" size="xs" className="bg-card" />}>
@@ -846,6 +865,18 @@ export function OrdersTable({
           onDone={() => {
             setJob(null)
             setSelected([])
+          }}
+        />
+      )}
+      {sendingPathao && (
+        <PathaoBulkDialog
+          orders={bookable}
+          addresses={addresses}
+          onClose={(booked) => {
+            setSendingPathao(false)
+            if (!booked) return
+            setSelected([])
+            toast.success(`${n0(booked)} ${booked === 1 ? "order" : "orders"} sent to Pathao`)
           }}
         />
       )}

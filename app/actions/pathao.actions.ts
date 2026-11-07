@@ -6,6 +6,8 @@ import { handleRequest } from "@/lib/action-response";
 import { api, ApiError } from "@/lib/api";
 import type {
   BookPathaoDto,
+  BulkBookBody,
+  BulkBookResult,
   PathaoStore,
   PathaoSyncResult,
 } from "@/types/pathao.type";
@@ -44,6 +46,18 @@ export async function bookPathaoShipment(orderId: string, dto: BookPathaoDto) {
     api.post(`/courier/pathao/orders/${orderId}/shipments`, dto),
   );
   if (res.success) refresh(orderId);
+  return res;
+}
+
+// Books several orders one after another (slow: ~1–2 s each). Send at most 50 ids; the
+// dialog sends 10 at a time. Node's fetch waits up to 5 minutes for the reply, enough for 10.
+export async function bulkBookPathaoShipments(body: BulkBookBody) {
+  const res = await handleRequest(() =>
+    api.post<BulkBookResult>("/courier/pathao/shipments/bulk", body),
+  );
+  revalidatePath("/orders");
+  revalidatePath("/orders/pending");
+  revalidatePath("/shipping");
   return res;
 }
 
