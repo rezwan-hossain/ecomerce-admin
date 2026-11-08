@@ -35,6 +35,7 @@ const OUTCOMES = [
 // Orders whose units left the warehouse, for the return rate.
 const SHIPPED = ["SHIPPED", "DELIVERED", "COMPLETED", "RETURNED", "PARTIALLY_RETURNED", "REFUNDED"]
 const ORDERS_PAGE = 20
+const SIZES = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "XXXL"]
 const pct = (part: number, whole: number) => (whole ? Math.round((part / whole) * 100) : 0)
 
 const WEEKS = 12
@@ -211,6 +212,22 @@ export function ProductDetailPage({
     places.set(city.toLowerCase(), p)
   }
   const topPlaces = [...places.values()].sort((a, b) => b.units - a.units).slice(0, 5)
+
+  // Shoe sizes by number and clothing sizes small to large; anything else keeps the saved order.
+  const rank = (v: ProductDetail["variants"][number]) =>
+    v.optionValues.map((o) => {
+      const value = o.optionValue.value.trim().toUpperCase()
+      if (/^\d+(\.\d+)?$/.test(value)) return Number(value)
+      if (SIZES.includes(value)) return SIZES.indexOf(value)
+      return 0
+    })
+  const variants = [...product.variants].sort((a, b) => {
+    const ra = rank(a)
+    const rb = rank(b)
+    const i = ra.findIndex((x, k) => x !== rb[k])
+    return i === -1 ? 0 : ra[i] - rb[i]
+  })
+  const maxOnHand = Math.max(1, ...stock.map((v) => v.onHand))
 
   const unitCostOf = (variantId: string) => Number(stockById.get(variantId)?.levels.find((l) => Number(l.unitCost) > 0)?.unitCost ?? 0)
   const costMissing = stock.some((v) => v.onHand > 0 && !v.levels.some((l) => Number(l.unitCost) > 0))
@@ -484,73 +501,134 @@ export function ProductDetailPage({
                   <tr>
                     <th className={th}>Variant</th>
                     <th className={cn(th, "text-right")}>Price</th>
-                    <th className={cn(th, "text-right")}>On hand</th>
-                    <th className={cn(th, "hidden text-right sm:table-cell")}>Held</th>
-                    <th className={cn(th, "text-right")}>Sellable</th>
-                    <th className={cn(th, "hidden text-right sm:table-cell")}>Sold</th>
-                    <th className={cn(th, "hidden text-right xl:table-cell")}>Alert at</th>
-                    <th className={cn(th, "hidden text-right lg:table-cell")}>Unit cost</th>
-                    <th className={cn(th, "hidden text-right lg:table-cell")}>Margin</th>
+                    <th className={th}>Stock</th>
+                    <th className={cn(th, "hidden sm:table-cell")}>Sold</th>
+                    <th className={cn(th, "hidden text-right lg:table-cell")}>Cost · margin</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {product.variants.map((v) => {
+                  {variants.map((v) => {
                     const s = stockById.get(v.id)
                     const name = v.optionValues.map((o) => o.optionValue.value).join(" / ") || "Default"
                     const unitCost = unitCostOf(v.id)
                     const price = Number(v.pricing?.effectivePrice ?? v.price)
+                    const sellable = s?.stock ?? 0
+                    const onHand = s?.onHand ?? 0
+                    const units = byVariant.get(v.id)?.units ?? 0
+                    const thumb = v.images[0]?.url ?? images[0]?.url
+                    let stockTone = "bg-emerald-500"
+                    let stockText = ""
+                    if (sellable <= 0) {
+                      stockTone = "bg-red-500"
+                      stockText = "text-destructive"
+                    } else if (sellable <= v.lowStockThreshold) {
+                      stockTone = "bg-amber-500"
+                      stockText = "text-amber-700 dark:text-amber-400"
+                    }
                     return (
-                      <tr key={v.id} className="border-t border-border/60">
+                      <tr key={v.id} className="border-t border-border/60 hover:bg-muted/30">
                         <td className={td}>
-                          <div className="flex items-center gap-2">
-                            <span className={cn("size-2 shrink-0 rounded-full", HEALTH_DOT[s ? variantHealth(s) : "none"])} aria-hidden />
-                            <span className="font-medium">{name}</span>
-                            {!v.isActive && <Pill tone="grey">Hidden</Pill>}
-                          </div>
-                          <div className="pl-4 font-mono text-[11.5px] text-muted-foreground">{v.sku}</div>
-                          {s && s.levels.length > 0 && (
-                            <div className="mt-1 flex flex-wrap gap-1 pl-4">
-                              {s.levels.map((l) => (
-                                <WarehouseTag key={l.warehouseId} code={l.warehouse.code} count={l.available} tone={l.available <= 0 ? "bad" : undefined} />
-                              ))}
+                          <div className="flex items-center gap-3">
+                            <span className="relative grid size-11 shrink-0 place-items-center overflow-hidden rounded-lg border bg-muted/60 text-muted-foreground">
+                              {thumb ? (
+                                // eslint-disable-next-line @next/next/no-img-element -- any image host is allowed
+                                <img src={thumb} alt="" className="size-full object-cover" />
+                              ) : (
+                                <PackageIcon className="size-4" />
+                              )}
+                            </span>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className={cn("size-2 shrink-0 rounded-full", HEALTH_DOT[s ? variantHealth(s) : "none"])} aria-hidden />
+                                <span className="font-semibold">{name}</span>
+                                {!v.isActive && <Pill tone="grey">Hidden</Pill>}
+                              </div>
+                              <div className="flex items-center gap-0.5">
+                                <span className="max-w-40 truncate font-mono text-[11px] text-muted-foreground" title={v.sku}>
+                                  {v.sku}
+                                </span>
+                                <CopyButton text={v.sku} what="SKU" />
+                              </div>
+                              {s && s.levels.length > 0 && (
+                                <div className="mt-0.5 flex flex-wrap gap-1">
+                                  {s.levels.map((l) => (
+                                    <WarehouseTag key={l.warehouseId} code={l.warehouse.code} count={l.available} tone={l.available <= 0 ? "bad" : undefined} />
+                                  ))}
+                                </div>
+                              )}
                             </div>
-                          )}
+                          </div>
                         </td>
                         <td className={cn(td, "text-right tabular-nums")}>
-                          <div className="font-medium">{taka(Number(v.pricing?.effectivePrice ?? v.price))}</div>
+                          <div className="font-semibold">{taka(price)}</div>
                           {v.pricing?.hasPromotion && <div className="text-xs text-muted-foreground line-through">{taka(Number(v.price))}</div>}
                         </td>
-                        <td className={cn(td, "text-right text-muted-foreground tabular-nums")}>{n0(s?.onHand ?? 0)}</td>
-                        <td className={cn(td, "hidden text-right text-muted-foreground tabular-nums sm:table-cell")}>{n0(s?.reserved ?? 0)}</td>
-                        <td
-                          className={cn(
-                            td,
-                            "text-right font-semibold tabular-nums",
-                            (s?.stock ?? 0) <= 0 && "text-destructive",
-                            (s?.stock ?? 0) > 0 && (s?.stock ?? 0) <= v.lowStockThreshold && "text-amber-700 dark:text-amber-400"
+                        <td className={cn(td, "min-w-40")}>
+                          <div className="flex items-baseline justify-between gap-2">
+                            <span className={cn("text-base font-semibold tabular-nums", stockText)}>
+                              {n0(sellable)} <span className="text-xs font-normal text-muted-foreground">sellable</span>
+                            </span>
+                            <span className="text-xs whitespace-nowrap text-muted-foreground tabular-nums">of {n0(onHand)}</span>
+                          </div>
+                          {/* Bars share one scale, so variants compare at a glance; the tick is the low-stock alert. */}
+                          <div className="relative mt-1 h-1.5 rounded-full bg-muted">
+                            <div className={cn("h-full rounded-full", stockTone)} style={{ width: `${pct(sellable, maxOnHand)}%` }} />
+                            <span
+                              className="absolute -top-0.5 h-2.5 w-px bg-foreground/40"
+                              style={{ left: `${Math.min(100, pct(v.lowStockThreshold, maxOnHand))}%` }}
+                              title={`Alert at ${v.lowStockThreshold}`}
+                            />
+                          </div>
+                          <div className="mt-1 text-[11px] whitespace-nowrap text-muted-foreground">
+                            {(s?.reserved ?? 0) > 0 && `${n0(s!.reserved)} held · `}alert at {n0(v.lowStockThreshold)}
+                          </div>
+                        </td>
+                        <td className={cn(td, "hidden sm:table-cell")}>
+                          {units > 0 ? (
+                            <div className="w-24">
+                              <div className="flex items-baseline justify-between text-xs">
+                                <span className="text-sm font-semibold tabular-nums">{n0(units)}</span>
+                                <span className="text-muted-foreground tabular-nums">{pct(units, unitsSold)}%</span>
+                              </div>
+                              <div className="mt-1 h-1 rounded-full bg-muted">
+                                <div className="h-full rounded-full bg-primary" style={{ width: `${pct(units, unitsSold)}%` }} />
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">No sales</span>
                           )}
-                        >
-                          {n0(s?.stock ?? 0)}
-                        </td>
-                        <td className={cn(td, "hidden text-right tabular-nums sm:table-cell")}>
-                          <div className="font-medium">{n0(byVariant.get(v.id)?.units ?? 0)}</div>
-                          <div className="text-xs whitespace-nowrap text-muted-foreground">{pct(byVariant.get(v.id)?.units ?? 0, unitsSold)}% of sales</div>
-                        </td>
-                        <td className={cn(td, "hidden text-right text-muted-foreground tabular-nums xl:table-cell")}>{n0(v.lowStockThreshold)}</td>
-                        <td className={cn(td, "hidden text-right text-muted-foreground tabular-nums lg:table-cell")}>
-                          {unitCost > 0 ? taka(unitCost, 2) : "—"}
                         </td>
                         <td className={cn(td, "hidden text-right tabular-nums lg:table-cell")}>
-                          {unitCost > 0 && price > 0 ? (
-                            <span className={cn("font-medium", price - unitCost < 0 && "text-destructive")}>{Math.round(((price - unitCost) / price) * 100)}%</span>
+                          {unitCost > 0 ? (
+                            <>
+                              <div className="text-muted-foreground">{taka(unitCost)}</div>
+                              <div className={cn("text-xs font-medium", price - unitCost < 0 ? "text-destructive" : "text-emerald-700 dark:text-emerald-400")}>
+                                {pct(price - unitCost, price)}% margin
+                              </div>
+                            </>
                           ) : (
-                            <span className="text-muted-foreground">—</span>
+                            <span className="text-xs text-muted-foreground">No cost yet</span>
                           )}
                         </td>
                       </tr>
                     )
                   })}
                 </tbody>
+                {variants.length > 1 && (
+                  <tfoot className="border-t bg-muted/30 text-xs text-muted-foreground">
+                    <tr>
+                      <td className={cn(td, "font-medium text-foreground")}>{n0(variants.length)} variants</td>
+                      <td className={cn(td, "text-right tabular-nums whitespace-nowrap")}>{priceText(Math.min(...prices), Math.max(...prices))}</td>
+                      <td className={cn(td, "tabular-nums")}>
+                        <span className="font-semibold text-foreground">{n0(totals.available)}</span> sellable of {n0(totals.onHand)}
+                      </td>
+                      <td className={cn(td, "hidden tabular-nums sm:table-cell")}>
+                        <span className="font-semibold text-foreground">{n0(unitsSold)}</span> sold
+                      </td>
+                      <td className={cn(td, "hidden lg:table-cell")} />
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </Card>
