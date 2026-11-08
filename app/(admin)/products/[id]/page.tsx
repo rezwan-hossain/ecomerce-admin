@@ -2,7 +2,7 @@ import { notFound } from "next/navigation"
 import { connection } from "next/server"
 
 import { getProductMovements, getProductStock } from "@/app/actions/inventory.actions"
-import { getOrders } from "@/app/actions/order.actions"
+import { getListDetails, getOrders } from "@/app/actions/order.actions"
 import { getProduct } from "@/app/actions/product.actions"
 import { getProductReviews } from "@/app/actions/review.actions"
 import { ProductDetailPage } from "@/components/products/product-detail"
@@ -23,6 +23,8 @@ export default async function ProductPage({ params }: PageProps<"/products/[id]"
 
   // The orders API can't filter by product, so keep the orders that contain it.
   const productOrders = orders.success ? orders.data.filter((o) => o.items.some((i) => i.productId === id)) : []
+  // For the districts it ships to; the order list has no addresses.
+  const { addresses } = await getListDetails(productOrders.map((o) => o.id))
 
   return (
     <ProductDetailPage
@@ -31,6 +33,7 @@ export default async function ProductPage({ params }: PageProps<"/products/[id]"
       movements={movements.success ? movements.data.movements : []}
       orders={productOrders}
       reviews={reviews.success ? reviews.data : []}
+      addresses={addresses}
     />
   )
 }

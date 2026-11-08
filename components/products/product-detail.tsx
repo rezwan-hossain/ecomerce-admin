@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { useState } from "react"
 import { toast } from "sonner"
-import { ArchiveIcon, ArrowLeftIcon, BadgeCheckIcon, BoxesIcon, CheckIcon, ChevronDownIcon, CircleDashedIcon, CopyIcon, PackageIcon, PencilIcon, SendIcon, StarIcon } from "lucide-react"
+import { ArchiveIcon, ArrowLeftIcon, BadgeCheckIcon, BoxesIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CircleDashedIcon, CopyIcon, PackageIcon, PencilIcon, SendIcon, StarIcon } from "lucide-react"
 import { Bar, BarChart, CartesianGrid, XAxis } from "recharts"
 
 import { changeProductStatus } from "@/app/actions/product.actions"
@@ -11,13 +11,13 @@ import { moderateReview } from "@/app/actions/review.actions"
 import { Card, fmtDate, fmtDateTime, Kpis, n0, Pill, RackTag, rel, taka, type Tone, WarehouseTag } from "@/components/inventory/inventory-ui"
 import { MovementTag } from "@/components/inventory/movements-table"
 import { HEALTH_DOT, isSellable, shelfTotals, variantHealth } from "@/components/inventory/product-shelf"
-import { ORDER_STATUS_LABEL } from "@/components/orders/orders-table"
+import { localPhone, ORDER_STATUS_LABEL, paidSoFar } from "@/components/orders/orders-table"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
 import { cn } from "@/lib/utils"
 import type { LedgerMovement, VariantStock } from "@/types/inventory.type"
-import type { Order } from "@/types/order.type"
+import type { Order, OrderAddress } from "@/types/order.type"
 import type { ProductDetail } from "@/types/product.type"
 import type { Review } from "@/types/review.type"
 
@@ -25,6 +25,17 @@ const STATUS_LABEL = { ACTIVE: "Active", DRAFT: "Draft", ARCHIVED: "Archived" } 
 const REVIEW_TONE: Record<Review["status"], Tone> = { APPROVED: "green", PENDING: "amber", REJECTED: "red" }
 // These orders never took the stock, so they don't count as sold.
 const NOT_SOLD = ["CANCELLED", "FAILED", "REFUNDED", "RETURNED"]
+
+const OUTCOMES = [
+  { label: "Delivered", statuses: ["DELIVERED", "COMPLETED"], color: "bg-emerald-500" },
+  { label: "In progress", statuses: ["PENDING", "CONFIRMED", "PROCESSING", "READY_TO_SHIP", "SHIPPED"], color: "bg-blue-500" },
+  { label: "Returned", statuses: ["RETURNED", "PARTIALLY_RETURNED", "REFUNDED"], color: "bg-amber-500" },
+  { label: "Cancelled", statuses: ["CANCELLED", "FAILED"], color: "bg-red-500" },
+]
+// Orders whose units left the warehouse, for the return rate.
+const SHIPPED = ["SHIPPED", "DELIVERED", "COMPLETED", "RETURNED", "PARTIALLY_RETURNED", "REFUNDED"]
+const ORDERS_PAGE = 20
+const pct = (part: number, whole: number) => (whole ? Math.round((part / whole) * 100) : 0)
 
 const WEEKS = 12
 const DAY = 86_400_000
@@ -38,7 +49,7 @@ function weekStart(date: Date) {
   return d
 }
 
-const th = "px-3 py-2 font-medium first:pl-4 last:pr-4"
+const th = "px-3 py-2 font-medium whitespace-nowrap first:pl-4 last:pr-4"
 const td = "px-3 py-2.5 first:pl-4 last:pr-4"
 
 function priceText(min: number, max: number) {
@@ -52,12 +63,14 @@ export function ProductDetailPage({
   movements,
   orders,
   reviews,
+  addresses,
 }: {
   product: ProductDetail
   stock: VariantStock[]
   movements: LedgerMovement[]
   orders: Order[]
   reviews: Review[]
+  addresses: Record<string, OrderAddress> // order id → shipping address
 }) {
   const images = [...product.images].sort((a, b) => a.position - b.position)
   const [imageIndex, setImageIndex] = useState(Math.max(0, images.findIndex((i) => i.isPrimary)))
@@ -118,7 +131,8 @@ export function ProductDetailPage({
 
   const [allMovements, setAllMovements] = useState(false)
   const [allReviews, setAllReviews] = useState(false)
-  const [allOrders, setAllOrders] = useState(false)
+  const [orderFilter, setOrderFilter] = useState("All")
+  const [orderPage, setOrderPage] = useState(0)
 
   const approved = reviews.filter((r) => r.status === "APPROVED")
   const pending = reviews.filter((r) => r.status === "PENDING").length
@@ -135,6 +149,68 @@ export function ProductDetailPage({
     buyers.set(key, b)
   }
   const topBuyers = [...buyers.values()].sort((a, b) => b.spent - a.spent).slice(0, 5)
+  const repeatBuyers = [...buyers.values()].filter((b) => b.orders >= 2).length
+
+  // Units and revenue per variant; list value is what the units cost before discounts.
+  const byVariant = new Map<string, { units: number; revenue: number }>()
+  let listValue = 0
+  for (const l of sold) {
+    for (const i of l.items) {
+      const kept = i.quantity - (i.returnedQuantity ?? 0)
+      const v = byVariant.get(i.variantId ?? "") ?? { units: 0, revenue: 0 }
+      v.units += kept
+      v.revenue += (Number(i.totalAmount) / i.quantity) * kept
+      byVariant.set(i.variantId ?? "", v)
+      listValue += Number(i.unitPrice) * kept
+    }
+  }
+  const discountGiven = Math.max(0, listValue - revenue)
+
+  // How the orders holding it ended up.
+  const outcomes = OUTCOMES.map((o) => ({ ...o, count: orders.filter((x) => o.statuses.includes(x.status)).length }))
+  const unitsOrdered = orderLines.reduce((s, l) => s + l.items.reduce((t, i) => t + i.quantity, 0), 0)
+  const unitsReturned = orderLines.reduce((s, l) => s + l.items.reduce((t, i) => t + (i.returnedQuantity ?? 0), 0), 0)
+  const unitsShipped = orderLines
+    .filter((l) => SHIPPED.includes(l.order.status))
+    .reduce((s, l) => s + l.items.reduce((t, i) => t + i.quantity, 0), 0)
+  const cancelled = outcomes.find((o) => o.label === "Cancelled")!.count
+  const sellThrough = unitsSold + totals.onHand > 0 ? unitsSold / (unitsSold + totals.onHand) : 0
+  const codOrders = sold.filter((l) => l.order.payments.some((p) => p.provider === "COD")).length
+  const firstSold = sold.map((l) => l.order.placedAt ?? l.order.createdAt).sort()[0] ?? null
+
+  // Other products in the same orders, by how many orders they shared.
+  const together = new Map<string, { id: string; name: string; orders: number; units: number }>()
+  for (const l of sold) {
+    const seen = new Set<string>()
+    for (const i of l.order.items) {
+      if (!i.productId || i.productId === product.id) continue
+      const t = together.get(i.productId) ?? { id: i.productId, name: i.productName, orders: 0, units: 0 }
+      if (!seen.has(i.productId)) t.orders++
+      t.units += i.quantity
+      seen.add(i.productId)
+      together.set(i.productId, t)
+    }
+  }
+  const boughtWith = [...together.values()].sort((a, b) => b.orders - a.orders).slice(0, 5)
+
+  // The Orders card: newest first, filtered by outcome, 20 a page.
+  const filteredLines = orderLines
+    .filter((l) => orderFilter === "All" || OUTCOMES.find((o) => o.label === orderFilter)!.statuses.includes(l.order.status))
+    .sort((a, b) => (b.order.placedAt ?? b.order.createdAt).localeCompare(a.order.placedAt ?? a.order.createdAt))
+  const orderPages = Math.max(1, Math.ceil(filteredLines.length / ORDERS_PAGE))
+  const shownLines = filteredLines.slice(orderPage * ORDERS_PAGE, (orderPage + 1) * ORDERS_PAGE)
+
+  // Districts it ships to, from each order's shipping address.
+  const places = new Map<string, { name: string; orders: number; units: number }>()
+  for (const l of sold) {
+    const city = addresses[l.order.id]?.city?.trim()
+    if (!city) continue
+    const p = places.get(city.toLowerCase()) ?? { name: city, orders: 0, units: 0 }
+    p.orders++
+    p.units += l.quantity
+    places.set(city.toLowerCase(), p)
+  }
+  const topPlaces = [...places.values()].sort((a, b) => b.units - a.units).slice(0, 5)
 
   const unitCostOf = (variantId: string) => Number(stockById.get(variantId)?.levels.find((l) => Number(l.unitCost) > 0)?.unitCost ?? 0)
   const costMissing = stock.some((v) => v.onHand > 0 && !v.levels.some((l) => Number(l.unitCost) > 0))
@@ -326,6 +402,81 @@ export function ProductDetailPage({
             </div>
           </Card>
 
+          <Card title="Performance" action={<span className="text-xs text-muted-foreground">All time · {n0(orders.length)} orders</span>}>
+            <div className="flex flex-col gap-4 px-4 pb-4">
+              <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border bg-border text-xs sm:grid-cols-4 [&>div]:bg-card [&>div]:px-3 [&>div]:py-2.5">
+                <div>
+                  <dt className="text-muted-foreground">Average selling price</dt>
+                  <dd className="mt-0.5 text-base font-semibold tabular-nums">{unitsSold ? taka(revenue / unitsSold) : "—"}</dd>
+                  <dd className="text-muted-foreground">{listValue > 0 ? `${pct(discountGiven, listValue)}% below list` : "no sales yet"}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Discounts given</dt>
+                  <dd className="mt-0.5 text-base font-semibold tabular-nums">{taka(discountGiven)}</dd>
+                  <dd className="text-muted-foreground">on {n0(unitsSold)} {unitsSold === 1 ? "unit" : "units"} sold</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Sell-through</dt>
+                  <dd className="mt-0.5 text-base font-semibold tabular-nums">{Math.round(sellThrough * 100)}%</dd>
+                  <dd className="text-muted-foreground">sold of sold + on hand</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Return rate</dt>
+                  <dd className={cn("mt-0.5 text-base font-semibold tabular-nums", pct(unitsReturned, unitsShipped) >= 10 && "text-amber-700 dark:text-amber-400")}>
+                    {pct(unitsReturned, unitsShipped)}%
+                  </dd>
+                  <dd className="text-muted-foreground">
+                    {n0(unitsReturned)} of {n0(unitsShipped)} shipped units
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Cancel rate</dt>
+                  <dd className={cn("mt-0.5 text-base font-semibold tabular-nums", pct(cancelled, orders.length) >= 20 && "text-amber-700 dark:text-amber-400")}>
+                    {pct(cancelled, orders.length)}%
+                  </dd>
+                  <dd className="text-muted-foreground">
+                    {n0(cancelled)} of {n0(orders.length)} orders
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Cash on delivery</dt>
+                  <dd className="mt-0.5 text-base font-semibold tabular-nums">{pct(codOrders, sold.length)}%</dd>
+                  <dd className="text-muted-foreground">of orders paid on delivery</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Repeat buyers</dt>
+                  <dd className="mt-0.5 text-base font-semibold tabular-nums">{n0(repeatBuyers)}</dd>
+                  <dd className="text-muted-foreground">of {n0(buyers.size)} bought it twice or more</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Units per order</dt>
+                  <dd className="mt-0.5 text-base font-semibold tabular-nums">{orders.length ? (unitsOrdered / orders.length).toFixed(1) : "—"}</dd>
+                  <dd className="text-muted-foreground">{firstSold ? `first sold ${fmtDate(firstSold)}` : "never sold"}</dd>
+                </div>
+              </dl>
+              {orders.length > 0 && (
+                <div>
+                  <div className="mb-2 text-xs font-medium text-muted-foreground">How its orders ended up</div>
+                  <div className="flex h-2.5 overflow-hidden rounded-full bg-muted">
+                    {outcomes.map((o) => (
+                      <div key={o.label} className={o.color} style={{ width: `${(o.count / orders.length) * 100}%` }} title={`${o.label}: ${o.count}`} />
+                    ))}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                    {outcomes.map((o) => (
+                      <span key={o.label} className="flex items-center gap-1.5">
+                        <span className={cn("size-2 rounded-full", o.color)} />
+                        {o.label}
+                        <span className="font-medium tabular-nums">{n0(o.count)}</span>
+                        <span className="text-muted-foreground tabular-nums">{pct(o.count, orders.length)}%</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Card>
+
           <Card title="Variants" action={<span className="text-xs text-muted-foreground">Price after promotion · stock in sellable warehouses</span>}>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -336,7 +487,8 @@ export function ProductDetailPage({
                     <th className={cn(th, "text-right")}>On hand</th>
                     <th className={cn(th, "hidden text-right sm:table-cell")}>Held</th>
                     <th className={cn(th, "text-right")}>Sellable</th>
-                    <th className={cn(th, "hidden text-right md:table-cell")}>Alert at</th>
+                    <th className={cn(th, "hidden text-right sm:table-cell")}>Sold</th>
+                    <th className={cn(th, "hidden text-right xl:table-cell")}>Alert at</th>
                     <th className={cn(th, "hidden text-right lg:table-cell")}>Unit cost</th>
                     <th className={cn(th, "hidden text-right lg:table-cell")}>Margin</th>
                   </tr>
@@ -380,7 +532,11 @@ export function ProductDetailPage({
                         >
                           {n0(s?.stock ?? 0)}
                         </td>
-                        <td className={cn(td, "hidden text-right text-muted-foreground tabular-nums md:table-cell")}>{n0(v.lowStockThreshold)}</td>
+                        <td className={cn(td, "hidden text-right tabular-nums sm:table-cell")}>
+                          <div className="font-medium">{n0(byVariant.get(v.id)?.units ?? 0)}</div>
+                          <div className="text-xs whitespace-nowrap text-muted-foreground">{pct(byVariant.get(v.id)?.units ?? 0, unitsSold)}% of sales</div>
+                        </td>
+                        <td className={cn(td, "hidden text-right text-muted-foreground tabular-nums xl:table-cell")}>{n0(v.lowStockThreshold)}</td>
                         <td className={cn(td, "hidden text-right text-muted-foreground tabular-nums lg:table-cell")}>
                           {unitCost > 0 ? taka(unitCost, 2) : "—"}
                         </td>
@@ -451,51 +607,136 @@ export function ProductDetailPage({
             )}
           </Card>
 
-          <Card title="Orders" action={<span className="text-xs text-muted-foreground">{orders.length} with this product</span>}>
+          <Card
+            title="Orders"
+            action={
+              <span className="text-xs text-muted-foreground">
+                {n0(orders.length)} {orders.length === 1 ? "order" : "orders"} · {n0(unitsOrdered)} {unitsOrdered === 1 ? "unit" : "units"}
+              </span>
+            }
+          >
             {orders.length === 0 ? (
               <p className="px-4 pb-4 text-sm text-muted-foreground">Nobody has ordered this product yet.</p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
-                    <tr>
-                      <th className={th}>Order</th>
-                      <th className={cn(th, "hidden md:table-cell")}>Customer</th>
-                      <th className={cn(th, "hidden sm:table-cell")}>Items</th>
-                      <th className={th}>Status</th>
-                      <th className={cn(th, "text-right")}>Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {orderLines.slice(0, allOrders ? undefined : 8).map(({ order, items, total }) => (
-                      <tr key={order.id} className="border-t border-border/60">
-                        <td className={td}>
-                          <Link href={`/orders/${order.id}`} className="font-medium whitespace-nowrap hover:text-primary hover:underline">
-                            {order.orderNumber}
-                          </Link>
-                          <div className="text-xs text-muted-foreground">{fmtDate(order.placedAt ?? order.createdAt)}</div>
-                        </td>
-                        <td className={cn(td, "hidden max-w-56 md:table-cell")}>
-                          <div className="truncate">{order.customerName ?? order.customerEmail}</div>
-                          {order.customerName && <div className="truncate text-xs text-muted-foreground">{order.customerEmail}</div>}
-                        </td>
-                        <td className={cn(td, "hidden text-muted-foreground sm:table-cell")}>
-                          {items.map((i) => (
-                            <div key={i.id} className="text-xs whitespace-nowrap">
-                              {i.quantity} × {i.variantName && i.variantName !== i.sku ? i.variantName : "Default"}
-                            </div>
-                          ))}
-                        </td>
-                        <td className={td}>
-                          <StatusBadge status={ORDER_STATUS_LABEL[order.status]} />
-                        </td>
-                        <td className={cn(td, "text-right tabular-nums")}>{taka(total)}</td>
+              <>
+                <div className="flex flex-wrap gap-1.5 px-4 pb-3">
+                  {[{ label: "All", count: orders.length }, ...outcomes].map((f) =>
+                    f.label === "All" || f.count > 0 ? (
+                      <button
+                        key={f.label}
+                        type="button"
+                        onClick={() => {
+                          setOrderFilter(f.label)
+                          setOrderPage(0)
+                        }}
+                        className={cn(
+                          "inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground",
+                          orderFilter === f.label && "border-primary/40 bg-primary/5 text-primary hover:text-primary"
+                        )}
+                      >
+                        {f.label}
+                        <span className="tabular-nums opacity-70">{n0(f.count)}</span>
+                      </button>
+                    ) : null
+                  )}
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+                      <tr>
+                        <th className={th}>Order</th>
+                        <th className={cn(th, "hidden md:table-cell")}>Customer</th>
+                        <th className={cn(th, "hidden sm:table-cell")}>Items</th>
+                        <th className={th}>Status</th>
+                        <th className={cn(th, "text-right")}>Amount</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <ShowAll open={allOrders} total={orders.length} shown={8} onToggle={() => setAllOrders(!allOrders)} />
-              </div>
+                    </thead>
+                    <tbody>
+                      {shownLines.map(({ order, items, total }) => {
+                        const others = order.items.filter((i) => i.productId !== product.id).length
+                        const paid = paidSoFar(order)
+                        let payment = { text: "Unpaid", className: "text-amber-700 dark:text-amber-400" }
+                        if (paid >= Number(order.totalAmount)) payment = { text: "Paid", className: "text-emerald-700 dark:text-emerald-400" }
+                        else if (order.payments.some((p) => p.provider === "COD")) payment = { text: "Cash on delivery", className: "text-muted-foreground" }
+                        return (
+                          <tr key={order.id} className="border-t border-border/60 hover:bg-muted/30">
+                            <td className={td}>
+                              <Link href={`/orders/${order.id}`} className="font-medium whitespace-nowrap hover:text-primary hover:underline">
+                                {order.orderNumber}
+                              </Link>
+                              <div className="text-xs whitespace-nowrap text-muted-foreground" title={fmtDateTime(order.placedAt ?? order.createdAt)}>
+                                {fmtDate(order.placedAt ?? order.createdAt)}
+                              </div>
+                            </td>
+                            <td className={cn(td, "hidden max-w-52 md:table-cell")}>
+                              <div className="flex items-center gap-2.5">
+                                <span className="grid size-7 shrink-0 place-items-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary uppercase">
+                                  {(order.customerName ?? order.customerEmail)
+                                    .split(/\s+/)
+                                    .map((w) => w[0])
+                                    .join("")
+                                    .slice(0, 2)}
+                                </span>
+                                <div className="min-w-0">
+                                  <div className="truncate font-medium capitalize">{order.customerName ?? order.customerEmail}</div>
+                                  <div className="truncate text-xs text-muted-foreground">
+                                    {order.customerPhone ? localPhone(order.customerPhone) : order.customerEmail}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className={cn(td, "hidden sm:table-cell")}>
+                              <div className="flex flex-wrap gap-1">
+                                {items.map((i) => (
+                                  <span key={i.id} className="rounded-md bg-muted px-1.5 text-xs leading-5 font-medium whitespace-nowrap">
+                                    {i.variantName && i.variantName !== i.sku ? i.variantName : "Default"}
+                                    <span className="text-muted-foreground"> × {i.quantity}</span>
+                                  </span>
+                                ))}
+                              </div>
+                              <div className="mt-0.5 text-xs whitespace-nowrap text-muted-foreground">
+                                {taka(Number(items[0].unitPrice))} each
+                              </div>
+                            </td>
+                            <td className={td}>
+                              <StatusBadge status={ORDER_STATUS_LABEL[order.status]} />
+                              {!["CANCELLED", "FAILED"].includes(order.status) && (
+                                <div className={cn("mt-0.5 text-xs whitespace-nowrap", payment.className)}>{payment.text}</div>
+                              )}
+                            </td>
+                            <td className={cn(td, "text-right tabular-nums")}>
+                              <div className="font-semibold">{taka(total)}</div>
+                              {others > 0 && (
+                                <div className="text-xs whitespace-nowrap text-muted-foreground" title={`+${others} other ${others === 1 ? "item" : "items"} in this order`}>
+                                  of {taka(Number(order.totalAmount))} order
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {filteredLines.length > ORDERS_PAGE && (
+                  <div className="flex items-center justify-between gap-2 border-t border-border/60 px-4 py-2.5 text-xs text-muted-foreground">
+                    <span className="tabular-nums">
+                      {n0(orderPage * ORDERS_PAGE + 1)}–{n0(Math.min((orderPage + 1) * ORDERS_PAGE, filteredLines.length))} of {n0(filteredLines.length)}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <span className="mr-1 tabular-nums">
+                        Page {orderPage + 1} of {orderPages}
+                      </span>
+                      <Button variant="outline" size="icon-sm" onClick={() => setOrderPage(orderPage - 1)} disabled={orderPage === 0} aria-label="Previous page">
+                        <ChevronLeftIcon />
+                      </Button>
+                      <Button variant="outline" size="icon-sm" onClick={() => setOrderPage(orderPage + 1)} disabled={orderPage >= orderPages - 1} aria-label="Next page">
+                        <ChevronRightIcon />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </Card>
 
@@ -594,7 +835,7 @@ export function ProductDetailPage({
                     .map((r) => {
                       const author = [r.user?.firstName, r.user?.lastName].filter(Boolean).join(" ") || "Anonymous"
                       return (
-                      <li key={r.id} className={cn("flex gap-3 py-3 first:pt-0 last:pb-0", r.status === "PENDING" && "-mx-2 rounded-lg bg-amber-500/[.06] px-2 first:pt-3")}>
+                      <li key={r.id} className={cn("flex gap-3 py-3 first:pt-0 last:pb-0", r.status === "PENDING" && "-mx-2 rounded-lg bg-amber-500/6 px-2 first:pt-3")}>
                         <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-xs font-semibold text-muted-foreground uppercase">
                           {author.split(" ").map((w) => w[0]).join("").slice(0, 2)}
                         </span>
@@ -776,6 +1017,47 @@ export function ProductDetailPage({
               </ul>
             </Card>
           )}
+
+          <Card title="Where it sells" action={<span className="text-xs text-muted-foreground">by units</span>}>
+            {topPlaces.length === 0 ? (
+              <p className="px-4 pb-4 text-sm text-muted-foreground">No delivery addresses yet.</p>
+            ) : (
+              <ul className="flex flex-col gap-2.5 px-4 pb-4 text-sm">
+                {topPlaces.map((p) => (
+                  <li key={p.name}>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="truncate capitalize">{p.name}</span>
+                      <span className="text-xs text-muted-foreground tabular-nums">
+                        <span className="font-medium text-foreground">{n0(p.units)}</span> {p.units === 1 ? "unit" : "units"} · {n0(p.orders)} {p.orders === 1 ? "order" : "orders"}
+                      </span>
+                    </div>
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+                      <div className="h-full rounded-full bg-primary" style={{ width: `${pct(p.units, topPlaces[0].units)}%` }} />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+
+          <Card title="Bought together" action={<span className="text-xs text-muted-foreground">in the same order</span>}>
+            {boughtWith.length === 0 ? (
+              <p className="px-4 pb-4 text-sm text-muted-foreground">Always bought on its own so far.</p>
+            ) : (
+              <ul className="flex flex-col px-4 pb-2">
+                {boughtWith.map((t) => (
+                  <li key={t.id} className="flex items-center gap-3 border-b py-2 text-sm last:border-b-0">
+                    <Link href={`/products/${t.id}`} className="min-w-0 flex-1 truncate font-medium hover:text-primary hover:underline">
+                      {t.name}
+                    </Link>
+                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                      {n0(t.orders)} of {n0(sold.length)} orders · {pct(t.orders, sold.length)}%
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
 
           <Card title="Top customers" action={<span className="text-xs text-muted-foreground">by spend</span>}>
             {topBuyers.length === 0 ? (
