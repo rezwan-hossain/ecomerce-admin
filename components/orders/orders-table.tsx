@@ -365,7 +365,7 @@ export function ShipmentTiming({ shipment }: { shipment: Order["shipments"][numb
 }
 
 // One customer across orders: the phone's last 10 digits, else the email (guests have no account id).
-const customerKey = (o: Order) => o.customerPhone?.replace(/\D/g, "").slice(-10) || o.customerEmail.toLowerCase()
+export const customerKey = (o: Pick<Order, "customerPhone" | "customerEmail">) => o.customerPhone?.replace(/\D/g, "").slice(-10) || o.customerEmail.toLowerCase()
 
 // "01911087109" style for display, and the international number WhatsApp links need.
 export const localPhone = (phone: string) => `0${phone.replace(/\D/g, "").slice(-10)}`

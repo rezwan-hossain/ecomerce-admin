@@ -147,6 +147,8 @@ app/
   - No defensive boilerplate or speculative features.
   - Few files, and props over context.
   - `if/else` over nested ternaries, and short *why*-only comments.
+- **Customers** (`/customers`, the sidebar's Customers › All Customers) is built from the orders API; the backend's `users` controller has no routes yet. `page.tsx` loads every order (`getOrders()`) and their shipping addresses (`getListDetails()`); `components/customers/customers-table.tsx` groups them by `customerKey()` (exported from `orders-table.tsx`: the phone's last 10 digits, else the email), taking the name, email and address from the newest order. KPIs: customers (new in 30 days), repeat share, paid per customer, average paid order, delivery success (delivered of finished orders), guest share. Rows show initials, name with Account/Guest and tags (VIP = top tenth by money paid, New = first order within 30 days, Risky = 2+ finished orders and under half delivered, Lapsed = no order in 90 days), phone with call/WhatsApp, city and thana, order count with a link to the latest order, a delivered bar, and paid vs ordered. Tabs: All, Repeat, VIP, New, Lapsed, Risky, Guests (empty ones hidden); a sort menu; Export CSV. `buildCustomers()` and the `Customer` type are exported from it.
+- **Customer groups** (`/customers/groups`) are rule-based: each group has rules (orders, paid, delivered %, days since last or first order, district, account or guest) joined by all/any, and members are worked out live from the orders (`buildCustomers()`). There's no backend for groups, so they're saved in `localStorage` (`customer-groups`), with six starter groups until the first change. `components/customers/group-sheet.tsx` holds the `Group`/`Rule` types, `matches()`, `ruleText()` and the add/edit panel (live match count); `customer-groups.tsx` shows a card per group (rules, members, share, paid, avatars; Edit, Duplicate, Delete) and the picked group's members with Copy phones (one per line, for SMS tools) and Export CSV. Add Customer in the sidebar still 404s.
 - **Shared UI:** `page-header.tsx`, `stat-cards.tsx`, `status-badge.tsx` (maps order, product and return statuses to icons).
 - The dashboard's big orders table (`components/data-table.tsx`) is the original shadcn block adapted to orders: drag to reorder, and a detail drawer.
 
@@ -175,7 +177,7 @@ npx next typegen     # regenerate route types after adding/moving routes
 
 ## Not built yet
 
-- The Customers page (the sidebar links to it, but it returns 404) and real traffic tracking (Analytics › Traffic shows demo data).
+- Add Customer (the sidebar links to it, but it returns 404), a customers API and a customer groups API, and real traffic tracking (Analytics › Traffic shows demo data).
 - Real authentication (no provider chosen yet) and middleware to protect the `(admin)` routes.
 - Persistence for pages other than Categories (they still use `lib/demo-data.ts`).
 - A theme toggle.
