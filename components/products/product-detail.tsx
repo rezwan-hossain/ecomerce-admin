@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { useState } from "react"
 import { toast } from "sonner"
-import { ArchiveIcon, ArrowLeftIcon, BadgeCheckIcon, BoxesIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CircleDashedIcon, CopyIcon, PackageIcon, PencilIcon, SendIcon, StarIcon } from "lucide-react"
+import { ArchiveIcon, ArrowLeftIcon, BadgeCheckIcon, BoxesIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CircleDashedIcon, CopyIcon, EyeIcon, EyeOffIcon, PackageIcon, WarehouseIcon, PencilIcon, SendIcon, ShoppingBagIcon, TagIcon, StarIcon, XIcon } from "lucide-react"
 import { Bar, BarChart, CartesianGrid, XAxis } from "recharts"
 
 import { changeProductStatus } from "@/app/actions/product.actions"
@@ -11,7 +11,7 @@ import { moderateReview } from "@/app/actions/review.actions"
 import { Card, fmtDate, fmtDateTime, Kpis, n0, Pill, RackTag, rel, taka, type Tone, WarehouseTag } from "@/components/inventory/inventory-ui"
 import { MovementTag } from "@/components/inventory/movements-table"
 import { HEALTH_DOT, isSellable, shelfTotals, variantHealth } from "@/components/inventory/product-shelf"
-import { localPhone, ORDER_STATUS_LABEL, paidSoFar } from "@/components/orders/orders-table"
+import { customerKey, localPhone, ORDER_STATUS_LABEL, paidSoFar } from "@/components/orders/orders-table"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
@@ -65,6 +65,7 @@ export function ProductDetailPage({
   orders,
   reviews,
   addresses,
+  images: productImages,
 }: {
   product: ProductDetail
   stock: VariantStock[]
@@ -72,6 +73,7 @@ export function ProductDetailPage({
   orders: Order[]
   reviews: Review[]
   addresses: Record<string, OrderAddress> // order id → shipping address
+  images: Record<string, string> // product id → primary image, for "Bought together"
 }) {
   const images = [...product.images].sort((a, b) => a.position - b.position)
   const [imageIndex, setImageIndex] = useState(Math.max(0, images.findIndex((i) => i.isPrimary)))
@@ -132,6 +134,7 @@ export function ProductDetailPage({
 
   const [allMovements, setAllMovements] = useState(false)
   const [allReviews, setAllReviews] = useState(false)
+  const [reviewFilter, setReviewFilter] = useState("all") // "all", "pending", "hidden" or a star count
   const [orderFilter, setOrderFilter] = useState("All")
   const [orderPage, setOrderPage] = useState(0)
 
@@ -139,14 +142,28 @@ export function ProductDetailPage({
   const pending = reviews.filter((r) => r.status === "PENDING").length
   const rating = approved.length ? approved.reduce((s, r) => s + r.rating, 0) / approved.length : 0
 
-  // Who buys it most, by email.
-  const buyers = new Map<string, { name: string; email: string; units: number; spent: number; orders: number }>()
+  // Who buys it most, matched by phone then email like the Customers page.
+  const buyers = new Map<string, { key: string; name: string; contact: string; units: number; spent: number; orders: number; lastOrderId: string; last: string }>()
   for (const l of sold) {
-    const key = l.order.customerEmail.toLowerCase()
-    const b = buyers.get(key) ?? { name: l.order.customerName ?? l.order.customerEmail, email: l.order.customerEmail, units: 0, spent: 0, orders: 0 }
+    const key = customerKey(l.order)
+    const at = l.order.placedAt ?? l.order.createdAt
+    const b = buyers.get(key) ?? {
+      key,
+      name: l.order.customerName || l.order.customerEmail,
+      contact: l.order.customerPhone ? localPhone(l.order.customerPhone) : l.order.customerEmail,
+      units: 0,
+      spent: 0,
+      orders: 0,
+      lastOrderId: l.order.id,
+      last: at,
+    }
     b.units += l.quantity
     b.spent += l.total
     b.orders++
+    if (at > b.last) {
+      b.last = at
+      b.lastOrderId = l.order.id
+    }
     buyers.set(key, b)
   }
   const topBuyers = [...buyers.values()].sort((a, b) => b.spent - a.spent).slice(0, 5)
@@ -265,11 +282,30 @@ export function ProductDetailPage({
     const res = await moderateReview(review.id, product.id, status)
     setBusy(false)
     if (!res.success) return toast.error(res.error)
-    toast.success(status === "APPROVED" ? "Review approved: it now shows in the store" : "Review rejected")
+    if (status === "APPROVED") toast.success(review.status === "PENDING" ? "Review approved: it now shows in the store" : "Review restored to the store")
+    else toast.success(review.status === "PENDING" ? "Review rejected" : "Review hidden from the store")
+  }
+
+  // The Reviews card: pending ones first, since they need a decision.
+  const hidden = reviews.filter((r) => r.status === "REJECTED").length
+  const liked = approved.filter((r) => r.rating >= 4).length
+  const verified = reviews.filter((r) => r.isVerifiedPurchase).length
+  const shownReviews = reviews
+    .filter((r) => {
+      if (reviewFilter === "pending") return r.status === "PENDING"
+      if (reviewFilter === "hidden") return r.status === "REJECTED"
+      if (reviewFilter === "all") return true
+      return r.status === "APPROVED" && r.rating === Number(reviewFilter)
+    })
+    .sort((a, b) => Number(b.status === "PENDING") - Number(a.status === "PENDING") || b.createdAt.localeCompare(a.createdAt))
+
+  function filterReviews(value: string) {
+    setReviewFilter(value)
+    setAllReviews(false)
   }
 
   // Stock per warehouse, all variants together, with the racks holding it.
-  const warehouses = new Map<string, { code: string; name: string; sellable: boolean; onHand: number; reserved: number; available: number; value: number; racks: Map<string, number> }>()
+  const warehouses = new Map<string, { code: string; name: string; sellable: boolean; onHand: number; reserved: number; available: number; value: number; out: number; racks: Map<string, number> }>()
   for (const v of stock) {
     for (const l of v.levels) {
       const w = warehouses.get(l.warehouseId) ?? {
@@ -280,12 +316,14 @@ export function ProductDetailPage({
         reserved: 0,
         available: 0,
         value: 0,
+        out: 0,
         racks: new Map<string, number>(),
       }
       w.onHand += l.onHand
       w.reserved += l.reserved
       w.available += l.available
       w.value += Number(l.unitCost) * l.onHand
+      if (l.available <= 0) w.out++
       for (const s of l.locationStocks) {
         if (s.quantity > 0) w.racks.set(s.location.code, (w.racks.get(s.location.code) ?? 0) + s.quantity)
       }
@@ -633,55 +671,100 @@ export function ProductDetailPage({
             </div>
           </Card>
 
-          <Card title="Stock by warehouse">
+          <Card
+            title="Stock by warehouse"
+            action={
+              warehouses.size > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  {n0(warehouses.size)} {warehouses.size === 1 ? "warehouse" : "warehouses"} · {n0(totals.onHand)} on hand
+                </span>
+              )
+            }
+          >
             {warehouses.size === 0 ? (
               <p className="px-4 pb-4 text-sm text-muted-foreground">No stock recorded yet.</p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
-                    <tr>
-                      <th className={th}>Warehouse</th>
-                      <th className={cn(th, "hidden md:table-cell")}>Racks</th>
-                      <th className={cn(th, "text-right")}>On hand</th>
-                      <th className={cn(th, "hidden text-right sm:table-cell")}>Held</th>
-                      <th className={cn(th, "text-right")}>Available</th>
-                      <th className={cn(th, "hidden text-right sm:table-cell")}>Value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[...warehouses.entries()].map(([id, w]) => (
-                      <tr key={id} className="border-t border-border/60">
-                        <td className={td}>
-                          <div className="font-medium">{w.name}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {w.code}
-                            {!w.sellable && " · not for sale"}
+              <ul className="flex flex-col">
+                {[...warehouses.entries()]
+                  .sort((a, b) => b[1].onHand - a[1].onHand)
+                  .map(([id, w]) => {
+                    const unracked = w.racks.get("UNASSIGNED") ?? 0
+                    // UNASSIGNED is the system catch-all for stock whose rack isn't known.
+                    const racks = [...w.racks.entries()].filter(([code]) => code !== "UNASSIGNED")
+                    return (
+                      <li key={id} className="flex flex-col gap-3 border-t border-border/60 px-4 py-3.5 sm:flex-row sm:items-center sm:gap-5">
+                        <div className="flex items-center gap-3 sm:w-52 sm:shrink-0">
+                          <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                            <WarehouseIcon className="size-5" />
+                          </span>
+                          <div className="min-w-0">
+                            <Link href={`/inventory/setup/warehouses/${id}`} className="block truncate font-semibold hover:text-primary hover:underline">
+                              {w.name}
+                            </Link>
+                            <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                              <WarehouseTag code={w.code} />
+                              {!w.sellable && <Pill tone="grey">Not for sale</Pill>}
+                            </div>
                           </div>
-                        </td>
-                        <td className={cn(td, "hidden md:table-cell")}>
-                          <div className="flex flex-wrap items-center gap-1">
-                            {[...w.racks.entries()].map(([code, qty]) =>
-                              // UNASSIGNED is the system catch-all for stock whose rack isn't known.
-                              code === "UNASSIGNED" ? (
-                                <span key={code} className="text-xs text-muted-foreground">
-                                  {n0(qty)} not on a rack
-                                </span>
-                              ) : (
-                                <RackTag key={code} code={code} title={`${n0(qty)} units`} />
-                              )
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-baseline justify-between gap-2 text-xs">
+                            <span className="text-muted-foreground">
+                              <span className="text-base font-semibold text-foreground tabular-nums">{n0(w.available)}</span> available
+                              {w.reserved > 0 && (
+                                <>
+                                  {" · "}
+                                  <span className="font-medium text-amber-700 tabular-nums dark:text-amber-400">{n0(w.reserved)}</span> held
+                                </>
+                              )}
+                            </span>
+                            <span className="whitespace-nowrap text-muted-foreground tabular-nums">
+                              {n0(w.onHand)} on hand · {pct(w.onHand, totals.onHand)}%
+                            </span>
+                          </div>
+                          {/* Available then held, out of what's on the shelf. */}
+                          <div className="mt-1.5 flex h-2 overflow-hidden rounded-full bg-muted">
+                            <div className="bg-emerald-500" style={{ width: `${pct(Math.max(0, w.available), w.onHand)}%` }} />
+                            <div className="bg-amber-400" style={{ width: `${pct(w.reserved, w.onHand)}%` }} />
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                            {racks.map(([code, qty]) => (
+                              <span key={code} className="inline-flex items-center gap-1">
+                                <RackTag code={code} title={`${n0(qty)} units`} />
+                                <span className="tabular-nums">{n0(qty)}</span>
+                              </span>
+                            ))}
+                            {unracked > 0 && (
+                              <span className="inline-flex items-center gap-1.5">
+                                <span className="size-1.5 rounded-full bg-amber-500" />
+                                {n0(unracked)} not on a rack
+                                <Link href={`/inventory/setup/warehouses/${id}`} className="font-medium text-primary hover:underline">
+                                  Put away
+                                </Link>
+                              </span>
+                            )}
+                            {w.out > 0 && (
+                              <span className="inline-flex items-center gap-1.5 text-destructive">
+                                <span className="size-1.5 rounded-full bg-destructive" />
+                                {n0(w.out)} {w.out === 1 ? "variant" : "variants"} out here
+                              </span>
                             )}
                           </div>
-                        </td>
-                        <td className={cn(td, "text-right text-muted-foreground tabular-nums")}>{n0(w.onHand)}</td>
-                        <td className={cn(td, "hidden text-right text-muted-foreground tabular-nums sm:table-cell")}>{n0(w.reserved)}</td>
-                        <td className={cn(td, "text-right font-semibold tabular-nums")}>{n0(w.available)}</td>
-                        <td className={cn(td, "hidden text-right text-muted-foreground tabular-nums sm:table-cell")}>{w.value > 0 ? taka(w.value) : "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                        </div>
+
+                        <div className="flex items-baseline justify-between gap-2 sm:block sm:w-24 sm:text-right">
+                          <span className="text-xs text-muted-foreground sm:block">Value</span>
+                          {w.value > 0 ? (
+                            <span className="font-semibold tabular-nums">{taka(w.value)}</span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">No cost yet</span>
+                          )}
+                        </div>
+                      </li>
+                    )
+                  })}
+              </ul>
             )}
           </Card>
 
@@ -879,77 +962,198 @@ export function ProductDetailPage({
             )}
           </Card>
 
-          <Card title="Reviews" action={pending > 0 && <Pill tone="amber">{pending} pending</Pill>}>
+          <Card
+            title="Reviews"
+            action={
+              <span className="flex items-center gap-2">
+                {pending > 0 && <Pill tone="amber">{pending} to moderate</Pill>}
+                <Link href="/reviews" className="text-xs font-medium text-primary hover:underline">
+                  All reviews
+                </Link>
+              </span>
+            }
+          >
             {reviews.length === 0 ? (
               <p className="px-4 pb-4 text-sm text-muted-foreground">No reviews yet.</p>
             ) : (
               <div className="flex flex-col gap-4 px-4 pb-4">
-                <div className="flex items-center gap-4">
-                  <div className="text-center">
-                    <div className="text-3xl font-bold tracking-tight">{approved.length ? rating.toFixed(1) : "—"}</div>
+                <div className="grid gap-4 sm:grid-cols-[9rem_1fr] md:grid-cols-[9rem_1fr_9.5rem]">
+                  <div className="flex flex-col items-center justify-center rounded-xl bg-amber-500/8 py-3 text-center">
+                    <div className="text-4xl font-bold tracking-tight tabular-nums">{approved.length ? rating.toFixed(1) : "—"}</div>
                     <Stars rating={Math.round(rating)} />
-                    <div className="mt-0.5 text-xs text-muted-foreground">{approved.length} live</div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {n0(approved.length)} live {approved.length === 1 ? "review" : "reviews"}
+                    </div>
                   </div>
-                  <div className="flex flex-1 flex-col gap-1">
+                  {/* Each bar filters the list to that rating. */}
+                  <div className="flex flex-col justify-center gap-0.5">
                     {[5, 4, 3, 2, 1].map((star) => {
                       const count = approved.filter((r) => r.rating === star).length
+                      const active = reviewFilter === String(star)
                       return (
-                        <div key={star} className="flex items-center gap-2 text-xs text-muted-foreground">
-                          <span className="w-3 text-right tabular-nums">{star}</span>
-                          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-                            <div className="h-full rounded-full bg-amber-500" style={{ width: `${approved.length ? (count / approved.length) * 100 : 0}%` }} />
-                          </div>
-                          <span className="w-4 tabular-nums">{count}</span>
-                        </div>
+                        <button
+                          key={star}
+                          type="button"
+                          disabled={count === 0}
+                          onClick={() => filterReviews(active ? "all" : String(star))}
+                          className={cn(
+                            "flex items-center gap-2 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground enabled:hover:bg-muted disabled:opacity-50",
+                            active && "bg-muted text-foreground"
+                          )}
+                        >
+                          <span className="flex w-6 items-center gap-0.5 tabular-nums">
+                            {star}
+                            <StarIcon className="size-3 fill-amber-500 text-amber-500" />
+                          </span>
+                          <span className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                            <span className="block h-full rounded-full bg-amber-500" style={{ width: `${pct(count, approved.length)}%` }} />
+                          </span>
+                          <span className="w-12 text-right tabular-nums">
+                            {n0(count)} <span className="opacity-60">· {pct(count, approved.length)}%</span>
+                          </span>
+                        </button>
                       )
                     })}
                   </div>
+                  <dl className="grid grid-cols-3 gap-2 text-xs sm:col-span-2 md:col-span-1 md:grid-cols-1 md:content-center">
+                    <div className="rounded-lg bg-muted/50 px-2.5 py-1.5">
+                      <dt className="text-muted-foreground">Liked it (4–5★)</dt>
+                      <dd className="text-sm font-semibold tabular-nums">{approved.length ? `${pct(liked, approved.length)}%` : "—"}</dd>
+                    </div>
+                    <div className="rounded-lg bg-muted/50 px-2.5 py-1.5">
+                      <dt className="text-muted-foreground">Verified buyers</dt>
+                      <dd className="text-sm font-semibold tabular-nums">
+                        {n0(verified)} <span className="text-xs font-normal text-muted-foreground">of {n0(reviews.length)}</span>
+                      </dd>
+                    </div>
+                    <div className="rounded-lg bg-muted/50 px-2.5 py-1.5">
+                      <dt className="text-muted-foreground">Waiting</dt>
+                      <dd className={cn("text-sm font-semibold tabular-nums", pending > 0 && "text-amber-700 dark:text-amber-400")}>{n0(pending)}</dd>
+                    </div>
+                  </dl>
                 </div>
-                <ul className="flex flex-col divide-y">
-                  {[...reviews]
-                    // Pending ones first: they need a decision.
-                    .sort((a, b) => Number(b.status === "PENDING") - Number(a.status === "PENDING") || b.createdAt.localeCompare(a.createdAt))
-                    .slice(0, allReviews ? undefined : 4)
-                    .map((r) => {
+
+                {(pending > 0 || hidden > 0 || reviewFilter !== "all") && (
+                <div className="flex flex-wrap gap-1.5 border-t pt-3">
+                  {[
+                    { value: "all", label: "All", count: reviews.length },
+                    { value: "pending", label: "To moderate", count: pending },
+                    { value: "hidden", label: "Hidden", count: hidden },
+                  ].map((f) =>
+                    f.value === "all" || f.count > 0 ? (
+                      <button
+                        key={f.value}
+                        type="button"
+                        onClick={() => filterReviews(f.value)}
+                        className={cn(
+                          "inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground",
+                          reviewFilter === f.value && "border-primary/40 bg-primary/5 text-primary hover:text-primary"
+                        )}
+                      >
+                        {f.label}
+                        <span className="tabular-nums opacity-70">{n0(f.count)}</span>
+                      </button>
+                    ) : null
+                  )}
+                  {/^\d$/.test(reviewFilter) && (
+                    <button
+                      type="button"
+                      onClick={() => filterReviews("all")}
+                      className="inline-flex h-7 items-center gap-1 rounded-full border border-primary/40 bg-primary/5 px-2.5 text-xs font-medium text-primary"
+                    >
+                      {reviewFilter}★ only
+                      <XIcon className="size-3" />
+                    </button>
+                  )}
+                </div>
+                )}
+
+                {shownReviews.length === 0 ? (
+                  <p className="py-4 text-center text-sm text-muted-foreground">No reviews here.</p>
+                ) : (
+                  <ul className="flex flex-col divide-y">
+                    {shownReviews.slice(0, allReviews ? undefined : 4).map((r) => {
                       const author = [r.user?.firstName, r.user?.lastName].filter(Boolean).join(" ") || "Anonymous"
+                      let chip = "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                      if (r.rating === 3) chip = "bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                      if (r.rating <= 2) chip = "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300"
                       return (
-                      <li key={r.id} className={cn("flex gap-3 py-3 first:pt-0 last:pb-0", r.status === "PENDING" && "-mx-2 rounded-lg bg-amber-500/6 px-2 first:pt-3")}>
-                        <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-xs font-semibold text-muted-foreground uppercase">
-                          {author.split(" ").map((w) => w[0]).join("").slice(0, 2)}
-                        </span>
-                        <div className="flex min-w-0 flex-1 flex-col gap-1">
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <span className="text-sm font-medium">{author}</span>
-                          {r.isVerifiedPurchase && (
-                            <span className="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400">
-                              <BadgeCheckIcon className="size-3.5" /> Verified buyer
+                        <li
+                          key={r.id}
+                          className={cn(
+                            "group/review flex gap-3 py-3.5 first:border-t first:pt-3.5 last:pb-0",
+                            r.status === "PENDING" && "-mx-2 rounded-lg bg-amber-500/6 px-2 first:pt-3",
+                            r.status === "REJECTED" && "opacity-60"
+                          )}
+                        >
+                          {r.user?.image ? (
+                            // eslint-disable-next-line @next/next/no-img-element -- any image host is allowed
+                            <img src={r.user.image} alt="" className="size-9 shrink-0 rounded-full object-cover" />
+                          ) : (
+                            <span className="grid size-9 shrink-0 place-items-center rounded-full bg-muted text-xs font-semibold text-muted-foreground uppercase">
+                              {author
+                                .split(" ")
+                                .map((w) => w[0])
+                                .join("")
+                                .slice(0, 2)}
                             </span>
                           )}
-                          {r.status !== "APPROVED" && <Pill tone={REVIEW_TONE[r.status]}>{r.status === "PENDING" ? "Pending" : "Hidden"}</Pill>}
-                          <span className="ml-auto text-xs text-muted-foreground">{fmtDate(r.createdAt)}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Stars rating={r.rating} />
-                          {r.title && <p className="text-sm font-medium">{r.title}</p>}
-                        </div>
-                        {r.body && <p className="text-sm text-muted-foreground">{r.body}</p>}
-                        {r.status === "PENDING" && (
-                          <div className="mt-1 flex gap-2">
-                            <Button size="sm" variant="outline" onClick={() => moderate(r, "APPROVED")} disabled={busy}>
-                              <CheckIcon />
-                              Approve
-                            </Button>
-                            <Button size="sm" variant="ghost" className="text-destructive" onClick={() => moderate(r, "REJECTED")} disabled={busy}>
-                              Reject
-                            </Button>
+                          <div className="flex min-w-0 flex-1 flex-col gap-1">
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <span className="text-sm font-medium">{author}</span>
+                              {r.isVerifiedPurchase && (
+                                <span className="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400">
+                                  <BadgeCheckIcon className="size-3.5" /> Verified buyer
+                                </span>
+                              )}
+                              {r.status !== "APPROVED" && <Pill tone={REVIEW_TONE[r.status]}>{r.status === "PENDING" ? "To moderate" : "Hidden"}</Pill>}
+                              <span className="ml-auto flex items-center gap-1">
+                                {r.status !== "PENDING" && (
+                                  // Out of the way until the row is hovered or focused.
+                                  <Button
+                                    size="xs"
+                                    variant="ghost"
+                                    className="text-muted-foreground opacity-0 transition-opacity group-hover/review:opacity-100 focus-visible:opacity-100"
+                                    onClick={() => moderate(r, r.status === "APPROVED" ? "REJECTED" : "APPROVED")}
+                                    disabled={busy}
+                                  >
+                                    {r.status === "APPROVED" ? <EyeOffIcon /> : <EyeIcon />}
+                                    {r.status === "APPROVED" ? "Hide from store" : "Restore"}
+                                  </Button>
+                                )}
+                                <span className="text-xs text-muted-foreground" title={fmtDateTime(r.createdAt)}>
+                                  {rel(r.createdAt)}
+                                </span>
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={cn("inline-flex h-5 items-center gap-0.5 rounded-md px-1.5 text-xs font-semibold tabular-nums", chip)}>
+                                <StarIcon className="size-3 fill-current" />
+                                {r.rating}
+                              </span>
+                              {r.title && <p className="truncate text-sm font-semibold">{r.title}</p>}
+                            </div>
+                            {r.body && <p className="text-sm leading-relaxed text-muted-foreground">{r.body}</p>}
+                            {r.status === "PENDING" && (
+                              <div className="mt-1 flex gap-2">
+                                <Button size="sm" variant="outline" onClick={() => moderate(r, "APPROVED")} disabled={busy}>
+                                  <CheckIcon />
+                                  Approve
+                                </Button>
+                                <Button size="sm" variant="ghost" className="text-destructive" onClick={() => moderate(r, "REJECTED")} disabled={busy}>
+                                  Reject
+                                </Button>
+                              </div>
+                            )}
                           </div>
-                        )}
-                        </div>
-                      </li>
+                        </li>
                       )
                     })}
-                </ul>
-                <ShowAll open={allReviews} total={reviews.length} shown={4} onToggle={() => setAllReviews(!allReviews)} />
+                  </ul>
+                )}
+                <div className="-mx-4 -mb-4">
+                  <ShowAll open={allReviews} total={shownReviews.length} shown={4} onToggle={() => setAllReviews(!allReviews)} />
+                </div>
               </div>
             )}
           </Card>
@@ -1086,12 +1290,35 @@ export function ProductDetailPage({
               }
             >
               <ul className="flex flex-col gap-2 px-4 pb-4 text-sm">
-                {promotions.map((p) => (
-                  <li key={p.id} className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-                    <span className="truncate font-medium">{p.name}</span>
-                    <span className="shrink-0 text-xs text-muted-foreground">{p.description}</span>
-                  </li>
-                ))}
+                {promotions.map((p) => {
+                  const covered = product.variants.filter((v) => v.pricing?.promotion?.id === p.id)
+                  const was = covered.map((v) => Number(v.pricing!.originalPrice))
+                  const now = covered.map((v) => Number(v.pricing!.effectivePrice))
+                  const saves = covered.map((v) => Number(v.pricing!.originalPrice) - Number(v.pricing!.effectivePrice))
+                  return (
+                    // A ticket: the offer on a tinted stub, the price effect beside it.
+                    <li key={p.id} className="flex overflow-hidden rounded-xl border">
+                      <div className="flex w-20 shrink-0 flex-col items-center justify-center gap-0.5 border-r border-dashed bg-primary/5 px-2 py-2.5 text-center text-primary">
+                        <TagIcon className="size-4" />
+                        <span className="text-sm leading-tight font-bold">{p.description ?? "Offer"}</span>
+                      </div>
+                      <div className="flex min-w-0 flex-1 flex-col gap-0.5 px-3 py-2.5">
+                        <span className="truncate font-semibold">{p.name}</span>
+                        <span className="text-xs text-muted-foreground tabular-nums">
+                          <span className="line-through">{priceText(Math.min(...was), Math.max(...was))}</span>
+                          {" → "}
+                          <span className="font-semibold text-foreground">{priceText(Math.min(...now), Math.max(...now))}</span>
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          Saves {priceText(Math.min(...saves), Math.max(...saves))} ·{" "}
+                          {covered.length === product.variants.length
+                            ? "all variants"
+                            : `${n0(covered.length)} of ${n0(product.variants.length)} variants`}
+                        </span>
+                      </div>
+                    </li>
+                  )
+                })}
               </ul>
             </Card>
           )}
@@ -1118,73 +1345,160 @@ export function ProductDetailPage({
             )}
           </Card>
 
-          <Card title="Bought together" action={<span className="text-xs text-muted-foreground">in the same order</span>}>
+          <Card
+            title="Bought together"
+            action={
+              boughtWith.length > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  {pct(sold.filter((l) => l.order.items.some((i) => i.productId && i.productId !== product.id)).length, sold.length)}% of orders had more
+                </span>
+              )
+            }
+          >
             {boughtWith.length === 0 ? (
-              <p className="px-4 pb-4 text-sm text-muted-foreground">Always bought on its own so far.</p>
+              <div className="mx-4 mb-4 flex flex-col items-center gap-1.5 rounded-xl border border-dashed px-4 py-6 text-center">
+                <span className="grid size-9 place-items-center rounded-full bg-muted text-muted-foreground">
+                  <ShoppingBagIcon className="size-4" />
+                </span>
+                <p className="text-sm font-medium">{sold.length ? "Always bought on its own" : "No orders yet"}</p>
+                <p className="text-xs text-muted-foreground">
+                  {sold.length
+                    ? `None of its ${n0(sold.length)} ${sold.length === 1 ? "order" : "orders"} had another product.`
+                    : "Products bought in the same order will show here, handy for bundles."}
+                </p>
+              </div>
             ) : (
-              <ul className="flex flex-col px-4 pb-2">
+              <ul className="flex flex-col gap-3 px-4 pb-4">
                 {boughtWith.map((t) => (
-                  <li key={t.id} className="flex items-center gap-3 border-b py-2 text-sm last:border-b-0">
-                    <Link href={`/products/${t.id}`} className="min-w-0 flex-1 truncate font-medium hover:text-primary hover:underline">
-                      {t.name}
-                    </Link>
-                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                      {n0(t.orders)} of {n0(sold.length)} orders · {pct(t.orders, sold.length)}%
+                  <li key={t.id} className="flex items-center gap-3">
+                    <span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg border bg-muted/60 text-muted-foreground">
+                      {productImages[t.id] ? (
+                        // eslint-disable-next-line @next/next/no-img-element -- any image host is allowed
+                        <img src={productImages[t.id]} alt="" className="size-full object-cover" />
+                      ) : (
+                        <PackageIcon className="size-4" />
+                      )}
                     </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <Link href={`/products/${t.id}`} className="truncate text-sm font-medium hover:text-primary hover:underline">
+                          {t.name}
+                        </Link>
+                        <span className="shrink-0 text-xs font-semibold tabular-nums">{pct(t.orders, sold.length)}%</span>
+                      </div>
+                      {/* Attach rate: the share of this product's orders that also held the other one. */}
+                      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+                        <div className="h-full rounded-full bg-primary" style={{ width: `${pct(t.orders, sold.length)}%` }} />
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
+                        {n0(t.orders)} of {n0(sold.length)} orders · {n0(t.units)} {t.units === 1 ? "unit" : "units"}
+                      </div>
+                    </div>
                   </li>
                 ))}
               </ul>
             )}
           </Card>
 
-          <Card title="Top customers" action={<span className="text-xs text-muted-foreground">by spend</span>}>
+          <Card title="Top customers" action={topBuyers.length > 0 && <span className="text-xs text-muted-foreground">{n0(buyers.size)} {buyers.size === 1 ? "buyer" : "buyers"} · by spend</span>}>
             {topBuyers.length === 0 ? (
               <p className="px-4 pb-4 text-sm text-muted-foreground">No sales yet.</p>
             ) : (
-              <ul className="flex flex-col px-4 pb-2">
-                {topBuyers.map((b) => (
-                  <li key={b.email} className="flex items-center gap-3 border-b py-2 text-sm last:border-b-0">
-                    <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary uppercase">{b.name.slice(0, 2)}</span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium">{b.name}</span>
-                      <span className="block text-xs text-muted-foreground">
-                        {n0(b.units)} {b.units === 1 ? "unit" : "units"} · {n0(b.orders)} {b.orders === 1 ? "order" : "orders"}
+              <ol className="flex flex-col gap-3 px-4 pb-4">
+                {topBuyers.map((b, index) => (
+                  <li key={b.key} className="flex items-center gap-3 text-sm">
+                    <span className="w-3 shrink-0 text-center text-xs font-semibold text-muted-foreground tabular-nums">{index + 1}</span>
+                    <span className="shrink-0">
+                      <span className="grid size-9 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary uppercase">
+                        {b.name
+                          .split(/\s+/)
+                          .map((w) => w[0])
+                          .join("")
+                          .slice(0, 2)}
                       </span>
                     </span>
-                    <span className="font-semibold tabular-nums">{taka(b.spent)}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <Link href={`/orders/${b.lastOrderId}`} className="truncate font-medium hover:text-primary hover:underline" title="Open their latest order">
+                            {b.name}
+                          </Link>
+                          {b.orders >= 2 && <Pill tone="blue">Repeat</Pill>}
+                        </span>
+                        <span className="shrink-0 font-semibold tabular-nums">{taka(b.spent)}</span>
+                      </div>
+                      <div className="flex items-baseline justify-between gap-2 text-xs text-muted-foreground">
+                        <span className="truncate">{b.contact}</span>
+                        <span className="shrink-0 tabular-nums">
+                          {n0(b.units)} {b.units === 1 ? "unit" : "units"} · {n0(b.orders)} {b.orders === 1 ? "order" : "orders"}
+                        </span>
+                      </div>
+                      {/* Their share of this product's revenue. */}
+                      <div className="mt-1 h-1 overflow-hidden rounded-full bg-muted">
+                        <div className="h-full rounded-full bg-primary/70" style={{ width: `${pct(b.spent, revenue)}%` }} />
+                      </div>
+                    </div>
                   </li>
                 ))}
-              </ul>
+              </ol>
             )}
           </Card>
 
           <Card title="Details">
-            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 px-4 pb-4 text-sm">
-              <dt className="text-muted-foreground">Slug</dt>
-              <dd className="flex min-w-0 items-center gap-1">
-                <span className="truncate font-mono text-xs leading-5">{product.slug}</span>
-                <CopyButton text={product.slug} what="Slug" />
-              </dd>
-              <dt className="text-muted-foreground">Storefront</dt>
-              <dd>{product.isActive && product.status === "ACTIVE" ? "Visible" : "Hidden"}</dd>
-              <dt className="text-muted-foreground">Created</dt>
-              <dd>{fmtDate(product.createdAt)}</dd>
-              <dt className="text-muted-foreground">Updated</dt>
-              <dd>{fmtDate(product.updatedAt)}</dd>
-              <dt className="text-muted-foreground">Last sold</dt>
-              <dd>{lastSold ? `${fmtDate(lastSold)} (${rel(lastSold)})` : "Never"}</dd>
-              <dt className="text-muted-foreground">Stock moved</dt>
-              <dd>{lastMovement ? rel(lastMovement) : "Never"}</dd>
-              <dt className="text-muted-foreground">Last review</dt>
-              <dd>{lastReview ? fmtDate(lastReview) : "None"}</dd>
-              <dt className="text-muted-foreground">ID</dt>
-              <dd className="flex min-w-0 items-center gap-1">
-                <span className="truncate font-mono text-xs leading-5" title={product.id}>
-                  {product.id}
-                </span>
-                <CopyButton text={product.id} what="Product ID" />
-              </dd>
-            </dl>
+            <div className="flex flex-col gap-4 px-4 pb-4 text-sm">
+              <section className="flex flex-col gap-2">
+                <h3 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Storefront</h3>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-muted-foreground">Visibility</span>
+                  <Pill tone={product.isActive && product.status === "ACTIVE" ? "green" : "grey"}>{product.isActive && product.status === "ACTIVE" ? "Visible to shoppers" : "Hidden"}</Pill>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="text-muted-foreground">Slug</span>
+                  <div className="flex min-w-0 items-center gap-1 rounded-lg bg-muted/60 py-1 pr-1 pl-2.5">
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs" title={product.slug}>
+                      /{product.slug}
+                    </span>
+                    <CopyButton text={product.slug} what="Slug" />
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="text-muted-foreground">Product ID</span>
+                  <div className="flex min-w-0 items-center gap-1 rounded-lg bg-muted/60 py-1 pr-1 pl-2.5">
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs" title={product.id}>
+                      {product.id}
+                    </span>
+                    <CopyButton text={product.id} what="Product ID" />
+                  </div>
+                </div>
+              </section>
+
+              <section className="flex flex-col gap-2 border-t pt-4">
+                <h3 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Activity</h3>
+                <dl className="flex flex-col gap-2">
+                  {[
+                    { label: "Created", at: product.createdAt, none: "" },
+                    { label: "Last edited", at: product.updatedAt, none: "" },
+                    { label: "Last sold", at: lastSold, none: "Never sold" },
+                    { label: "Stock moved", at: lastMovement, none: "No movements" },
+                    { label: "Last review", at: lastReview, none: "No reviews" },
+                  ].map((row) => (
+                    <div key={row.label} className="flex items-baseline justify-between gap-3">
+                      <dt className="text-muted-foreground">{row.label}</dt>
+                      <dd className="text-right">
+                        {row.at ? (
+                          <>
+                            <span title={fmtDateTime(row.at)}>{fmtDate(row.at)}</span>
+                            <span className="ml-1.5 text-xs text-muted-foreground">{rel(row.at)}</span>
+                          </>
+                        ) : (
+                          <span className="text-muted-foreground">{row.none}</span>
+                        )}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            </div>
           </Card>
         </div>
       </div>
