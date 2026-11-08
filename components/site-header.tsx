@@ -72,7 +72,8 @@ export function SiteHeader() {
     .map((segment, index) => ({
       segment,
       href: "/" + segments.slice(0, index + 1).join("/"),
-      label: labels[segment] ?? formatId(decodeURIComponent(segment)),
+      // "new" under Customers is a customer, not a product.
+      label: (segment === "new" && segments[index - 1] === "customers" ? "New customer" : labels[segment]) ?? formatId(decodeURIComponent(segment)),
     }))
     // Database UUIDs mean nothing to a reader: "/products/<uuid>/edit" reads "Products › Edit".
     .filter((crumb) => !UUID.test(crumb.segment))
