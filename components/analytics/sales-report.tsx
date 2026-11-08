@@ -25,7 +25,7 @@ import {
 } from "lucide-react"
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts"
 
-import { buckets, change, periodRange, PERIODS, type Period, type SalesData, within } from "@/components/analytics/analytics-utils"
+import { buckets, change, periodRange, PERIODS, type Period, type SaleOrder, type SalesData, within } from "@/components/analytics/analytics-utils"
 import { SalesDetails } from "@/components/analytics/sales-details"
 import { Card, n0, taka } from "@/components/inventory/inventory-ui"
 import { PROVIDER_LABEL } from "@/components/orders/orders-table"
@@ -42,6 +42,7 @@ const DAY_PARTS = [
   { label: "Afternoon", from: 12, to: 17 },
   { label: "Evening", from: 17, to: 24 },
 ]
+const hourText = (h: number) => `${h % 12 === 0 ? 12 : h % 12}${h < 12 ? "am" : "pm"}`
 const WEEKDAY_NAMES = ["Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays", "Sundays"]
 
 // "৳1.2L" style for axis ticks and tight spots; full amounts everywhere else.
@@ -110,7 +111,7 @@ export function ShareBars({ rows, total, format = taka }: { rows: { label: strin
 }
 
 // A KPI with a tiny trend of the same number across the period.
-function SparkStat({
+export function SparkStat({
   label,
   value,
   delta,
@@ -157,10 +158,145 @@ type Metric = (typeof METRICS)[number]["value"]
 
 const ordersConfig = { orders: { label: "Orders", color: "var(--chart-1)" } } satisfies ChartConfig
 
+// Weekday × hour grid of when orders come in, by count or by net sales. Pass the orders that count (not cancelled).
+// compact: short fixed-height cells for wide layouts, where square cells would get tall.
+export function OrderHeatmap({ orders, className, compact = false }: { orders: SaleOrder[]; className?: string; compact?: boolean }) {
+  const [heatBy, setHeatBy] = useState<"orders" | "sales">("orders")
+  const heat = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0))
+  const heatSales = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0))
+  for (const o of orders) {
+    const d = new Date(o.at)
+    heat[(d.getDay() + 6) % 7][d.getHours()] += 1
+    heatSales[(d.getDay() + 6) % 7][d.getHours()] += o.gross - o.discount - o.returned
+  }
+  // The grid shows orders or sales; the same totals feed the row and column edges.
+  const shown = heatBy === "orders" ? heat : heatSales
+  const shownMax = Math.max(1, ...shown.flat())
+  const shownRows = shown.map((row) => row.reduce((s, v) => s + v, 0))
+  const shownHours = Array.from({ length: 24 }, (_, h) => shown.reduce((s, row) => s + row[h], 0))
+  const shownTotal = shownRows.reduce((s, v) => s + v, 0)
+  const shownText = (v: number) => (heatBy === "orders" ? n0(v) : short(v))
+  let peak = { d: 0, h: 0, v: 0 }
+  shown.forEach((row, d) => row.forEach((v, h) => v > peak.v && (peak = { d, h, v })))
+  const bands = DAY_PARTS.map((b) => ({ ...b, value: shownHours.slice(b.from, b.to).reduce((s, v) => s + v, 0) }))
+  const bestBand = bands.reduce((best, b) => (b.value > best.value ? b : best), bands[0])
+  const heatColor = (share: number) => `color-mix(in oklab, var(--chart-1) ${Math.round(20 + share * 80)}%, transparent)`
+
+
+  return (
+        <Card
+          title="When customers order"
+          className={className}
+          action={
+            <ToggleGroup multiple={false} value={[heatBy]} onValueChange={(v) => v[0] && setHeatBy(v[0] as "orders" | "sales")} variant="outline" size="sm" spacing={0} aria-label="Heatmap shows">
+              <ToggleGroupItem value="orders" className="h-7 px-2.5 text-xs data-pressed:bg-muted data-pressed:font-semibold">
+                Orders
+              </ToggleGroupItem>
+              <ToggleGroupItem value="sales" className="h-7 px-2.5 text-xs data-pressed:bg-muted data-pressed:font-semibold">
+                Sales
+              </ToggleGroupItem>
+            </ToggleGroup>
+          }
+        >
+          <div className="flex flex-col gap-4 px-4 pb-4">
+            <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border bg-border">
+              {[
+                { label: "Peak hour", value: peak.v ? `${WEEKDAYS[peak.d]} ${hourText(peak.h)}` : "—", hint: peak.v ? `${shownText(peak.v)}${heatBy === "orders" ? ` ${peak.v === 1 ? "order" : "orders"}` : " in sales"}` : "no orders yet" },
+                { label: "Busiest day", value: shownTotal ? WEEKDAY_NAMES[shownRows.indexOf(Math.max(...shownRows))] : "—", hint: `${pct(Math.max(...shownRows), shownTotal)}% of the week` },
+                { label: "Best part of the day", value: shownTotal ? bestBand.label : "—", hint: `${pct(bestBand.value, shownTotal)}% · ${hourText(bestBand.from)}–${hourText(bestBand.to % 24)}` },
+              ].map((f) => (
+                <div key={f.label} className="bg-card px-3 py-2">
+                  <div className="text-[11px] text-muted-foreground">{f.label}</div>
+                  <div className="truncate text-sm font-semibold">{f.value}</div>
+                  <div className="truncate text-[11px] text-muted-foreground tabular-nums">{f.hint}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="overflow-x-auto">
+              {/* minmax(0, 1fr) keeps the hour labels from widening their column. */}
+              <div className="grid min-w-[600px] grid-cols-[2.25rem_repeat(24,minmax(0,1fr))_5.5rem] gap-[3px] text-[10px] text-muted-foreground">
+                <span />
+                {bands.map((b) => (
+                  <span
+                    key={b.label}
+                    style={{ gridColumn: `span ${b.to - b.from}` }}
+                    className="mb-0.5 flex items-center justify-between rounded-md bg-muted/60 px-1.5 py-0.5 font-medium text-muted-foreground"
+                  >
+                    {b.label}
+                    <span className="tabular-nums">{pct(b.value, shownTotal)}%</span>
+                  </span>
+                ))}
+                <span />
+
+                <span />
+                {Array.from({ length: 24 }, (_, h) => (
+                  <span key={h} className="overflow-visible whitespace-nowrap">
+                    {h % 3 === 0 ? hourText(h) : ""}
+                  </span>
+                ))}
+                <span className="text-right">Total</span>
+
+                {shown.map((row, d) => (
+                  <div key={d} className="contents">
+                    <span className="self-center font-medium">{WEEKDAYS[d]}</span>
+                    {row.map((v, h) => {
+                      const share = v / shownMax
+                      return (
+                        <span
+                          key={h}
+                          title={`${WEEKDAY_NAMES[d].slice(0, -1)} ${hourText(h)}–${hourText((h + 1) % 24)}: ${n0(heat[d][h])} ${heat[d][h] === 1 ? "order" : "orders"} · ${taka(heatSales[d][h])}`}
+                          className={cn(
+                            "grid place-items-center rounded-[4px] text-[9px] font-semibold tabular-nums transition-transform hover:z-10 hover:scale-125 hover:ring-2 hover:ring-primary/40",
+                            compact ? "h-7" : "aspect-square",
+                            !v && "bg-muted/50",
+                            share > 0.55 ? "text-white" : "text-foreground/70"
+                          )}
+                          style={{ background: v ? heatColor(share) : undefined }}
+                        >
+                          {heatBy === "orders" && v > 0 ? v : ""}
+                        </span>
+                      )
+                    })}
+                    <span className="flex items-center gap-1.5 pl-1">
+                      <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                        <span className="block h-full rounded-full bg-chart-1" style={{ width: `${pct(shownRows[d], Math.max(...shownRows))}%` }} />
+                      </span>
+                      <span className="w-11 text-right font-medium text-foreground tabular-nums">{shownText(shownRows[d])}</span>
+                    </span>
+                  </div>
+                ))}
+
+                {/* How the hours add up across the week. */}
+                <span className="self-end">All</span>
+                {shownHours.map((v, h) => (
+                  <span key={h} className={cn("flex items-end", compact ? "h-7" : "h-8")} title={`${hourText(h)}: ${shownText(v)}`}>
+                    <span className="w-full rounded-t-[3px] bg-chart-1/70" style={{ height: `${v ? Math.max(10, (v / Math.max(...shownHours)) * 100) : 0}%` }} />
+                  </span>
+                ))}
+                <span className="self-end text-right font-semibold text-foreground tabular-nums">{shownText(shownTotal)}</span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
+              <span>Times are in your timezone. Hover a square for its orders and sales.</span>
+              <span className="flex items-center gap-1.5">
+                {heatBy === "orders" ? "0" : "৳0"}
+                {[0, 0.25, 0.5, 0.75, 1].map((step) => (
+                  <span key={step} className={cn("size-3 rounded-[3px]", !step && "bg-muted/50")} style={{ background: step ? heatColor(step) : undefined }} />
+                ))}
+                {shownText(shownMax)}
+              </span>
+            </div>
+          </div>
+        </Card>
+
+  )
+}
+
 export function SalesReport({ data }: { data: SalesData }) {
   const [period, setPeriod] = useState<Period>("90d")
   const [metric, setMetric] = useState<Metric>("net")
-  const [heatBy, setHeatBy] = useState<"orders" | "sales">("orders")
   const firstAt = data.orders.reduce<string | undefined>((first, o) => (!first || o.at < first ? o.at : first), undefined)
   const { start, end, previousStart } = periodRange(period, firstAt)
   const periodLabel = PERIODS.find((p) => p.value === period)!.label.toLowerCase()
@@ -280,31 +416,14 @@ export function SalesReport({ data }: { data: SalesData }) {
 
   // ── When people order: weekday × hour ────────────────
   const heat = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0))
-  const heatSales = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0))
   for (const o of sold) {
     const d = new Date(o.at)
     heat[(d.getDay() + 6) % 7][d.getHours()] += 1
-    heatSales[(d.getDay() + 6) % 7][d.getHours()] += netOf(o)
   }
-  const heatMax = Math.max(1, ...heat.flat())
   const weekdayTotals = heat.map((row) => row.reduce((s, v) => s + v, 0))
   const busiestDay = weekdayTotals.indexOf(Math.max(...weekdayTotals))
   const hourTotals = Array.from({ length: 24 }, (_, h) => heat.reduce((s, row) => s + row[h], 0))
   const busiestHour = hourTotals.indexOf(Math.max(...hourTotals))
-  const hourText = (h: number) => `${h % 12 === 0 ? 12 : h % 12}${h < 12 ? "am" : "pm"}`
-  // The grid shows orders or sales; the same totals feed the row and column edges.
-  const shown = heatBy === "orders" ? heat : heatSales
-  const shownMax = Math.max(1, ...shown.flat())
-  const shownRows = shown.map((row) => row.reduce((s, v) => s + v, 0))
-  const shownHours = Array.from({ length: 24 }, (_, h) => shown.reduce((s, row) => s + row[h], 0))
-  const shownTotal = shownRows.reduce((s, v) => s + v, 0)
-  const shownText = (v: number) => (heatBy === "orders" ? n0(v) : short(v))
-  let peak = { d: 0, h: 0, v: 0 }
-  shown.forEach((row, d) => row.forEach((v, h) => v > peak.v && (peak = { d, h, v })))
-  const bands = DAY_PARTS.map((b) => ({ ...b, value: shownHours.slice(b.from, b.to).reduce((s, v) => s + v, 0) }))
-  const bestBand = bands.reduce((best, b) => (b.value > best.value ? b : best), bands[0])
-  const heatColor = (share: number) => `color-mix(in oklab, var(--chart-1) ${Math.round(20 + share * 80)}%, transparent)`
-
   // ── Breakdowns ─────────────────────────────────
   const group = (pick: (o: O) => string | null) => {
     const map = new Map<string, { value: number; orders: number }>()
@@ -665,111 +784,7 @@ export function SalesReport({ data }: { data: SalesData }) {
       </div>
 
       <div className="grid items-start gap-4 px-4 md:gap-6 lg:px-6 xl:grid-cols-3">
-        <Card
-          title="When customers order"
-          className="xl:col-span-2"
-          action={
-            <ToggleGroup multiple={false} value={[heatBy]} onValueChange={(v) => v[0] && setHeatBy(v[0] as "orders" | "sales")} variant="outline" size="sm" spacing={0} aria-label="Heatmap shows">
-              <ToggleGroupItem value="orders" className="h-7 px-2.5 text-xs data-pressed:bg-muted data-pressed:font-semibold">
-                Orders
-              </ToggleGroupItem>
-              <ToggleGroupItem value="sales" className="h-7 px-2.5 text-xs data-pressed:bg-muted data-pressed:font-semibold">
-                Sales
-              </ToggleGroupItem>
-            </ToggleGroup>
-          }
-        >
-          <div className="flex flex-col gap-4 px-4 pb-4">
-            <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border bg-border">
-              {[
-                { label: "Peak hour", value: peak.v ? `${WEEKDAYS[peak.d]} ${hourText(peak.h)}` : "—", hint: peak.v ? `${shownText(peak.v)}${heatBy === "orders" ? ` ${peak.v === 1 ? "order" : "orders"}` : " in sales"}` : "no orders yet" },
-                { label: "Busiest day", value: shownTotal ? WEEKDAY_NAMES[shownRows.indexOf(Math.max(...shownRows))] : "—", hint: `${pct(Math.max(...shownRows), shownTotal)}% of the week` },
-                { label: "Best part of the day", value: shownTotal ? bestBand.label : "—", hint: `${pct(bestBand.value, shownTotal)}% · ${hourText(bestBand.from)}–${hourText(bestBand.to % 24)}` },
-              ].map((f) => (
-                <div key={f.label} className="bg-card px-3 py-2">
-                  <div className="text-[11px] text-muted-foreground">{f.label}</div>
-                  <div className="truncate text-sm font-semibold">{f.value}</div>
-                  <div className="truncate text-[11px] text-muted-foreground tabular-nums">{f.hint}</div>
-                </div>
-              ))}
-            </div>
-
-            <div className="overflow-x-auto">
-              {/* minmax(0, 1fr) keeps the hour labels from widening their column. */}
-              <div className="grid min-w-[600px] grid-cols-[2.25rem_repeat(24,minmax(0,1fr))_5.5rem] gap-[3px] text-[10px] text-muted-foreground">
-                <span />
-                {bands.map((b) => (
-                  <span
-                    key={b.label}
-                    style={{ gridColumn: `span ${b.to - b.from}` }}
-                    className="mb-0.5 flex items-center justify-between rounded-md bg-muted/60 px-1.5 py-0.5 font-medium text-muted-foreground"
-                  >
-                    {b.label}
-                    <span className="tabular-nums">{pct(b.value, shownTotal)}%</span>
-                  </span>
-                ))}
-                <span />
-
-                <span />
-                {Array.from({ length: 24 }, (_, h) => (
-                  <span key={h} className="overflow-visible whitespace-nowrap">
-                    {h % 3 === 0 ? hourText(h) : ""}
-                  </span>
-                ))}
-                <span className="text-right">Total</span>
-
-                {shown.map((row, d) => (
-                  <div key={d} className="contents">
-                    <span className="self-center font-medium">{WEEKDAYS[d]}</span>
-                    {row.map((v, h) => {
-                      const share = v / shownMax
-                      return (
-                        <span
-                          key={h}
-                          title={`${WEEKDAY_NAMES[d].slice(0, -1)} ${hourText(h)}–${hourText((h + 1) % 24)}: ${n0(heat[d][h])} ${heat[d][h] === 1 ? "order" : "orders"} · ${taka(heatSales[d][h])}`}
-                          className={cn(
-                            "grid aspect-square place-items-center rounded-[4px] text-[9px] font-semibold tabular-nums transition-transform hover:z-10 hover:scale-125 hover:ring-2 hover:ring-primary/40",
-                            !v && "bg-muted/50",
-                            share > 0.55 ? "text-white" : "text-foreground/70"
-                          )}
-                          style={{ background: v ? heatColor(share) : undefined }}
-                        >
-                          {heatBy === "orders" && v > 0 ? v : ""}
-                        </span>
-                      )
-                    })}
-                    <span className="flex items-center gap-1.5 pl-1">
-                      <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-                        <span className="block h-full rounded-full bg-chart-1" style={{ width: `${pct(shownRows[d], Math.max(...shownRows))}%` }} />
-                      </span>
-                      <span className="w-11 text-right font-medium text-foreground tabular-nums">{shownText(shownRows[d])}</span>
-                    </span>
-                  </div>
-                ))}
-
-                {/* How the hours add up across the week. */}
-                <span className="self-end">All</span>
-                {shownHours.map((v, h) => (
-                  <span key={h} className="flex h-8 items-end" title={`${hourText(h)}: ${shownText(v)}`}>
-                    <span className="w-full rounded-t-[3px] bg-chart-1/70" style={{ height: `${v ? Math.max(10, (v / Math.max(...shownHours)) * 100) : 0}%` }} />
-                  </span>
-                ))}
-                <span className="self-end text-right font-semibold text-foreground tabular-nums">{shownText(shownTotal)}</span>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
-              <span>Times are in your timezone. Hover a square for its orders and sales.</span>
-              <span className="flex items-center gap-1.5">
-                {heatBy === "orders" ? "0" : "৳0"}
-                {[0, 0.25, 0.5, 0.75, 1].map((step) => (
-                  <span key={step} className={cn("size-3 rounded-[3px]", !step && "bg-muted/50")} style={{ background: step ? heatColor(step) : undefined }} />
-                ))}
-                {shownText(shownMax)}
-              </span>
-            </div>
-          </div>
-        </Card>
+        <OrderHeatmap orders={sold} className="xl:col-span-2" />
 
         <Card title="Orders by weekday" action={<span className="text-xs text-muted-foreground">busiest: {sold.length ? WEEKDAYS[busiestDay] : "—"}</span>}>
           <div className="px-2 pb-4 sm:px-4">
